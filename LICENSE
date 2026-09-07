@@ -1,0 +1,16 @@
+DRAFT — replaced in T-063
+
+Proprietary Software License (placeholder)
+
+Copyright (c) 2026 Cepeppe. All rights reserved. Proprietary. Not for
+redistribution.
+
+This is a placeholder notice, not the final end-user license agreement. It is
+here so that the repository carries an explicit license statement from its
+first commit; the reviewed agreement replaces this file in T-063.
+
+No permission is granted to use, copy, modify, merge, publish, distribute,
+sublicense or sell this software, in source or binary form, in whole or in
+part. Third-party components distributed with the application, including the
+MIT-licensed handoff-mcp server, keep their own licenses and are listed in the
+third-party notices shipped with the application.

@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Rust build output
+target/
+
+# Pinned server artifact, fetched by scripts/fetch-server
+vendor/
+
+# Frontend build output
+dist/
+*.tsbuildinfo
+
+# Test and tooling output
+coverage/
+*.log
+
+# Local environment
+.env
+.env.*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
