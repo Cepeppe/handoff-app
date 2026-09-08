@@ -44,13 +44,14 @@ use crate::log::rounds::RoundRow;
 use crate::log::sends::{SendKind, SendRow};
 use crate::log::transitions::{commit as commit_transition, Transition};
 use crate::log::{handoffs, user_requests, Db, HandoffState, StoreError, Timestamp};
+use crate::requests::queue::OpenLink;
 
 use super::handoff::{
     Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued, Round,
     ScreenshotPayload, VERIFYING_TIMEOUT_MS,
 };
 use super::outcome::{already_delivered, build};
-use super::runbook_sink::{NoResumeRequests, NoRunbookSink, ResumeRequests, RunbookSink};
+use super::runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
 use super::{Refusal, Result};
 
 /// How many commands may wait for the actor before a sender is made to wait.
@@ -237,7 +238,7 @@ pub struct Store {
     db: Db,
     handoffs: BTreeMap<String, Handoff>,
     runbooks: Box<dyn RunbookSink>,
-    resumes: Box<dyn ResumeRequests>,
+    requests: Box<dyn Requests>,
     outbox: Vec<Delivery>,
 }
 
@@ -259,7 +260,7 @@ impl Store {
             db,
             handoffs: BTreeMap::new(),
             runbooks: Box::new(NoRunbookSink),
-            resumes: Box::new(NoResumeRequests),
+            requests: Box::new(NoRequests),
             outbox: Vec::new(),
         }
     }
@@ -282,7 +283,7 @@ impl Store {
     pub fn load(
         db: Db,
         runbooks: Box<dyn RunbookSink>,
-        resumes: Box<dyn ResumeRequests>,
+        requests: Box<dyn Requests>,
     ) -> Result<Self> {
         let mut handoffs = BTreeMap::new();
         for row in handoffs::list_active(&db)?
@@ -296,7 +297,7 @@ impl Store {
             db,
             handoffs,
             runbooks,
-            resumes,
+            requests,
             outbox: Vec::new(),
         })
     }
@@ -336,7 +337,8 @@ impl Store {
 
     // ------------------------------------------------------------------ agent actions
 
-    /// `handoff.open`: a new handoff, or the spec a user request was waiting for (DD-13).
+    /// `handoff.open`: a new handoff, or the spec a user request was waiting for (DD-13,
+    /// OPEN-08).
     ///
     /// # Errors
     ///
@@ -360,20 +362,33 @@ impl Store {
             .filter(|id| self.handoffs.get(id).is_none_or(is_waiting_for_a_spec));
         let id = adopted.clone().unwrap_or_else(ids::new_handoff_id);
 
+        // OPEN-08: with an id, the queue confirms the request the handoff now *is*; without
+        // one, it names the oldest request the session left open, which this handoff answers
+        // without taking its id. Either way the queue decides, and it is the same rule the
+        // **Change** control of FM-20 applies afterwards.
+        let link =
+            self.requests
+                .link_on_open(&self.db, Some(&opener.session_ref), adopted.as_deref());
+
         let waiting = self.handoffs.get(&id);
         let mut draft = Handoff::opened(id.clone(), spec, secret_treated, &opener, now);
         if let Some(waiting) = waiting {
             draft.created_at = waiting.created_at.clone();
             draft.request_text = waiting.request_text.clone();
             draft.linked_request_id = waiting.linked_request_id.clone();
-        } else if let Some(request) = adopted
-            .as_deref()
-            .map(|id| user_requests::get(&self.db, id))
-            .transpose()?
-            .flatten()
-        {
-            draft.created_at = request.created_at.clone();
-            draft.request_text = Some(request.text.clone());
+        }
+        match &link {
+            OpenLink::Adopted(request) => {
+                // The tab keeps the instant the user opened it, not the one the agent
+                // answered it: §7.7 shows one tab from "waiting for spec" onwards.
+                draft.created_at = request.created_at.clone();
+                draft.request_text = Some(request.text.clone());
+            }
+            OpenLink::Oldest(request) => {
+                draft.linked_request_id = Some(request.id.clone());
+                draft.request_text = Some(request.text.clone());
+            }
+            OpenLink::None => {}
         }
         draft.attached_call = Some(call.attached());
 
@@ -397,11 +412,11 @@ impl Store {
         self.commit(draft, journal)?;
 
         // The request row learns which handoff answered it (OPEN-08); it is a note about
-        // where the request went, so a missing row is not a reason to refuse the handoff.
-        if let Some(request_id) = adopted.as_deref() {
-            if request_id != id {
-                user_requests::link(&self.db, request_id, &id)?;
-            }
+        // where the request went, so a queue that refuses the write is not a reason to
+        // refuse the handoff. After the commit, so that a refused transition leaves a
+        // request open rather than pointing at a handoff that does not exist.
+        if let Some(request) = link.request() {
+            self.requests.linked(&self.db, &id, &request.id);
         }
 
         Ok(OpenAccepted {
@@ -585,7 +600,14 @@ impl Store {
             }
         };
 
+        let attached = snapshot.outcome.is_none();
         self.commit(draft, journal)?;
+        // FM-31: a call is listening again, so the resume request the user queued from the
+        // overlay has been answered. Only where the call *attached* — the branches above
+        // hand back an outcome the agent is reading, which is not coming back to the work.
+        if attached {
+            self.requests.resumed(&self.db, handoff_id);
+        }
         Ok(snapshot)
     }
 
@@ -1009,7 +1031,8 @@ impl Store {
         let session_ref = draft.session_ref.clone();
         let id = draft.id.clone();
         self.commit(draft, journal)?;
-        self.resumes.request_resume(&id, session_ref.as_deref());
+        self.requests
+            .request_resume(&self.db, &id, session_ref.as_deref());
         Ok(())
     }
 
@@ -1063,7 +1086,10 @@ impl Store {
         let id = draft.id.clone();
         self.commit(draft, journal)?;
         if request.is_some() {
-            user_requests::link(&self.db, request_id, &id)?;
+            // The queue also re-opens the request this handoff was answering: the one-click
+            // correction of §12.4 must be undoable, and a request consumed by the wrong
+            // handoff would otherwise be gone (`requests::queue::relink`).
+            self.requests.linked(&self.db, &id, request_id);
         }
         Ok(())
     }
@@ -2030,8 +2056,18 @@ mod tests {
         db
     }
 
+    /// A store built as the app builds it, with the real user-request queue behind it: the
+    /// linking rules of OPEN-08 and FM-20 are the queue's, and a test store that had none
+    /// would pass whatever they did.
     fn store() -> Store {
-        Store::new(database())
+        Store::load(
+            database(),
+            Box::new(NoRunbookSink),
+            Box::new(Arc::new(crate::requests::Queue::new(Box::new(
+                crate::requests::NoRequestObserver,
+            )))),
+        )
+        .expect("an empty store")
     }
 
     fn watched() -> (Store, Arc<RecordingSink>, Arc<CountingResumes>) {
@@ -2996,6 +3032,116 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_open_that_quotes_no_request_answers_the_oldest_one_of_its_session() {
+        // OPEN-08: the fast path put the id in the clipboard text, so this is the case where
+        // the user typed the request themselves and the agent never quoted it.
+        let mut store = store();
+        let mut older = crate::log::testing::request("hf_0000000001");
+        older.session_ref = Some(OPENER.to_owned());
+        older.text = "I'm about to create the API key on Stripe".to_owned();
+        older.created_at = at("2026-09-08T10:00:00Z");
+        user_requests::upsert(&store.db, &older).expect("a request");
+        let mut newer = crate::log::testing::request("hf_0000000002");
+        newer.session_ref = Some(OPENER.to_owned());
+        newer.created_at = at("2026-09-08T10:30:00Z");
+        user_requests::upsert(&store.db, &newer).expect("a second request");
+
+        let id = open_with(&mut store, spec(1, false));
+        assert_ne!(
+            id, "hf_0000000001",
+            "no id is taken over without a request_id"
+        );
+        let snapshot = store
+            .snapshot(&id, &at("2026-09-08T11:00:00Z"))
+            .expect("a tab");
+        assert_eq!(snapshot.linked_request_id.as_deref(), Some("hf_0000000001"));
+        assert_eq!(
+            snapshot.request_text.as_deref(),
+            Some("I'm about to create the API key on Stripe"),
+            "the tab shows the user's own words (§7.7)"
+        );
+        assert_eq!(
+            user_requests::get(&store.db, "hf_0000000001")
+                .expect("a read")
+                .expect("the request")
+                .linked_handoff_id
+                .as_deref(),
+            Some(id.as_str()),
+            "and the request is no longer waiting for a spec"
+        );
+        assert_eq!(
+            user_requests::get(&store.db, "hf_0000000002")
+                .expect("a read")
+                .expect("the request")
+                .linked_handoff_id,
+            None,
+            "the second one is still open for the next handoff"
+        );
+    }
+
+    #[test]
+    fn an_open_that_quotes_a_request_takes_its_id_and_closes_it() {
+        // DD-13, and the other half of OPEN-08: the request the agent quoted stops being in
+        // the queue, or the Stop hook would keep asking for a spec that has arrived.
+        let mut store = store();
+        let mut request = crate::log::testing::request("hf_3n8v5t1q6w");
+        request.session_ref = Some(OPENER.to_owned());
+        user_requests::upsert(&store.db, &request).expect("a request");
+
+        let id = store
+            .open(
+                OpenParams {
+                    spec: spec(1, false),
+                    secret_treated: Vec::new(),
+                    request_id: Some("hf_3n8v5t1q6w".to_owned()),
+                    opener: opener(OPENER),
+                    call: call(1, "call_00000001", OPENER),
+                },
+                &at("2026-09-08T11:00:00Z"),
+            )
+            .expect("the open is accepted")
+            .handoff_id;
+        assert_eq!(id, "hf_3n8v5t1q6w");
+        assert_eq!(
+            user_requests::get(&store.db, "hf_3n8v5t1q6w")
+                .expect("a read")
+                .expect("the request")
+                .linked_handoff_id
+                .as_deref(),
+            Some("hf_3n8v5t1q6w")
+        );
+    }
+
+    #[test]
+    fn a_resume_request_is_queued_when_the_user_picks_a_handoff_up_and_closed_when_a_call_comes() {
+        // FM-31 and RESP-07, end to end through the store's own queue.
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, false));
+        let now = at("2026-09-08T11:05:00Z");
+        store
+            .defer(&id, Some("later".to_owned()), &now)
+            .expect("the user defers");
+        store
+            .detach_call(&id, "call_00000001", DetachReason::Cancelled, &now)
+            .expect("the call stops waiting");
+        store.resume_from_overlay(&id, &now).expect("RESP-07");
+
+        let queued = user_requests::list_open(&store.db, Some(OPENER)).expect("the queue");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].about_handoff_id.as_deref(), Some(id.as_str()));
+
+        store
+            .resume(&id, &call(1, "call_00000002", OPENER), &now)
+            .expect("the agent comes back");
+        assert!(
+            user_requests::list_open(&store.db, Some(OPENER))
+                .expect("the queue")
+                .is_empty(),
+            "a call attached, so the request has been answered"
+        );
+    }
+
     // ------------------------------------------------------------------ timers, actor
 
     #[test]
@@ -3149,7 +3295,7 @@ mod tests {
         };
 
         let db = Db::open_at(&path).expect("the same database");
-        let restored = Store::load(db, Box::new(NoRunbookSink), Box::new(NoResumeRequests))
+        let restored = Store::load(db, Box::new(NoRunbookSink), Box::new(NoRequests))
             .expect("the store as it was");
         let mut reloaded = restored.list_for_ui(&now);
         assert_eq!(reloaded.len(), 2);

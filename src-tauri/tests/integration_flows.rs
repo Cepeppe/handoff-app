@@ -22,8 +22,8 @@
 //! - **the fixture shows a later moment of the same field's life** — `already_delivered` is
 //!   true in `f11` for an outcome this flow collects for the first time (TOOL-07).
 //!
-//! Two fixtures are replayed only in part, and the tests say which lines and why: `f07`
-//! needs the user-request queue of T-038 and `f10` the hook decision of T-035.
+//! One fixture is replayed only in part, and the test says which lines and why: `f07` needs
+//! the request sheet and the clipboard of T-038, which is where the shortcut lives.
 
 #[path = "fake-server/mod.rs"]
 mod fake_server;
@@ -39,10 +39,10 @@ use handoff_app_lib::channel::{Dispatch, Endpoint};
 use handoff_app_lib::format::outcome::ScreenshotMode;
 use handoff_app_lib::ids;
 use handoff_app_lib::log::{Db, HandoffState, Timestamp};
+use handoff_app_lib::requests::{NoRequestObserver, Queue, UserRequest};
 use handoff_app_lib::sessions::{NoObserver, Registry};
 use handoff_app_lib::store::{
-    self, HandoffSnapshot, NoResumeRequests, NoRunbookSink, ScreenshotPayload, Store, StoreHandle,
-    UserAction,
+    self, HandoffSnapshot, NoRunbookSink, ScreenshotPayload, Store, StoreHandle, UserAction,
 };
 
 use fake_server::golden::{Golden, GoldenLine, Replay};
@@ -56,6 +56,8 @@ use fake_server::{FakeServer, PATIENCE};
 struct App {
     handle: ChannelHandle,
     store: StoreHandle,
+    /// The queue of §7.7, as the request sheet of T-038 will hold it.
+    queue: std::sync::Arc<Queue>,
     endpoint: Endpoint,
     token: Token,
     /// Holds the database, and the socket where there is one. Removed on drop, unless a
@@ -79,10 +81,16 @@ impl App {
         let registry_db = Db::open_at(&database).expect("the database opens");
         let store_db = Db::open_at(&database).expect("the database opens twice");
         let registry = Registry::open(&registry_db, Box::new(NoObserver)).expect("a registry");
+        // One queue, two owners, exactly as `lib.rs` builds it: the store links a request
+        // inside the transition that answers it, the dispatch hands it to sessions.
+        let queue = std::sync::Arc::new(Queue::new(Box::new(NoRequestObserver)));
+        queue
+            .requeue_on_start(&registry_db)
+            .expect("the queue of a previous run");
         let store = Store::load(
             store_db,
             Box::new(NoRunbookSink),
-            Box::new(NoResumeRequests),
+            Box::new(std::sync::Arc::clone(&queue)),
         )
         .expect("a store");
         let (store, deliveries) = store::spawn(store);
@@ -93,12 +101,19 @@ impl App {
         tweak(&mut config);
         let (handle, events) = listen(config).await.expect("the listener binds");
 
-        let dispatch = Dispatch::new(registry_db, registry, store.clone(), handle.clone());
+        let dispatch = Dispatch::new(
+            registry_db,
+            registry,
+            store.clone(),
+            handle.clone(),
+            std::sync::Arc::clone(&queue),
+        );
         tokio::spawn(dispatch.run(events, deliveries));
 
         Self {
             handle,
             store,
+            queue,
             endpoint,
             token,
             dir,
@@ -157,12 +172,43 @@ impl App {
         }
     }
 
+    /// Waits until the app has noticed that a session's connection is gone (§8.3).
+    async fn wait_for_session_to_end(&self, session_ref: &str) {
+        let deadline = tokio::time::Instant::now() + PATIENCE;
+        while self.session_row(session_ref).connected {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the session never ended"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// The `sessions` row of the registry, read back from the database.
     fn session_row(&self, session_ref: &str) -> handoff_app_lib::log::sessions::SessionRow {
-        let db = Db::open_at(self.dir.join("handoff.sqlite")).expect("the database opens");
-        handoff_app_lib::log::sessions::get(&db, session_ref)
+        handoff_app_lib::log::sessions::get(&self.db(), session_ref)
             .expect("the row is readable")
             .expect("the session was registered")
+    }
+
+    /// A connection of this test's own, for what the request sheet of T-038 will do.
+    fn db(&self) -> Db {
+        Db::open_at(self.dir.join("handoff.sqlite")).expect("the database opens")
+    }
+
+    /// What the user typed in the request sheet (OPEN-04, OPEN-04a).
+    fn queue_request(&self, text: &str, session: Option<&str>) -> String {
+        self.queue
+            .create(&self.db(), text, session, &Timestamp::now())
+            .expect("a request is queued")
+    }
+
+    /// One entry of the queue, read back.
+    fn queued(&self, id: &str) -> UserRequest {
+        self.queue
+            .get(&self.db(), id)
+            .expect("the row is readable")
+            .expect("the request is queued")
     }
 
     async fn stop(&self) {
@@ -685,7 +731,7 @@ async fn f11_a_session_that_leaves_ends_the_verification_and_a_later_report_is_l
 }
 
 // ---------------------------------------------------------------------------------------
-// The two fixtures that are replayed in part
+// The fixture that is replayed in part, and the flows the hook decision completes
 // ---------------------------------------------------------------------------------------
 
 #[tokio::test]
@@ -708,15 +754,39 @@ async fn f07_a_spec_naming_a_request_takes_that_request_s_id() {
 }
 
 #[tokio::test]
-async fn f10_a_hook_is_bound_answered_once_and_closed() {
-    // §6.2 and the first three lines of the fixture. The answer is neutral: which handoffs
-    // are worth blocking for is T-035, and the fixture's fourth line is its block.
+async fn f10_a_hook_is_bound_and_blocked_once_for_an_unreported_verification() {
+    // The whole fixture, including its block. The handoff it names is the one `f02` opens,
+    // driven to `awaiting_verification` and left with no call listening (§7.5), which is
+    // exactly the situation VER-07 exists for.
     let app = App::start().await;
-    let _session = app.session().await;
+    let mut fake = app.session().await;
+
+    let f02 = Golden::load("f02-happy-path");
+    let note = note_text(&f02.lines[2]);
+    let mut opening = Replay::new(f02.subset(&[0, 1]));
+    opening.send_next(&mut fake).await; // handoff.open
+    let id = opened(&opening.expect_next(&mut fake).await);
+    walk_the_four_steps(&app, &id, &note).await;
+    let reported = fake.expect("the awaiting_verification outcome").await;
+    let call_id = reported["params"]["call_id"]
+        .as_str()
+        .expect("the outcome names its call")
+        .to_owned();
+
+    // The agent's call stops waiting without the session going away: a disconnection would
+    // make this `not_verified` at once (VER-06) and there would be nothing to block for.
+    fake.send(json!({
+        "jsonrpc": "2.0",
+        "method": "handoff.detach_call",
+        "params": {"handoff_id": id, "call_id": call_id, "reason": "cancelled"}
+    }))
+    .await;
+    app.wait_for("the detach", |tab| !tab.call_attached, &id)
+        .await;
 
     let mut hook = FakeServer::connect(&app.endpoint).await;
     let golden = Golden::load("f10-hook-block");
-    let mut replay = Replay::new(golden.subset(&[0, 1, 2]));
+    let mut replay = Replay::new(golden);
     replay.alias(&fixture_token("f10-hook-block"), app.token.as_str());
 
     replay.send_next(&mut hook).await; // hello, role hook
@@ -727,21 +797,117 @@ async fn f10_a_hook_is_bound_answered_once_and_closed() {
         "a hook registers no session"
     );
     replay.send_next(&mut hook).await; // hook.stop
-
-    let decision = hook.expect("the hook decision").await;
-    assert_eq!(
-        decision["result"]["block"],
-        json!(false),
-        "neutral until T-035"
+    let decision = replay.expect_next(&mut hook).await;
+    assert_eq!(decision["result"]["block"], json!(true));
+    assert!(
+        decision["result"]["reason"]
+            .as_str()
+            .expect("a block carries its reason")
+            .contains(&id),
+        "the reason names the handoff: {decision}"
     );
-    assert_eq!(decision["result"].get("reason"), None);
     // §6.2: one question, one answer, then the connection goes — and the close is the
     // dispatch's to ask for, not the listener's.
     hook.expect_closed().await;
 
     replay.assert_finished();
-    replay.assert_transcript_range(&hook, 0..3, &THE_APPS_OWN, "the hook's handshake");
+    // The reason too, to the byte, once the id is normalised: the fixture's sentence is what
+    // `hook::decide` renders for an unreported verification.
+    replay.assert_transcript(&hook, &THE_APPS_OWN);
     app.stop().await;
+}
+
+#[tokio::test]
+async fn f10_the_same_session_is_blocked_once_and_then_left_alone() {
+    // SRV-12, over a real socket and two hook connections: the counter is the app's, and the
+    // second hook of the same session is told nothing.
+    let app = App::start().await;
+    let mut fake = app.session().await;
+
+    let f02 = Golden::load("f02-happy-path");
+    let note = note_text(&f02.lines[2]);
+    let mut opening = Replay::new(f02.subset(&[0, 1]));
+    opening.send_next(&mut fake).await;
+    let id = opened(&opening.expect_next(&mut fake).await);
+    walk_the_four_steps(&app, &id, &note).await;
+    let reported = fake.expect("the awaiting_verification outcome").await;
+    let call_id = reported["params"]["call_id"]
+        .as_str()
+        .expect("the outcome names its call")
+        .to_owned();
+    fake.send(json!({
+        "jsonrpc": "2.0",
+        "method": "handoff.detach_call",
+        "params": {"handoff_id": id, "call_id": call_id, "reason": "heartbeat"}
+    }))
+    .await;
+    app.wait_for("the detach", |tab| !tab.call_attached, &id)
+        .await;
+
+    assert!(hook_decision(&app).await["block"]
+        .as_bool()
+        .expect("a decision"));
+    let second = hook_decision(&app).await;
+    assert_eq!(second["block"], json!(false), "SRV-12: at most once");
+    assert_eq!(second.get("reason"), None);
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_request_queued_with_no_session_reaches_the_first_one_and_survives_its_detach() {
+    // OPEN-04a, OPEN-06 and FM-34, over the channel: the queue is given to the session that
+    // registers, delivered by its hook, and — for one that was never answered — given back
+    // when that session goes.
+    let app = App::start().await;
+    let waiting = app.queue_request("I'm about to create the API key on Stripe", None);
+    let unanswered = app.queue_request("and rotate the old one", None);
+
+    let session = app.session().await;
+    let session_ref = session.session_ref.clone().expect("a session_ref");
+    assert_eq!(
+        app.queued(&waiting).session_ref.as_deref(),
+        Some(session_ref.as_str()),
+        "OPEN-04a: the first session that registers is given the queue"
+    );
+
+    let decision = hook_decision(&app).await;
+    assert!(decision["block"].as_bool().expect("a decision"));
+    let reason = decision["reason"].as_str().expect("a reason");
+    assert!(
+        reason.contains(&format!("request_id={waiting}")),
+        "OPEN-05's sentence, with the id the handoff will take: {reason}"
+    );
+    assert_eq!(
+        app.queued(&waiting).delivered_via.map(|via| via.as_str()),
+        Some("stop_hook"),
+        "OPEN-06: the hook is a delivery path and says so"
+    );
+
+    drop(session);
+    app.wait_for_session_to_end(&session_ref).await;
+    assert_eq!(
+        app.queued(&unanswered).session_ref,
+        None,
+        "FM-34: a request that never got its spec goes back to the queue"
+    );
+    app.stop().await;
+}
+
+/// One `hook.stop` from a hook that speaks like `f10`'s, and the decision it was answered
+/// with.
+async fn hook_decision(app: &App) -> Value {
+    let mut hook = FakeServer::connect(&app.endpoint).await;
+    hook.send(fake_server::with_token(
+        &fake_server::hello_of("f10-hook-block"),
+        &app.token,
+    ))
+    .await;
+    hook.expect("the hello result").await;
+    hook.send(json!({"jsonrpc": "2.0", "id": 2, "method": "hook.stop", "params": {}}))
+        .await;
+    let answer = hook.expect("the hook decision").await;
+    hook.expect_closed().await;
+    answer["result"].clone()
 }
 
 // ---------------------------------------------------------------------------------------

@@ -189,6 +189,11 @@ pub struct Registry {
     sessions: IndexMap<String, Session>,
     by_conn: HashMap<ConnId, String>,
     observer: Box<dyn SessionsObserver>,
+    /// The last set of sessions a hook could not be told apart between (FM-22, SRV-18).
+    ///
+    /// In memory and not in the log: it is a question about the run, and a run that has
+    /// ended has no session to attribute anything to.
+    ambiguous_hook: Vec<String>,
 }
 
 impl std::fmt::Debug for Registry {
@@ -209,6 +214,7 @@ impl Registry {
             sessions: IndexMap::new(),
             by_conn: HashMap::new(),
             observer,
+            ambiguous_hook: Vec::new(),
         }
     }
 
@@ -421,6 +427,39 @@ impl Registry {
         }
         self.observer.sessions_changed();
         Ok(forgotten)
+    }
+
+    /// Records that a hook matched several sessions and nothing separated them (FM-22).
+    ///
+    /// The hook itself was answered neutrally; this is the question the overlay puts to the
+    /// user the next time they interact ("which session is this?", SRV-18). It is kept
+    /// rather than acted on because there is nobody to ask at the moment a hook arrives —
+    /// the window may not even be open.
+    pub fn needs_session_picker(&mut self, candidates: &[String]) {
+        if self.ambiguous_hook == candidates {
+            return;
+        }
+        tracing::info!(
+            candidates = candidates.len(),
+            "a hook matched several sessions and none of the keys separated them"
+        );
+        self.ambiguous_hook = candidates.to_vec();
+        self.observer.sessions_changed();
+    }
+
+    /// The sessions the overlay has to ask the user to choose between, if any (FM-22).
+    #[must_use]
+    pub fn session_picker(&self) -> &[String] {
+        &self.ambiguous_hook
+    }
+
+    /// The user answered the picker, or the question stopped being one.
+    pub fn session_picker_answered(&mut self) {
+        if self.ambiguous_hook.is_empty() {
+            return;
+        }
+        self.ambiguous_hook.clear();
+        self.observer.sessions_changed();
     }
 
     /// One session, if this run registered it.

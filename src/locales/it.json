@@ -10,5 +10,7 @@
   "view.onboarding": "Benvenuto",
   "view.preview": "Anteprima",
   "view.placeholder": "Questa schermata non è ancora stata realizzata.",
+  "request.clipboard": "[Handoff {id}] L'utente ha aperto una richiesta: \"{text}\". Produci la spec e chiama handoff_to_user con request_id={id}.",
+  "request.resume": "[Handoff {id}] L'utente ha ripreso questo handoff dal pannello. Chiama handoff_to_user con resume={id} per riprenderlo.",
   "dev.views": "Schermate"
 }

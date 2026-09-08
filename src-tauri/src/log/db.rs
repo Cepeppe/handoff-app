@@ -57,11 +57,18 @@ struct Migration {
 }
 
 /// Every step, in order. Append; never edit an entry that has shipped.
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    sql: include_str!("../../migrations/0001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        sql: include_str!("../../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "resume_requests",
+        sql: include_str!("../../migrations/0002_resume_requests.sql"),
+    },
+];
 
 /// The schema version this build knows how to read and write.
 #[must_use]
@@ -319,17 +326,27 @@ mod tests {
                     [],
                 )
                 .expect("a settings row");
-            assert_eq!(db.schema_version().expect("version"), 1);
+            assert_eq!(
+                db.schema_version().expect("version"),
+                current_schema_version()
+            );
         }
         let reopened = Db::open_at(&path).expect("the same database");
-        assert_eq!(reopened.schema_version().expect("version"), 1);
+        assert_eq!(
+            reopened.schema_version().expect("version"),
+            current_schema_version()
+        );
         let applied: i64 = reopened
             .conn()
             .query_row("SELECT count(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .expect("count");
-        assert_eq!(applied, 1, "a re-open must not replay a migration");
+        assert_eq!(
+            applied,
+            current_schema_version(),
+            "a re-open must not replay a migration"
+        );
         let value: String = reopened
             .conn()
             .query_row(

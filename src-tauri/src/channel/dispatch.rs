@@ -44,9 +44,11 @@
 //! the connection would end a session over a full disk.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tokio::sync::mpsc::Receiver;
 
+use crate::format::channel::HookInput;
 use crate::format::channel::{
     ChannelError, ChannelErrorCode, ChannelErrorData, ChannelMessage, ErrorResponse,
     HandoffContinueParams, HandoffContinueResult, HandoffEventParams, HandoffOpenResult,
@@ -54,11 +56,24 @@ use crate::format::channel::{
     JsonRpcVersion, Notification, NotificationBody, RequestBody, RequestId, ResultBody,
     UnknownValueKeyData,
 };
+use crate::hook;
 use crate::log::{Db, Timestamp};
+use crate::requests::Queue;
 use crate::sessions::{HookBinding, Registry, SystemProcessTable};
 use crate::store::{Call, Delivery, OpenParams, Opener, Refusal, StoreHandle};
 
 use super::listener::{ChannelEvent, ChannelHandle, ConnId, DisconnectReason, Peer, PeerRole};
+
+/// What a hook said at `hello`, kept until its `hook.stop` arrives.
+///
+/// The binding, because `Registry::bind_hook` is answered once and §7.5 binds for the rest
+/// of the session's life; and `stop_hook_active`, because the decision needs it and the
+/// `hook.stop` params are empty by design (§6.3).
+#[derive(Debug)]
+struct HookContext {
+    binding: HookBinding,
+    input: HookInput,
+}
 
 /// The channel's half of §7.3: one owner for the registry, one line to the store.
 pub struct Dispatch {
@@ -68,9 +83,12 @@ pub struct Dispatch {
     registry: Registry,
     store: StoreHandle,
     channel: ChannelHandle,
-    /// What [`Registry::bind_hook`] concluded for each live hook connection, kept until its
-    /// `hook.stop` is answered.
-    hooks: HashMap<ConnId, HookBinding>,
+    /// The queue of §7.7, shared with the store: this task hands it to a session that
+    /// registers (OPEN-04a), takes it back when one detaches (FM-34) and reads it for every
+    /// hook (OPEN-06).
+    queue: Arc<Queue>,
+    /// What each live hook connection said and was bound to.
+    hooks: HashMap<ConnId, HookContext>,
 }
 
 impl std::fmt::Debug for Dispatch {
@@ -85,12 +103,19 @@ impl std::fmt::Debug for Dispatch {
 impl Dispatch {
     /// The dispatch, before it starts reading.
     #[must_use]
-    pub fn new(db: Db, registry: Registry, store: StoreHandle, channel: ChannelHandle) -> Self {
+    pub fn new(
+        db: Db,
+        registry: Registry,
+        store: StoreHandle,
+        channel: ChannelHandle,
+        queue: Arc<Queue>,
+    ) -> Self {
         Self {
             db,
             registry,
             store,
             channel,
+            queue,
             hooks: HashMap::new(),
         }
     }
@@ -148,12 +173,27 @@ impl Dispatch {
         let table = SystemProcessTable::snapshot();
         match peer.role {
             PeerRole::Server => {
-                if let Err(error) = self.registry.register(&self.db, &peer, &table) {
+                match self.registry.register(&self.db, &peer, &table) {
+                    Ok(session_ref) => {
+                        // OPEN-04a: a request queued with no session goes to the first one
+                        // that registers. A queue that cannot be read is a log line and not
+                        // a reason to refuse the session — the hook still delivers it at the
+                        // end of the turn (OPEN-06).
+                        if let Some(session_ref) = session_ref {
+                            if let Err(error) =
+                                self.queue.deliver_to_first_session(&self.db, &session_ref)
+                            {
+                                tracing::error!(error = %error, "the queued requests could not be given to a new session");
+                            }
+                        }
+                    }
                     // FM-28: a write that fails must not take the channel down with it. The
                     // connection stays up and every request on it is refused for want of a
                     // session, which is the same silence a full disk produces everywhere
                     // else.
-                    tracing::error!(error = %error, "a session could not be registered");
+                    Err(error) => {
+                        tracing::error!(error = %error, "a session could not be registered");
+                    }
                 }
             }
             PeerRole::Hook => {
@@ -163,18 +203,20 @@ impl Dispatch {
                     tracing::warn!(conn_id = peer.conn_id, "a hook connected without its input");
                     return;
                 };
-                match self
+                let binding = self
                     .registry
                     .bind_hook(&self.db, &peer.identity, hook, &table)
-                {
-                    Ok(binding) => {
-                        self.hooks.insert(peer.conn_id, binding);
-                    }
-                    Err(error) => {
+                    .unwrap_or_else(|error| {
                         tracing::error!(error = %error, "a hook could not be bound to a session");
-                        self.hooks.insert(peer.conn_id, HookBinding::None);
-                    }
-                }
+                        HookBinding::None
+                    });
+                self.hooks.insert(
+                    peer.conn_id,
+                    HookContext {
+                        binding,
+                        input: hook.clone(),
+                    },
+                );
             }
         }
     }
@@ -302,9 +344,22 @@ impl Dispatch {
                 }
             }
             RequestBody::HookStop(_) => {
-                let binding = self.hooks.remove(&conn_id).unwrap_or(HookBinding::None);
-                let decision = hook_decision(conn_id, &binding);
-                reply(&self.channel, conn_id, id, ResultBody::HookStop(decision)).await;
+                // §7.5 reads the tabs the overlay would draw, so the store answers first and
+                // the decision is taken with nothing borrowed across an await. The hook's
+                // whole budget is 2 s (SRV-11), and this is one actor round trip plus three
+                // indexed queries.
+                let handoffs = self.store.list_for_ui(now.clone()).await;
+                let decision = self.hook_decision(conn_id, &handoffs, &now);
+                reply(
+                    &self.channel,
+                    conn_id,
+                    id,
+                    ResultBody::HookStop(HookStopResult {
+                        block: decision.block,
+                        reason: decision.reason,
+                    }),
+                )
+                .await;
                 // §6.2: one question, one answer, then the socket goes. The listener does
                 // not close it, because the answer is not its to send.
                 self.channel.close(conn_id).await;
@@ -370,6 +425,11 @@ impl Dispatch {
             return;
         };
         tracing::info!(conn_id, session_ref, reason = ?reason, "a session ended");
+        // FM-34: a request that never got its spec goes back to the unassigned queue, so the
+        // next session that registers is offered it.
+        if let Err(error) = self.queue.requeue_on_detach(&self.db, &session_ref) {
+            tracing::error!(error = %error, "the open requests of a detached session could not be re-queued");
+        }
         if let Err(error) = self.store.session_disconnected(session_ref, now).await {
             tracing::error!(error = %error, "the disconnection could not be recorded on a handoff");
         }
@@ -424,6 +484,46 @@ impl Dispatch {
     /// The session that opened a handoff on this connection (§7.4).
     fn opener(&self, conn_id: ConnId) -> Option<Opener> {
         self.registry.of_connection(conn_id).map(Opener::from)
+    }
+
+    /// The Stop-hook decision of §7.5 and F-10.
+    ///
+    /// The hook connection is answered once and closed, so its context is taken rather than
+    /// read: a second `hook.stop` on the same connection — which §6.2 does not allow — finds
+    /// nothing bound and is answered neutrally.
+    ///
+    /// A decision that cannot be taken is neutral. The safety net exists to stop an agent
+    /// from forgetting, and one that held the agent because the disk was full would be worse
+    /// than the forgetting (PRIN-10, FM-33).
+    fn hook_decision(
+        &mut self,
+        conn_id: ConnId,
+        handoffs: &[crate::store::HandoffSnapshot],
+        now: &Timestamp,
+    ) -> hook::Decision {
+        let Some(context) = self.hooks.remove(&conn_id) else {
+            tracing::warn!(conn_id, "a hook.stop arrived on a connection with no hello");
+            return hook::Decision::neutral();
+        };
+        let decision = hook::decide(
+            &self.db,
+            &self.queue,
+            &context.binding,
+            &context.input,
+            handoffs,
+            now,
+        )
+        .unwrap_or_else(|error| {
+            tracing::error!(error = %error, conn_id, "a hook decision could not be taken");
+            hook::Decision::neutral()
+        });
+        if !decision.needs_session_picker.is_empty() {
+            // FM-22, SRV-18: nothing separates the candidates, so the hook is answered
+            // neutrally and the overlay asks the user which tab this was.
+            self.registry
+                .needs_session_picker(&decision.needs_session_picker);
+        }
+        decision
     }
 
     /// The call a request carries, with the session it belongs to when there is one.
@@ -525,23 +625,6 @@ fn error_data(code: ChannelErrorCode, refusal: &Refusal) -> Option<ChannelErrorD
     }
 }
 
-/// The Stop-hook decision of §7.5 and F-10.
-///
-/// Neutral for now, whatever the binding says: which handoffs of the bound session are
-/// worth blocking for, and the once-per-item counter that keeps a session from being
-/// blocked twice for the same thing, are the whole of T-035. Neutral is the answer every
-/// row of the F-10 decision table gives when there is nothing to say, and it is what the
-/// hook already does when the app is unreachable, so a hook meeting this build behaves
-/// exactly as FM-03 describes.
-// TASK: T-035 — replace this with `hook::decide`, which reads the binding made at `hello`.
-fn hook_decision(conn_id: ConnId, binding: &HookBinding) -> HookStopResult {
-    tracing::debug!(conn_id, binding = ?binding, "a hook was answered neutrally");
-    HookStopResult {
-        block: false,
-        reason: None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,17 +690,19 @@ mod tests {
     }
 
     #[test]
-    fn a_hook_is_answered_neutrally_whatever_it_was_bound_to() {
-        // Until T-035: every binding gives the same answer, and a neutral answer never
-        // carries a reason (§7.5, the schema requires one only when `block` is true).
-        for binding in [
-            HookBinding::None,
-            HookBinding::Bound("ses_00000001".to_owned()),
-            HookBinding::Ambiguous(vec!["ses_00000001".to_owned(), "ses_00000002".to_owned()]),
-        ] {
-            let decision = hook_decision(1, &binding);
-            assert!(!decision.block);
-            assert_eq!(decision.reason, None);
-        }
+    fn a_neutral_decision_never_carries_a_reason() {
+        // The channel schema requires `reason` only when `block` is true, and the app must
+        // not send one it does not mean: `hook.stop`'s result is closed (§6.3).
+        let neutral = hook::Decision::neutral();
+        assert!(!neutral.block);
+        assert_eq!(neutral.reason, None);
+        let result = HookStopResult {
+            block: neutral.block,
+            reason: neutral.reason,
+        };
+        assert_eq!(
+            serde_json::to_value(result).expect("a decision serialises"),
+            serde_json::json!({"block": false})
+        );
     }
 }

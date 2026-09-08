@@ -172,6 +172,7 @@ pub(crate) mod testing {
             created_at: at("2026-09-08T11:00:00Z"),
             delivered_via: None,
             linked_handoff_id: None,
+            about_handoff_id: None,
         }
     }
 

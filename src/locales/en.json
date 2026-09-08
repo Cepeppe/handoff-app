@@ -10,5 +10,7 @@
   "view.onboarding": "Welcome",
   "view.preview": "Preview",
   "view.placeholder": "This view is not built yet.",
+  "request.clipboard": "[Handoff {id}] The user opened a request: \"{text}\". Produce the spec and call handoff_to_user with request_id={id}.",
+  "request.resume": "[Handoff {id}] The user resumed this handoff in the overlay. Call handoff_to_user with resume={id} to pick it up.",
   "dev.views": "Views"
 }

@@ -8,6 +8,11 @@
 //! `session_ref` here has no foreign key on purpose. A request may be queued with no
 //! session at all (OPEN-04a), and once delivered it is a note about *where it went* — the
 //! session purge of §8.3 must not be able to rewrite that history.
+//!
+//! The table holds the two things `requests::queue` puts in front of an agent: a request
+//! for a spec, and a request to come back to a handoff the user resumed from the overlay
+//! (FM-31). `about_handoff_id` is what tells them apart; `migrations/0002` says why it has
+//! to be a column and not a convention.
 
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{params, OptionalExtension, Row, ToSql};
@@ -77,9 +82,23 @@ pub struct UserRequestRow {
     pub created_at: Timestamp,
     /// How it reached the agent, once it did.
     pub delivered_via: Option<DeliveredVia>,
-    /// The handoff that answered it (OPEN-08).
+    /// The handoff that answered it: the one that adopted its id or was linked to it
+    /// (OPEN-08), or — for a resume — the one whose call finally attached (FM-31). A
+    /// request with one set is closed, whichever kind it is, and that is what every "still
+    /// open" query below reads.
     pub linked_handoff_id: Option<String>,
+    /// The handoff this asks an agent to come back to, when that is what it asks (FM-31,
+    /// RESP-07). `None` is an ordinary request for a spec, and only those are adopted or
+    /// linked by a new handoff (OPEN-08).
+    pub about_handoff_id: Option<String>,
 }
+
+/// The columns of a request, in the order [`read_row`] reads them.
+///
+/// One place rather than six: a column added to the table and forgotten in one of the
+/// queries would be read as another column's value, which `read_row` cannot detect.
+const READ: &str = "SELECT id, session_ref, text, created_at, delivered_via, \
+                    linked_handoff_id, about_handoff_id FROM user_requests";
 
 /// Writes a request, creating it or replacing it.
 ///
@@ -90,14 +109,16 @@ pub fn upsert(db: &Db, row: &UserRequestRow) -> Result<()> {
     db.conn()
         .execute(
             "INSERT INTO user_requests (\
-                 id, session_ref, text, created_at, delivered_via, linked_handoff_id) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 id, session_ref, text, created_at, delivered_via, linked_handoff_id, \
+                 about_handoff_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT (id) DO UPDATE SET \
                  session_ref = excluded.session_ref, \
                  text = excluded.text, \
                  created_at = excluded.created_at, \
                  delivered_via = excluded.delivered_via, \
-                 linked_handoff_id = excluded.linked_handoff_id",
+                 linked_handoff_id = excluded.linked_handoff_id, \
+                 about_handoff_id = excluded.about_handoff_id",
             params![
                 row.id,
                 row.session_ref,
@@ -105,6 +126,7 @@ pub fn upsert(db: &Db, row: &UserRequestRow) -> Result<()> {
                 row.created_at,
                 row.delivered_via,
                 row.linked_handoff_id,
+                row.about_handoff_id,
             ],
         )
         .map_err(|error| StoreError::of("writing a user request", error))?;
@@ -150,12 +172,7 @@ pub fn link(db: &Db, id: &str, handoff_id: &str) -> Result<bool> {
 /// [`StoreError::Persistence`] when the row cannot be read.
 pub fn get(db: &Db, id: &str) -> Result<Option<UserRequestRow>> {
     db.conn()
-        .query_row(
-            "SELECT id, session_ref, text, created_at, delivered_via, linked_handoff_id \
-             FROM user_requests WHERE id = ?1",
-            [id],
-            read_row,
-        )
+        .query_row(&format!("{READ} WHERE id = ?1"), [id], read_row)
         .optional()
         .map_err(|error| StoreError::of("reading a user request", error))
 }
@@ -169,26 +186,152 @@ pub fn get(db: &Db, id: &str) -> Result<Option<UserRequestRow>> {
 ///
 /// [`StoreError::Persistence`] when the rows cannot be read.
 pub fn list_open(db: &Db, session: Option<&str>) -> Result<Vec<UserRequestRow>> {
-    let (sql, params): (&str, Vec<&dyn ToSql>) = match &session {
+    let (sql, params): (String, Vec<&dyn ToSql>) = match &session {
         Some(session_ref) => (
-            "SELECT id, session_ref, text, created_at, delivered_via, linked_handoff_id \
-             FROM user_requests \
-             WHERE linked_handoff_id IS NULL AND (session_ref = ?1 OR session_ref IS NULL) \
-             ORDER BY created_at, id",
+            format!(
+                "{READ} WHERE linked_handoff_id IS NULL \
+                 AND (session_ref = ?1 OR session_ref IS NULL) ORDER BY created_at, id"
+            ),
             vec![session_ref],
         ),
         None => (
-            "SELECT id, session_ref, text, created_at, delivered_via, linked_handoff_id \
-             FROM user_requests WHERE linked_handoff_id IS NULL ORDER BY created_at, id",
+            format!("{READ} WHERE linked_handoff_id IS NULL ORDER BY created_at, id"),
             Vec::new(),
         ),
     };
+    query(db, &sql, params.as_slice())
+}
+
+/// The oldest request of `session` that is still waiting for a spec (OPEN-08).
+///
+/// Only ordinary requests: a resume asks an agent to come back to a handoff that already
+/// exists, so linking a brand-new one to it would answer it with the wrong work.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the row cannot be read.
+pub fn oldest_open_for_session(db: &Db, session_ref: &str) -> Result<Option<UserRequestRow>> {
+    let sql = format!(
+        "{READ} WHERE linked_handoff_id IS NULL AND about_handoff_id IS NULL \
+         AND session_ref = ?1 ORDER BY created_at, id LIMIT 1"
+    );
+    db.conn()
+        .query_row(&sql, [session_ref], read_row)
+        .optional()
+        .map_err(|error| StoreError::of("reading the user requests", error))
+}
+
+/// The open requests no session has been given yet, oldest first (OPEN-04a).
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the rows cannot be read.
+pub fn list_unassigned_open(db: &Db) -> Result<Vec<UserRequestRow>> {
+    let sql = format!(
+        "{READ} WHERE linked_handoff_id IS NULL AND session_ref IS NULL \
+         ORDER BY created_at, id"
+    );
+    query(db, &sql, &[])
+}
+
+/// Gives an open request to a session (OPEN-04a, OPEN-06).
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn assign(db: &Db, id: &str, session_ref: &str) -> Result<bool> {
+    let changed = db
+        .conn()
+        .execute(
+            "UPDATE user_requests SET session_ref = ?2 \
+             WHERE id = ?1 AND linked_handoff_id IS NULL",
+            params![id, session_ref],
+        )
+        .map_err(|error| StoreError::of("assigning a user request", error))?;
+    Ok(changed > 0)
+}
+
+/// Puts a detached session's still-open requests back on the unassigned queue (FM-34).
+///
+/// Returns how many were re-queued. What has already been answered is history and stays
+/// where it is: only a request nobody produced a spec for can still reach another session.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn unassign_open_of(db: &Db, session_ref: &str) -> Result<usize> {
+    db.conn()
+        .execute(
+            "UPDATE user_requests SET session_ref = NULL \
+             WHERE session_ref = ?1 AND linked_handoff_id IS NULL",
+            [session_ref],
+        )
+        .map_err(|error| StoreError::of("re-queueing the user requests of a session", error))
+}
+
+/// Puts every still-open request back on the unassigned queue, whichever session it named.
+///
+/// For the one moment when that is true of all of them at once: the app has just started
+/// and no session is connected, so every `session_ref` in the table belongs to a previous
+/// run (FM-34, `requests::queue`).
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn unassign_all_open(db: &Db) -> Result<usize> {
+    db.conn()
+        .execute(
+            "UPDATE user_requests SET session_ref = NULL \
+             WHERE session_ref IS NOT NULL AND linked_handoff_id IS NULL",
+            [],
+        )
+        .map_err(|error| StoreError::of("re-queueing the user requests", error))
+}
+
+/// Opens again every request this handoff was answering (FM-20).
+///
+/// The one-click correction of §12.4 moves a handoff from one request to another, and the
+/// request it leaves has to become collectable again — otherwise a mis-link would consume
+/// it for good and the user would have no way to get it back.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn unlink_handoff(db: &Db, handoff_id: &str) -> Result<usize> {
+    db.conn()
+        .execute(
+            "UPDATE user_requests SET linked_handoff_id = NULL WHERE linked_handoff_id = ?1",
+            [handoff_id],
+        )
+        .map_err(|error| StoreError::of("unlinking a user request", error))
+}
+
+/// Closes the resume requests about `handoff_id`: an agent has come back to it (FM-31).
+///
+/// Returns how many were closed. `linked_handoff_id` takes the same handoff the request was
+/// about, so a resume ends its life exactly as an ordinary request does — answered by a
+/// handoff — and no query has to know which kind it was.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn close_resumes_about(db: &Db, handoff_id: &str) -> Result<usize> {
+    db.conn()
+        .execute(
+            "UPDATE user_requests SET linked_handoff_id = about_handoff_id \
+             WHERE about_handoff_id = ?1 AND linked_handoff_id IS NULL",
+            [handoff_id],
+        )
+        .map_err(|error| StoreError::of("closing a resume request", error))
+}
+
+fn query(db: &Db, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<UserRequestRow>> {
     let mut statement = db
         .conn()
         .prepare(sql)
         .map_err(|error| StoreError::of("reading the user requests", error))?;
     let rows = statement
-        .query_map(params.as_slice(), read_row)
+        .query_map(params, read_row)
         .map_err(|error| StoreError::of("reading the user requests", error))?
         .collect::<rusqlite::Result<Vec<UserRequestRow>>>()
         .map_err(|error| StoreError::of("reading the user requests", error))?;
@@ -203,6 +346,7 @@ fn read_row(row: &Row<'_>) -> rusqlite::Result<UserRequestRow> {
         created_at: row.get(3)?,
         delivered_via: row.get(4)?,
         linked_handoff_id: row.get(5)?,
+        about_handoff_id: row.get(6)?,
     })
 }
 

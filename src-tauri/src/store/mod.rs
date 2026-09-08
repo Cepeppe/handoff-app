@@ -17,7 +17,8 @@
 //!   them a transaction (`log::transitions`). [`actor::Store`] is the synchronous core, so
 //!   the whole of §8.1 can be exercised with no runtime and no channel;
 //!   [`actor::StoreHandle`] is the tokio task around it.
-//! - [`runbook_sink`] holds the two seams to modules that do not exist yet.
+//! - [`runbook_sink`] holds the two seams to the rest of the app: the runbook writer and
+//!   the user-request queue.
 //!
 //! # The two rules that shape it
 //!
@@ -42,7 +43,7 @@ pub use handoff::{
     AttachedCall, Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued,
     Round, ScreenshotPayload,
 };
-pub use runbook_sink::{NoResumeRequests, NoRunbookSink, ResumeRequests, RunbookSink};
+pub use runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
 
 use crate::format::channel::ChannelErrorCode;
 use crate::log::{HandoffState, StoreError};

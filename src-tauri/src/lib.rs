@@ -169,17 +169,27 @@ fn state_of_the_app(
             |error| tracing::error!(error = %error, "the session registry could not start"),
         )
         .ok()?;
+
+    // The queue of §7.7, shared by the store (which links a request inside the transition
+    // that answers it) and the dispatch (which hands it to sessions and reads it for every
+    // hook). No session is connected yet, so every assignment left in the table names a
+    // session of the previous run (FM-34, `requests::queue::requeue_on_start`).
+    let queue = std::sync::Arc::new(requests::Queue::new(Box::new(requests::NoRequestObserver)));
+    if let Err(error) = queue.requeue_on_start(&registry_db) {
+        tracing::error!(error = %error, "the queued requests of the previous run could not be re-queued");
+    }
+
     let store = store::Store::load(
         store_db,
         Box::new(store::NoRunbookSink),
-        Box::new(store::NoResumeRequests),
+        Box::new(std::sync::Arc::clone(&queue)),
     )
     .inspect_err(|error| tracing::error!(error = %error, "the handoff store could not be restored"))
     .ok()?;
 
     let (store, deliveries) = store::spawn(store);
     Some((
-        channel::Dispatch::new(registry_db, registry, store, handle.clone()),
+        channel::Dispatch::new(registry_db, registry, store, handle.clone(), queue),
         deliveries,
     ))
 }
