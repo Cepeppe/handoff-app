@@ -7,4 +7,7 @@
 //!
 //! No `AppHandle` reaches this module: what the UI needs is emitted through the traits of
 //! `ui_bridge`, and what the channel needs is returned as data.
-// TASK: T-030 (schema, migrations, repositories), T-033 (state machine, outcomes, timers)
+// The persistence this module writes through lives in `crate::log` (T-030): the schema, the
+// migrations and one typed repository per table, including `handoffs::upsert`, which is what
+// writes `state_json`. No SQL belongs here.
+// TASK: T-033 (state machine, outcomes, timers)
