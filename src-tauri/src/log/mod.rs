@@ -27,7 +27,8 @@
 //! # Reading order
 //!
 //! [`db`] opens the file and migrates it; [`time`] is the one shape an instant has;
-//! [`redact`] is the masking; then one module per table; [`maintenance`] is "delete
+//! [`redact`] is the masking; then one module per table; [`transitions`] commits the rows
+//! of one move of the state machine together (DD-31); [`maintenance`] is "delete
 //! everything" and "export everything" (LOG-04).
 
 pub mod db;
@@ -44,12 +45,14 @@ pub mod sessions;
 pub mod settings;
 pub mod test_support;
 pub mod time;
+pub mod transitions;
 pub mod user_requests;
 
 pub use db::Db;
 pub use error::{PersistenceCause, Result, StoreError};
 pub use handoffs::{HandoffRow, HandoffState};
 pub use time::Timestamp;
+pub use transitions::Transition;
 
 /// Fixtures shared by the unit tests of this module.
 ///

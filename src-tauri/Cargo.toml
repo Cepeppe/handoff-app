@@ -77,6 +77,14 @@ tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 # gets it from `String.prototype.normalize`; this is the same algorithm.
 unicode-normalization = { version = "0.1.25", default-features = false }
 
+[dev-dependencies]
+# The property suite of the store (§11.2, T-033): random sequences of user and agent actions
+# against the state machine of §8.1. `default-features = false` with `std` keeps the process
+# forking and the per-case timeout out of the tree — the properties here are assertions, not
+# guards against a hang, and a test binary that re-executes itself is one more thing to
+# explain on a machine where Smart App Control judges every freshly linked executable.
+proptest = { version = "1.9.0", default-features = false, features = ["std"] }
+
 # The named pipe of the channel carries an explicit DACL granting access to this user alone
 # (§6.2, A-16), which needs the process token's SID and an SDDL conversion; the token file
 # is created with the same descriptor. Nothing else in the crate calls Win32 directly.
