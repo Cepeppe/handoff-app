@@ -118,7 +118,10 @@ fn start_channel() -> Option<channel::ChannelHandle> {
     match tauri::async_runtime::block_on(channel::start()) {
         Ok((handle, events)) => {
             tracing::info!(endpoint = %handle.endpoint().display(), "the channel is listening");
-            match state_of_the_app(&handle) {
+            // Inside `block_on` because `store::spawn` puts the actor on the runtime, and
+            // `tokio::spawn` panics outside a runtime's context. Nothing here awaits; what
+            // the block provides is the context, which the builder has not started yet.
+            match tauri::async_runtime::block_on(async { state_of_the_app(&handle) }) {
                 Some(dispatch) => {
                     let (dispatch, deliveries) = dispatch;
                     tauri::async_runtime::spawn(dispatch.run(events, deliveries));

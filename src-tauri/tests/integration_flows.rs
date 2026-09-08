@@ -58,8 +58,10 @@ struct App {
     store: StoreHandle,
     endpoint: Endpoint,
     token: Token,
-    /// Holds the database, and the socket where there is one. Removed on drop.
+    /// Holds the database, and the socket where there is one. Removed on drop, unless a
+    /// second app is going to be started over it.
     dir: PathBuf,
+    removes_the_directory: bool,
 }
 
 impl App {
@@ -100,7 +102,18 @@ impl App {
             endpoint,
             token,
             dir,
+            removes_the_directory: true,
         }
+    }
+
+    /// Leaves the directory behind when this app is dropped.
+    ///
+    /// The restart of FM-13 is two apps over one database, and the first one's `Drop` would
+    /// otherwise take the file with it. It does on macOS, where a temporary directory whose
+    /// files are still open is removed without complaint, and it does not on Windows, where
+    /// the removal fails and the test passes for the wrong reason.
+    fn keep_the_directory(&mut self) {
+        self.removes_the_directory = false;
     }
 
     /// A `fake-server` connected and registered as a session.
@@ -161,24 +174,38 @@ impl Drop for App {
     fn drop(&mut self) {
         // Best effort: the store's connection may still hold the file open on Windows, and
         // a temporary directory left behind is not worth failing a green test over.
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if self.removes_the_directory {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
 /// An endpoint of this test's own, so that tests run in parallel and never touch the real
 /// one.
 fn private_endpoint(dir: &std::path::Path) -> Endpoint {
-    let unique = format!("{}-{}", std::process::id(), ids::new_session_ref());
+    let unique = short_id();
     if cfg!(windows) {
         Endpoint::Pipe {
-            name: format!(r"\\.\pipe\handoff-flows-{unique}"),
+            name: format!(r"\\.\pipe\hf-{}-{unique}", std::process::id()),
         }
     } else {
+        // One socket per app, not one per directory: the restart of FM-13 puts two apps in
+        // one directory and the second would meet the first's file. Short, because
+        // `sun_path` is 104 bytes and a macOS temporary directory is already fifty of them
+        // (§5.8, FM-12).
         Endpoint::Unix {
-            path: dir.join("app.sock"),
+            path: dir.join(format!("{unique}.sock")),
             pointer: None,
         }
     }
+}
+
+/// Eight characters, unique enough for one test's directory or socket.
+fn short_id() -> String {
+    ids::new_session_ref()
+        .strip_prefix("ses_")
+        .expect("a session ref is prefixed")
+        .to_owned()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -794,7 +821,8 @@ async fn fm13_a_restarted_app_gives_a_reconnecting_session_its_handoff_back() {
     // server that reconnects re-attaches with `handoff.resume` (NFR-12, FM-13).
     let dir = temp_dir();
     let id = {
-        let app = App::start_in(dir.clone(), |_| {}).await;
+        let mut app = App::start_in(dir.clone(), |_| {}).await;
+        app.keep_the_directory();
         let mut fake = app.session().await;
         fake.mark();
         let mut replay = Replay::new(Golden::load("f02-happy-path").subset(&[0, 1]));
@@ -896,11 +924,7 @@ async fn traffic_moves_a_session_s_last_sign_of_life_and_leaving_marks_it_discon
 
 /// A directory of this test's own.
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "handoff-flows-{}-{}",
-        std::process::id(),
-        ids::new_session_ref()
-    ));
+    let dir = std::env::temp_dir().join(format!("hf-{}-{}", std::process::id(), short_id()));
     std::fs::create_dir_all(&dir).expect("the temporary directory is created");
     dir
 }
