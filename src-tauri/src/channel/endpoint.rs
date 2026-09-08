@@ -265,6 +265,13 @@ pub enum StaleCheck {
 /// refuses a connection at once (`ECONNREFUSED`), and one whose owner is alive accepts it.
 /// Deleting first and asking later would take the endpoint away from a running instance.
 ///
+/// **Only `ECONNREFUSED` means stale.** A connect can also fail because the listener's
+/// backlog is momentarily full (`EAGAIN` on macOS, measured on the CI runner), because the
+/// path is not a socket, or because permissions refuse it — and none of those means nobody
+/// is there. Every other error is therefore reported as [`StaleCheck::Live`], which makes
+/// this instance refuse to start rather than delete the endpoint of an app that is running:
+/// a failure to start is visible and recoverable, a stolen endpoint is neither.
+///
 /// # Errors
 ///
 /// When the file exists, nothing answers on it, and it cannot be removed.
@@ -275,11 +282,15 @@ pub fn clear_stale_socket(path: &Path) -> io::Result<StaleCheck> {
     if !path.exists() {
         return Ok(StaleCheck::Absent);
     }
-    if UnixStream::connect(path).is_ok() {
-        return Ok(StaleCheck::Live);
+    match UnixStream::connect(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(StaleCheck::Absent),
+        Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
+            std::fs::remove_file(path)?;
+            Ok(StaleCheck::Removed)
+        }
+        Ok(_) => Ok(StaleCheck::Live),
+        Err(_) => Ok(StaleCheck::Live),
     }
-    std::fs::remove_file(path)?;
-    Ok(StaleCheck::Removed)
 }
 
 /// Windows has no socket file to go stale: a pipe name exists only while its server does.

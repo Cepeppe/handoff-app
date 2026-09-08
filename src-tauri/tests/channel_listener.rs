@@ -1037,44 +1037,41 @@ async fn a_live_socket_is_kept_and_a_stale_one_is_cleared() {
         ids::new_session_ref()
     ));
     std::fs::create_dir_all(&dir).expect("the temporary directory is created");
-    let path = dir.join("app.sock");
-    let endpoint = || Endpoint::Unix {
-        path: path.clone(),
-        pointer: None,
+    let live = dir.join("live.sock");
+    let stale = dir.join("stale.sock");
+    let config = |path: &std::path::Path| {
+        ListenerConfig::new(
+            Endpoint::Unix {
+                path: path.to_path_buf(),
+                pointer: None,
+            },
+            Token::generate(),
+        )
     };
-
-    let (first, _first_events) = listen(ListenerConfig::new(endpoint(), Token::generate()))
-        .await
-        .expect("the listener binds");
-    assert!(path.exists(), "the socket file is there while it is bound");
 
     // Live: FM-12 removes a stale file only **after a failed liveness connect**, so a socket
     // somebody is serving has to survive an attempt to take it. Deleting first and asking
     // afterwards would take the endpoint away from a running instance.
+    let (handle, _events) = listen(config(&live)).await.expect("the listener binds");
+    assert!(live.exists(), "the socket file is there while it is bound");
     assert!(
-        listen(ListenerConfig::new(endpoint(), Token::generate()))
-            .await
-            .is_err(),
+        listen(config(&live)).await.is_err(),
         "a second listener took a live socket"
     );
-    assert!(path.exists(), "the live socket file was removed");
+    assert!(live.exists(), "the live socket file was removed");
 
-    // Stale: the owner is gone and the file is not, which is what a crash leaves behind.
-    // Nothing unlinks it, here or in production; the next start is what clears it.
-    first.shutdown("the app quit").await;
-    for _ in 0..200 {
-        if std::os::unix::net::UnixStream::connect(&path).is_err() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(path.exists(), "the test needs a file left behind to clear");
-
-    let (third, _third_events) = listen(ListenerConfig::new(endpoint(), Token::generate()))
+    // Stale: a listener bound and dropped leaves exactly what a crash leaves — the file,
+    // with nobody serving it. Built that way rather than by shutting our own listener down,
+    // because "has it stopped yet" is a race and this is a fact.
+    drop(std::os::unix::net::UnixListener::bind(&stale).expect("the stale socket is bound"));
+    assert!(stale.exists(), "the test needs a file left behind to clear");
+    let (second, _second_events) = listen(config(&stale))
         .await
         .expect("a stale socket file is removed and the endpoint is bound");
-    assert!(path.exists());
-    third.shutdown("the app quit").await;
+    assert!(stale.exists());
+
+    handle.shutdown("the app quit").await;
+    second.shutdown("the app quit").await;
     let _ = std::fs::remove_dir_all(&dir);
 }
 
