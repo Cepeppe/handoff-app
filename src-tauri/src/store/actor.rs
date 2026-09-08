@@ -555,6 +555,20 @@ impl Store {
                 resumed_from: resumed_from.clone(),
             }
         } else {
+            // §8.1, `deferred --> active: agent resumes`. Only here, and only from
+            // `deferred`: a resume that pops a queued outcome is the agent *reading* what
+            // happened, not coming back to the work, and `parked` is left by the user alone
+            // (the parked instruction tells the agent not to resume at all).
+            if draft.state == HandoffState::Deferred {
+                draft.state = HandoffState::Active;
+                journal.event(
+                    &draft,
+                    now,
+                    EventKind::State,
+                    None,
+                    Some(json!({"state": HandoffState::Active.as_str(), "by": "resume"})),
+                );
+            }
             draft.attached_call = Some(call.attached());
             journal.event(
                 &draft,
@@ -2387,6 +2401,40 @@ mod tests {
             HandoffState::Active
         );
         assert_eq!(resumes.requested.load(Ordering::Relaxed), 1, "FM-31");
+    }
+
+    #[test]
+    fn the_agent_resuming_a_deferred_handoff_makes_it_active_again() {
+        // §8.1, `deferred --> active: agent resumes`, and `fixtures/channel/f05-defer-park`
+        // answers exactly that resume with `{"state":"active"}`. A `parked` handoff is not
+        // touched: its instruction told the agent not to resume, and only the user picks it
+        // up (FM-31).
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, true));
+        let now = at("2026-09-08T11:05:00Z");
+        store.defer(&id, None, &now).expect("defer");
+        store.take_deliveries();
+
+        let snapshot = store
+            .resume(&id, &call(1, "call_00000002", OPENER), &now)
+            .expect("the agent comes back");
+        assert_eq!(snapshot.state, HandoffState::Active);
+        assert!(snapshot.outcome.is_none(), "the call attaches and waits");
+        assert_eq!(
+            store.snapshot(&id, &now).expect("a tab").state,
+            HandoffState::Active
+        );
+
+        store.defer(&id, None, &now).expect("a second deferral");
+        store.take_deliveries();
+        assert_eq!(
+            store.snapshot(&id, &now).expect("a tab").state,
+            HandoffState::Parked
+        );
+        let parked = store
+            .resume(&id, &call(1, "call_00000003", OPENER), &now)
+            .expect("a resume of a parked handoff is still answered");
+        assert_eq!(parked.state, HandoffState::Parked);
     }
 
     #[test]

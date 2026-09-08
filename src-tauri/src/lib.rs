@@ -77,21 +77,10 @@ pub fn run() {
     let entitlement = license::check();
     tracing::info!(entitlement = %entitlement, "starting");
 
-    // §7.2 opens the database before anything can register: a session is written through on
-    // the connection that opens it, so the file has to be there first. The rest of the
-    // startup sequence is assembled by T-042 as its modules appear.
-    let db = match log::Db::open_app_data() {
-        Ok(db) => Some(db),
-        Err(error) => {
-            tracing::error!(error = %error, "the database could not be opened; sessions are not recorded");
-            None
-        }
-    };
-
     // §7.2: the shared folder, the token and the listener, before the window exists. A
     // server that connects while the UI is still starting is registered all the same,
     // because registration is the channel's business and not the window's (SRV-20).
-    let channel = start_channel(db);
+    let channel = start_channel();
 
     tauri::Builder::default()
         // First, as the plugin requires: a second launch must reach the running instance
@@ -125,11 +114,22 @@ pub fn run() {
 /// A listener that cannot bind is a bad day, not a reason to deny the user the window: the
 /// overlay still shows what the log holds, the settings screen still repairs the token, and
 /// every agent call degrades to text mode, which is a supported way to work (SRV-14).
-fn start_channel(db: Option<log::Db>) -> Option<channel::ChannelHandle> {
+fn start_channel() -> Option<channel::ChannelHandle> {
     match tauri::async_runtime::block_on(channel::start()) {
         Ok((handle, events)) => {
             tracing::info!(endpoint = %handle.endpoint().display(), "the channel is listening");
-            tauri::async_runtime::spawn(keep_the_session_registry(db, events));
+            match state_of_the_app(&handle) {
+                Some(dispatch) => {
+                    let (dispatch, deliveries) = dispatch;
+                    tauri::async_runtime::spawn(dispatch.run(events, deliveries));
+                }
+                // Without the store there is nothing to answer a peer with, but the queue
+                // still has to be read: an unread event stream is back-pressure on the
+                // socket, and a peer blocked on a write is worse than a peer in text mode.
+                None => {
+                    tauri::async_runtime::spawn(drain(events));
+                }
+            }
             Some(handle)
         }
         Err(error) => {
@@ -139,56 +139,46 @@ fn start_channel(db: Option<log::Db>) -> Option<channel::ChannelHandle> {
     }
 }
 
-/// Keeps the session registry of §7.5 in step with the channel.
+/// The registry and the store of §7.2, and the dispatch that joins them to the channel.
 ///
-/// Registration is a property of the connection and happens at session start, not at the
-/// first tool call (SRV-20), so it belongs to whoever reads this stream. Everything else it
-/// carries — open, continue, resume, verify, and the hook decision that reads the binding
-/// made here — is the store actor of T-034, which replaces this function and takes the
-/// registry over. Until then those events are drained, so that a peer is never blocked by
-/// an unread queue.
-// TASK: T-034 — replace this with the store actor; it owns the registry from then on.
-async fn keep_the_session_registry(
-    db: Option<log::Db>,
-    events: tokio::sync::mpsc::Receiver<channel::ChannelEvent>,
-) {
-    let Some(db) = db else {
-        return drain(events).await;
-    };
-    let registry = sessions::Registry::open(&db, Box::new(sessions::NoObserver));
-    let mut registry = match registry {
-        Ok(registry) => registry,
+/// Two connections to the same file: the registry writes `sessions` from the dispatch task
+/// and the store writes everything else from its own actor task, which is the traffic
+/// pattern the pragmas of `log::db` are set for. The full startup sequence — the restored
+/// tabs, the shortcut, the agent scan — is assembled by T-042.
+fn state_of_the_app(
+    handle: &channel::ChannelHandle,
+) -> Option<(
+    channel::Dispatch,
+    tokio::sync::mpsc::Receiver<store::Delivery>,
+)> {
+    let open = |what: &str| match log::Db::open_app_data() {
+        Ok(db) => Some(db),
         Err(error) => {
-            tracing::error!(error = %error, "the session registry could not start");
-            return drain(events).await;
+            tracing::error!(error = %error, "the database could not be opened for the {what}");
+            None
         }
     };
+    let registry_db = open("session registry")?;
+    let store_db = open("handoff store")?;
 
-    let mut events = events;
-    while let Some(event) = events.recv().await {
-        let outcome = match event {
-            channel::ChannelEvent::Connected(peer) => {
-                // The chain is completed from a snapshot taken now, while the peer is
-                // certainly alive (DD-22).
-                let table = sessions::SystemProcessTable::snapshot();
-                registry.register(&db, &peer, &table).map(|_| ())
-            }
-            channel::ChannelEvent::Disconnected { conn_id, reason } => {
-                tracing::debug!(reason = ?reason, "a channel connection ended");
-                registry
-                    .disconnect(&db, conn_id, &log::Timestamp::now())
-                    .map(|_| ())
-            }
-            other => {
-                tracing::debug!(event = ?other, "channel event with no store to consume it");
-                Ok(())
-            }
-        };
-        if let Err(error) = outcome {
-            // FM-28: a write that fails must not take the channel down with it.
-            tracing::error!(error = %error, "the session registry could not be written");
-        }
-    }
+    let registry = sessions::Registry::open(&registry_db, Box::new(sessions::NoObserver))
+        .inspect_err(
+            |error| tracing::error!(error = %error, "the session registry could not start"),
+        )
+        .ok()?;
+    let store = store::Store::load(
+        store_db,
+        Box::new(store::NoRunbookSink),
+        Box::new(store::NoResumeRequests),
+    )
+    .inspect_err(|error| tracing::error!(error = %error, "the handoff store could not be restored"))
+    .ok()?;
+
+    let (store, deliveries) = store::spawn(store);
+    Some((
+        channel::Dispatch::new(registry_db, registry, store, handle.clone()),
+        deliveries,
+    ))
 }
 
 async fn drain(mut events: tokio::sync::mpsc::Receiver<channel::ChannelEvent>) {
