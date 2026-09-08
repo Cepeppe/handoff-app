@@ -1,11 +1,11 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "assets": {
     "win32-x64": {
-      "sha256": "e3dbbc62b68188428ecb2eed0dce565a55451225923451cd661747ed3a3b20f8"
+      "sha256": "1f641516a3030023cd06c4e6976c639b58e651e55bd36e6cf7ed4c44d30ef6ac"
     },
     "format": {
-      "sha256": "bc90134bea3ea68a428519e15e3b762df486414f151bac82842de60bea1d8a13"
+      "sha256": "7149ef9e70804eb0015a3d16a27e859e50ac9a4fe6e44e790af9afa3738c9dfd"
     }
   },
   "protocol_version": 1
