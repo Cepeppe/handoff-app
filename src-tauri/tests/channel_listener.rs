@@ -256,10 +256,10 @@ async fn open(endpoint: &Endpoint) -> Stream {
         panic!("this host listens on a socket");
     };
     for _ in 0..500 {
-        match tokio::net::UnixStream::connect(path).await {
-            Ok(client) => return client,
-            Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+        if let Ok(client) = tokio::net::UnixStream::connect(path).await {
+            return client;
         }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("{} never became available", path.display())
 }

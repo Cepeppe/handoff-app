@@ -242,10 +242,6 @@ struct Shared {
 }
 
 impl Shared {
-    fn stopping(&self) -> bool {
-        *self.stop.borrow()
-    }
-
     async fn emit(&self, event: ChannelEvent) -> bool {
         self.events.send(event).await.is_ok()
     }
@@ -450,7 +446,9 @@ fn spawn_pipe_accept_loop(shared: Arc<Shared>, name: &str) -> io::Result<()> {
                     }
                 }
             }
-            if shared.stopping() {
+            // The pipe instance created before the loop was entered is connected even when
+            // the shutdown won the select, so this is the second half of that check.
+            if *shared.stop.borrow() {
                 break;
             }
             // §6.2: after a refused hello, nothing is served for a second. The wait is here
