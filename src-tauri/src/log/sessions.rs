@@ -124,6 +124,26 @@ pub fn disconnect(db: &Db, session_ref: &str, at: &Timestamp) -> Result<bool> {
     Ok(changed > 0)
 }
 
+/// Marks every row still flagged connected as disconnected, without moving `last_seen`.
+///
+/// Called once, when the registry is opened (§8.3): no channel connection survives an app
+/// restart, so a row left `connected = 1` by a process that was killed is a lie, and a lie
+/// the purge believes — it only ever forgets a **disconnected** session. `last_seen` is
+/// deliberately not touched: the row's last sign of life was whenever it last spoke, and
+/// stamping it with the current start-up instant would restart the seven-day clock of §8.3
+/// on every launch, so a history row would never be forgotten at all.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the update fails.
+pub fn disconnect_all(db: &Db) -> Result<usize> {
+    let changed = db
+        .conn()
+        .execute("UPDATE sessions SET connected = 0 WHERE connected = 1", [])
+        .map_err(|error| StoreError::of("disconnecting the sessions of a previous run", error))?;
+    Ok(changed)
+}
+
 /// Binds the agent's own session identifier to this registration (SRV-19, §7.5).
 ///
 /// # Errors
@@ -244,6 +264,39 @@ mod tests {
         assert!(!touch(&db, "ses_nosuch", &at("2026-09-08T13:00:00Z")).expect("no such row"));
         assert!(get(&db, "ses_nosuch").expect("a read").is_none());
         assert_eq!(list(&db).expect("the sessions").len(), 1);
+    }
+
+    #[test]
+    fn a_restart_disconnects_what_the_previous_run_left_connected_without_moving_last_seen() {
+        let db = Db::open_in_memory().expect("a database");
+        register(&db, &session("ses_00000001")).expect("a live session");
+        let mut already_gone = session("ses_00000002");
+        already_gone.connected = false;
+        already_gone.last_seen = at("2026-08-01T09:00:00Z");
+        register(&db, &already_gone).expect("a history row");
+
+        assert_eq!(disconnect_all(&db).expect("a restart"), 1);
+        assert_eq!(disconnect_all(&db).expect("a second restart"), 0);
+
+        for session_ref in ["ses_00000001", "ses_00000002"] {
+            let row = get(&db, session_ref).expect("a read").expect("a row");
+            assert!(!row.connected);
+        }
+        // The seven-day clock of §8.3 must not restart on every launch.
+        assert_eq!(
+            get(&db, "ses_00000001")
+                .expect("a read")
+                .expect("a row")
+                .last_seen,
+            session("ses_00000001").last_seen
+        );
+        assert_eq!(
+            get(&db, "ses_00000002")
+                .expect("a read")
+                .expect("a row")
+                .last_seen,
+            at("2026-08-01T09:00:00Z")
+        );
     }
 
     #[test]
