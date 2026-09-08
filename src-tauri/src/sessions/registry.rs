@@ -41,10 +41,10 @@ use super::process_table::{complete_chain, ProcessTable};
 
 /// One registered session (§7.5).
 ///
-/// The fields §7.5 names, plus three the record cannot do its job without and that `hello`
-/// already carried: the connection it arrived on (`disconnect` is addressed by connection,
-/// not by session), and the capability row with the agent id the server resolved, which is
-/// where the agent's readable name comes from ([`Session::display_name`], OPEN-02).
+/// The fields §7.5 names, plus two the record cannot do its job without and that `hello`
+/// already carried: the connection it arrived on, because `disconnect` is addressed by
+/// connection and not by session, and the capability row, which is the only place the
+/// agent's readable name exists ([`Session::display_name`], OPEN-02).
 #[derive(Debug, Clone)]
 pub struct Session {
     /// `ses_` + 8 characters, minted by the listener when the `hello` was accepted.
