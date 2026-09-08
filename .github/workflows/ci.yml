@@ -96,6 +96,17 @@ jobs:
     defaults:
       run:
         shell: bash
+    # `tauri-build` runs in `build.rs`, so it validates `externalBin` and `bundle.resources`
+    # for `cargo check`, `clippy` and `test` as well, not only for a bundle. There is
+    # nothing to validate them against here: no darwin asset is released while macOS is
+    # deferred (`server.lock.json` pins `win32-x64` and `format` alone), so `fetch-server`
+    # has nothing to download and `vendor/` stays empty. This job compiles and unit-tests
+    # the `cfg(target_os = "macos")` branches and never bundles, so it clears the two bundle
+    # inputs instead of standing a placeholder in for the server. `null` is how a JSON merge
+    # patch removes a key; the Windows job, which does bundle, uses the real artifact.
+    # TASK: T-060 — drop this once darwin binaries are pinned and can be fetched here.
+    env:
+      TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":null}}'
     steps:
       - uses: actions/checkout@v4
 
@@ -107,20 +118,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
-      # `tauri-build` refuses to run when the `externalBin` for the target triple is
-      # missing, and no darwin asset exists yet: releases of `handoff-mcp` build the macOS
-      # binaries only on demand while macOS is deferred, so `server.lock.json` pins none.
-      # A placeholder is enough to compile and to run the unit tests, which is all this job
-      # claims to do — it never bundles, so the file never reaches an artifact.
-      # TASK: T-060 — replace this with the real pinned darwin binary once it is released.
-      - name: Placeholder sidecar
-        run: |
-          mkdir -p src-tauri/binaries
-          triple="$(rustc -vV | sed -n 's/^host: //p')"
-          printf '#!/bin/sh\necho "placeholder, not the real server" >&2\nexit 1\n' \
-            > "src-tauri/binaries/handoff-mcp-${triple}"
-          chmod +x "src-tauri/binaries/handoff-mcp-${triple}"
 
       - name: cargo fmt
         working-directory: src-tauri
