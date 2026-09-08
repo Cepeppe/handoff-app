@@ -1,0 +1,14 @@
+/* Baseline only. The real styling (system font, light/dark, collapsed bar) is T-028. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+
+body {
+  margin: 0;
+}
+
+#app {
+  padding: 12px;
+}

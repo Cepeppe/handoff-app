@@ -1,0 +1,24 @@
+# Lint enforcement of the network boundary (TECHNICAL-DESIGN §7.13, NET-01, PRIN-05).
+#
+# The promise the app makes is "no network connection except the update check, through one
+# module". A promise nobody checks decays: this configuration is the check that runs on
+# every `cargo clippy -D warnings`, which is a CI gate.
+#
+# `allow-invalid` is needed because none of the HTTP crates is a dependency today (the
+# update check is deferred, TASKS.md §0.4 item 8, T-078). Without it clippy would refuse a
+# configuration naming a path it cannot resolve, and the rule could only be written on the
+# day it is already too late to write it. `deny.toml` refuses the same crates as
+# dependencies, so the two guards cover both "it entered the tree" and "it is being used".
+#
+# T-051 narrows this rule to allow the client inside `src/net/egress.rs` alone; until then
+# nothing anywhere may open a socket to the outside.
+disallowed-types = [
+  { path = "reqwest::Client", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },
+  { path = "reqwest::blocking::Client", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },
+  { path = "hyper::Client", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },
+  { path = "hyper::client::conn::http1::SendRequest", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },
+  { path = "std::net::TcpStream", reason = "network access belongs to net::egress only (§7.13)" },
+  { path = "std::net::TcpListener", reason = "network access belongs to net::egress only (§7.13)" },
+  { path = "tokio::net::TcpStream", reason = "network access belongs to net::egress only (§7.13)" },
+  { path = "tokio::net::TcpListener", reason = "network access belongs to net::egress only (§7.13)" },
+]

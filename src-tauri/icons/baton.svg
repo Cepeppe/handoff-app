@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Placeholder mark: a baton passed from one hand to the next. Replaced with the real
+       artwork in T-028, together with the tray icon. -->
+  <rect width="1024" height="1024" rx="224" fill="#1f2933" />
+  <rect x="300" y="470" width="424" height="84" rx="42" fill="#f5f7fa" transform="rotate(-45 512 512)" />
+  <circle cx="330" cy="694" r="86" fill="#4c9aff" />
+  <circle cx="694" cy="330" r="86" fill="#4c9aff" />
+</svg>

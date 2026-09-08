@@ -1,0 +1,135 @@
+name: CI
+
+# A tag push would otherwise run this whole matrix a second time, on top of the release
+# workflow that the tag already triggers. Windows minutes cost double, so the branch filter
+# is here from the first commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Rust toolchain
+        run: |
+          rustup component add clippy rustfmt
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - run: pnpm install --frozen-lockfile
+
+      # The pinned server artifact (§3.5). `handoff-mcp` is private, so this needs the
+      # cross-repository read token of T-010; it expires on 2027-09-07.
+      - name: Fetch the pinned server
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      # The build gate of §3.5, run here as well as inside `beforeBuildCommand`: with `CI`
+      # set it also refuses a `dev-link`ed vendor, so no packaged build can come from a
+      # locally built server.
+      - name: Check the pinned server
+        run: node scripts/fetch-server.mjs --check
+
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: cargo deny
+        working-directory: src-tauri
+        run: cargo deny check
+
+      - name: Frontend build
+        run: pnpm build
+
+      - name: Tauri build
+        run: pnpm tauri build --debug
+
+  # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
+  # this leg runs only when it is dispatched by hand. What it proves is that the
+  # `cfg(target_os = "macos")` branches written along the way still compile and that their
+  # unit tests pass; it does not package anything.
+  macos:
+    name: macos-latest
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup component add clippy rustfmt
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `tauri-build` refuses to run when the `externalBin` for the target triple is
+      # missing, and no darwin asset exists yet: releases of `handoff-mcp` build the macOS
+      # binaries only on demand while macOS is deferred, so `server.lock.json` pins none.
+      # A placeholder is enough to compile and to run the unit tests, which is all this job
+      # claims to do — it never bundles, so the file never reaches an artifact.
+      # TASK: T-060 — replace this with the real pinned darwin binary once it is released.
+      - name: Placeholder sidecar
+        run: |
+          mkdir -p src-tauri/binaries
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          printf '#!/bin/sh\necho "placeholder, not the real server" >&2\nexit 1\n' \
+            > "src-tauri/binaries/handoff-mcp-${triple}"
+          chmod +x "src-tauri/binaries/handoff-mcp-${triple}"
+
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test

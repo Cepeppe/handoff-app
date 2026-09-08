@@ -1,0 +1,80 @@
+# Dependency policy for the app crate: licences, advisories, sources, and the crates that
+# may not enter the tree at all (TECHNICAL-DESIGN §7.13, NFR-17, LIC-01).
+#
+# `cargo deny check` is a CI gate. It answers three questions that a proprietary desktop
+# application has to keep answering: are we shipping a licence we cannot ship, are we
+# shipping a crate with a published advisory, and is anything reaching the network.
+
+[graph]
+# The two platforms of REQUIREMENTS §1.5. Checking all three triples from any machine keeps
+# a macOS-only dependency from slipping past a Windows-only run.
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# The five `rust-unic` crates are unmaintained (the whole open-i18n project is), and there
+# is no safe upgrade. They are not our choice: the only path to them is
+# `tauri-utils -> urlpattern -> unic-ucd-ident`, so the way out is a Tauri release that
+# drops `urlpattern`, not a change here. They parse Unicode character properties and never
+# see a value of ours. Recheck when Tauri moves off `urlpattern`; nothing else is ignored,
+# and a vulnerability advisory on any crate still fails the build.
+ignore = [
+  { id = "RUSTSEC-2025-0075", reason = "unmaintained rust-unic, reached only through tauri-utils -> urlpattern" },
+  { id = "RUSTSEC-2025-0080", reason = "unmaintained rust-unic, reached only through tauri-utils -> urlpattern" },
+  { id = "RUSTSEC-2025-0081", reason = "unmaintained rust-unic, reached only through tauri-utils -> urlpattern" },
+  { id = "RUSTSEC-2025-0098", reason = "unmaintained rust-unic, reached only through tauri-utils -> urlpattern" },
+  { id = "RUSTSEC-2025-0100", reason = "unmaintained rust-unic, reached only through tauri-utils -> urlpattern" },
+]
+
+[licenses]
+# The application is proprietary (NFR-17) and ships third-party code, so every licence in
+# the tree has to be one we can redistribute under a proprietary binary. Copyleft licences
+# that would reach the linked binary are absent from this list on purpose: adding one is a
+# decision about what the product may ship, not a way to make the build pass.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.9
+# The list above is a policy, not an inventory: an entry no crate happens to use today is
+# not a defect, and warning about it would train everyone to skim this output.
+unused-allowed-license = "allow"
+# The crate itself is `publish = false` and carries a `LicenseRef-` expression; it is ours,
+# so it is not part of the third-party question this file asks.
+private = { ignore = true }
+
+[bans]
+# Tauri and its plugins pull several versions of the same small crates; that is noise, not
+# a risk, and failing on it would train everyone to ignore this check.
+multiple-versions = "allow"
+wildcards = "deny"
+# The other half of the network boundary of §7.13. `clippy.toml` forbids *using* an HTTP
+# client outside `net::egress`; this forbids one *entering the tree* at all, which is the
+# stronger statement while the update check is deferred (`TASKS.md` §0.4 item 8) and the
+# app makes zero network connections.
+#
+# T-051 and T-078 are what may lift these entries, and only for `src/net/egress.rs`.
+deny = [
+  { name = "reqwest", reason = "network access belongs to net::egress only (§7.13); no caller exists while the update check is deferred" },
+  { name = "hyper", reason = "network access belongs to net::egress only (§7.13); no caller exists while the update check is deferred" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

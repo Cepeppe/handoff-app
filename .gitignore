@@ -5,6 +5,9 @@ node_modules/
 # Rust build output
 target/
 
+# Tauri writes the capability JSON schemas here on every build
+src-tauri/gen/schemas/
+
 # Pinned server artifact, fetched by scripts/fetch-server
 vendor/
 src-tauri/binaries/

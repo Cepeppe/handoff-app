@@ -1,0 +1,11 @@
+# Cargo settings for the app crate.
+#
+# `cargo lint` is the exact command CI runs, spelled once. A pipeline step and a developer
+# habit that differ by a flag are how a repository ends up with lints that pass locally and
+# fail on the runner — `--all-features` matters here, because it is what compiles the
+# `e2e`, `fake-capture` and `secrets-write` modules that a default build leaves out.
+#
+# The lint configuration itself is `clippy.toml`, beside this file: clippy reads it from
+# the crate directory, so it applies to every invocation, not only to the alias.
+[alias]
+lint = ["clippy", "--all-targets", "--all-features", "--", "-D", "warnings"]

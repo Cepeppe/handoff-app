@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Baton",
+  "identifier": "com.cepeppe.baton",
+  "build": {
+    "beforeDevCommand": "node scripts/fetch-server.mjs --check && pnpm dev",
+    "beforeBuildCommand": "node scripts/fetch-server.mjs --check && pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Baton",
+        "width": 360,
+        "height": 480,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Productivity",
+    "shortDescription": "The contextual handoff overlay",
+    "longDescription": "Baton shows the work a coding agent hands over to the person at the machine, guides it one step at a time and sends back a structured outcome.",
+    "copyright": "Copyright (c) 2026 Cepeppe",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/handoff-mcp"],
+    "resources": {
+      "../vendor/handoff-mcp/format/patterns/certain-secrets.v1.json": "patterns/certain-secrets.v1.json"
+    }
+  }
+}

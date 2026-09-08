@@ -1,0 +1,55 @@
+[package]
+name = "handoff-app"
+version = "0.1.0"
+description = "Baton: the contextual handoff overlay"
+authors = ["Cepeppe"]
+edition = "2021"
+license = "LicenseRef-Baton-Proprietary"
+publish = false
+
+# The library holds everything; the binary is a three-line entry point. The `_lib` suffix
+# keeps the library name distinct from the binary name, which Windows requires.
+[lib]
+name = "handoff_app_lib"
+crate-type = ["lib"]
+
+[[bin]]
+name = "handoff-app"
+path = "src/main.rs"
+
+[features]
+default = []
+# The e2e automation channel of DD-33 (a second token-protected socket that plays the
+# user). Empty here: it is built with T-043, once there is a UI to drive. Release builds
+# never enable it, and CI asserts the symbols are absent.
+e2e = []
+# A capture backend that returns a fixture image instead of touching the screen (§7.8).
+# Empty here; filled by T-046.
+fake-capture = []
+# The v2 extension point of §12.2: writing secrets into `.env`-style files. Off in every
+# v1 build, and the module it gates is empty on purpose.
+secrets-write = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rand = "0.10.2"
+regex = "1.13.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
+sysinfo = "0.39.6"
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-clipboard-manager = "2.3.3"
+tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-single-instance = "2.4.4"
+tauri-plugin-window-state = "2.4.1"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }

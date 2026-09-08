@@ -1,0 +1,25 @@
+{
+  "name": "handoff-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend of Baton, the contextual handoff overlay",
+  "license": "UNLICENSED",
+  "author": "Cepeppe",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check:server": "node scripts/fetch-server.mjs --check",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  }
+}
