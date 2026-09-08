@@ -79,6 +79,11 @@ jobs:
         working-directory: src-tauri
         run: cargo deny check
 
+      - name: Frontend tests
+        run: pnpm test
+
+      # `pnpm build` runs `svelte-check` first, so the components and the TypeScript are
+      # type-checked here as well as compiled.
       - name: Frontend build
         run: pnpm build
 

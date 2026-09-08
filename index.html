@@ -7,10 +7,9 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <!-- Placeholder shell. The Svelte application, the view switching and the i18n
-         resources arrive with T-028; this page exists so that the Rust side has a
-         frontend to load and `tauri build` has something to bundle. -->
-    <main id="app" data-tauri-drag-region></main>
+    <!-- The Svelte application replaces this element; `main.ts` resolves the UI language
+         before mounting, so the first paint is already in the right one. -->
+    <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

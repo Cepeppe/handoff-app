@@ -1,0 +1,14 @@
+{
+  "app.name": "Baton",
+  "tray.show": "Mostra",
+  "tray.newRequest": "Nuova richiesta",
+  "tray.settings": "Impostazioni",
+  "tray.quit": "Esci",
+  "view.overlay": "Pannello",
+  "view.request": "Nuova richiesta",
+  "view.settings": "Impostazioni",
+  "view.onboarding": "Benvenuto",
+  "view.preview": "Anteprima",
+  "view.placeholder": "Questa schermata non è ancora stata realizzata.",
+  "dev.views": "Schermate"
+}

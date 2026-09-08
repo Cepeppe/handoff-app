@@ -4,11 +4,16 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["vite/client"],
+    // `svelte` carries the ambient declaration of a `*.svelte` module, without which an
+    // import of a component is an unresolved module for `tsc` and for the editor. `node`
+    // is for the two files that run outside the webview: the Vite configuration and the
+    // source-scanning test.
+    "types": ["vite/client", "svelte", "node"],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,

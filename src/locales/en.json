@@ -1,0 +1,14 @@
+{
+  "app.name": "Baton",
+  "tray.show": "Show",
+  "tray.newRequest": "New request",
+  "tray.settings": "Settings",
+  "tray.quit": "Quit",
+  "view.overlay": "Overlay",
+  "view.request": "New request",
+  "view.settings": "Settings",
+  "view.onboarding": "Welcome",
+  "view.preview": "Preview",
+  "view.placeholder": "This view is not built yet.",
+  "dev.views": "Views"
+}

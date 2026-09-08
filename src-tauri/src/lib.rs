@@ -52,16 +52,14 @@ pub mod ui_bridge;
 #[cfg(feature = "secrets-write")]
 pub mod secrets;
 
-use tauri::Manager as _;
-
 /// Starts the application.
 ///
-/// The full startup sequence of §7.2 — the single-instance lock, the database and its
-/// migrations, the `~/.handoff/` folder and the token, the listener, the restored tabs,
-/// the tray, the shortcut, the agent scan — is assembled by T-042 as its modules appear.
-/// What is here is what §0.4 item 5 asks to build with the skeleton, because it touches
-/// `main()` and building it later would mean editing the startup path twice: the panic
-/// hook (TEL-02) and the licence entry point (LIC-01, LIC-02).
+/// The full startup sequence of §7.2 — the database and its migrations, the `~/.handoff/`
+/// folder and the token, the listener, the restored tabs, the shortcut, the agent scan — is
+/// assembled by T-042 as its modules appear. What is here is what the earlier tasks own:
+/// the panic hook (TEL-02) and the licence entry point (LIC-01, LIC-02), which touch
+/// `main()` and would otherwise mean editing the startup path twice, plus the single
+/// instance, the tray and the window rules of §7.16.
 pub fn run() {
     // The ring buffer the panic hook empties into the crash file. Held for the process
     // lifetime; nothing else reads it.
@@ -73,17 +71,21 @@ pub fn run() {
     tracing::info!(entitlement = %entitlement, "starting");
 
     tauri::Builder::default()
-        .setup(|app| {
-            // `tauri.conf.json` declares the window hidden, as §7.16 requires: the overlay
-            // appears when there is something to show, and the tray is what brings it
-            // back. The tray does not exist yet, so the skeleton shows the window once —
-            // otherwise `cargo tauri dev` would open nothing at all.
-            // TASK: T-028 — the tray menu and the collapsed bar take visibility over.
-            if let Some(window) = app.get_webview_window("main") {
-                window.show()?;
-            }
-            Ok(())
-        })
+        // First, as the plugin requires: a second launch must reach the running instance
+        // before that instance has finished starting. The overlay is one window and one
+        // process (MULTI-04, APP-01), so a second launch only brings it forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            ui_bridge::show_main_window(app);
+        }))
+        .manage(ui_bridge::Ui::default())
+        .invoke_handler(tauri::generate_handler![
+            ui_bridge::resize_to_content,
+            ui_bridge::set_ui_language
+        ])
+        // WIN-04: the close button hides the window to the tray; `Quit` in the tray menu is
+        // the only way out.
+        .on_window_event(ui_bridge::on_window_event)
+        .setup(|app| ui_bridge::init(app.handle()))
         .run(tauri::generate_context!())
         .expect("error while running the Baton application");
 }

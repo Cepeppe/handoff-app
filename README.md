@@ -54,12 +54,26 @@ cargo test
 cargo deny check
 ```
 
-and, from the repository root, `pnpm build` (frontend) and `pnpm tauri build --debug`.
+and, from the repository root:
+
+```sh
+pnpm test           # frontend unit and component tests (vitest, jsdom)
+pnpm check          # svelte-check over the components and the TypeScript
+pnpm build          # svelte-check + the production frontend bundle
+pnpm tauri build --debug
+```
 
 ### Layout
 
 ```
-src/                 frontend (TypeScript, Vite; Svelte arrives with the first views)
+src/                 frontend (Svelte 5, TypeScript, Vite):
+                       App.svelte      the one window, switching between the views
+                       views/          one placeholder component per view of the design
+                       bridge.ts       the typed, mockable `invoke` / `listen` seam
+                       i18n.ts         language resolution and the text lookup
+                       locales/        en.json and it.json, the product's only texts
+                       styles.css      the only stylesheet (the CSP forbids injected ones)
+                       __tests__/      vitest + @testing-library/svelte
 src-tauri/src/       Rust core, one module per area:
                        channel  sessions  store  hook  requests  capture  ocr
                        redaction  log  runbooks  net/egress  install
@@ -75,6 +89,10 @@ Two rules the layout depends on, both explained at the top of `src-tauri/src/lib
   notification, focus, opener, capture, the socket — go behind traits, implemented over
   Tauri in `ui_bridge` and over fakes in tests, so `cargo test` runs the whole core
   without a webview.
+- **the user-visible texts live in one place.** `src/locales/{en,it}.json` are the whole
+  catalogue: the frontend imports them and the Rust side compiles the same two files in
+  (`src-tauri/src/i18n.rs`) for the texts it owns, so the tray menu and the window are
+  never translated twice and one key-parity test covers both.
 - **only `net::egress` may open a network connection.** `clippy.toml` disallows the HTTP
   and TCP types everywhere, `deny.toml` refuses the HTTP crates as dependencies, and the
   webview CSP is `default-src 'self'` with no `connect-src`. The application makes zero

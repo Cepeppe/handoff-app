@@ -1,10 +1,27 @@
-// Placeholder entry point of the frontend (TASK: T-028 replaces it with the Svelte
-// application: view switching, the typed `invoke`/`listen` bridge and the en/it resources).
-//
-// It deliberately calls nothing on the Rust side: the capability file grants the webview
-// no command yet, so an `invoke` here would fail at runtime rather than at build time.
-const app = document.querySelector<HTMLElement>('#app');
+/**
+ * Entry point of the overlay frontend.
+ *
+ * Order matters here. The language is resolved and reported to the core *before* the
+ * application is mounted, so the first paint is already in the right language and the tray
+ * menu — whose texts the Rust side owns — is relabelled at the same moment (APP-02, §7.16).
+ */
+import { mount } from 'svelte';
 
-if (app) {
-  app.textContent = 'Baton';
+import App from './App.svelte';
+import { bridge } from './bridge';
+import { resolveLanguage, setLanguage, systemLanguages } from './i18n';
+
+// The stored setting does not exist yet: the settings store is built later, so the language
+// comes from the system alone, which is the second step of the §7.16 rule.
+// TASK: T-041 — read the stored language and pass it here.
+const language = resolveLanguage(null, systemLanguages());
+setLanguage(language);
+void bridge().setUiLanguage(language);
+
+const target = document.getElementById('app');
+
+if (target === null) {
+  throw new Error('the #app mount point is missing from index.html');
 }
+
+mount(App, { target });

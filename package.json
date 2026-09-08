@@ -12,14 +12,27 @@
   "packageManager": "pnpm@11.17.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "pnpm check && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview",
     "check:server": "node scripts/fetch-server.mjs --check",
     "tauri": "tauri"
   },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tauri-apps/cli": "^2.11.4",
+    "@testing-library/svelte": "^5.4.2",
+    "@types/node": "^24.13.3",
+    "jsdom": "^30.0.1",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
   }
 }

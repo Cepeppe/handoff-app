@@ -1,14 +1,118 @@
-/* Baseline only. The real styling (system font, light/dark, collapsed bar) is T-028. */
+/*
+ * The only stylesheet of the application.
+ *
+ * Every component is style-free on purpose: the webview CSP is `default-src 'self'` with
+ * no `unsafe-inline`, so a stylesheet injected into the document at runtime would be
+ * refused, and one file keeps the panel coherent while a dozen views are added to it.
+ *
+ * Two rules the design fixes and this file must not drift from:
+ *
+ * - the window is a narrow panel of fixed width whose height follows the content (WIN-02);
+ *   nothing here may introduce a horizontal scrollbar or a fixed height.
+ * - there is no percentage progress bar and no estimated time anywhere (GUIDE-05, PRIN-07).
+ *   Progress is said in words — "step 2 of 4" — and a test fails the build if a progress
+ *   element or a progress role ever appears in the frontend sources.
+ *
+ * Colours follow the operating system through `color-scheme` and `light-dark()`, so a
+ * user who switches theme sees the panel switch with everything else.
+ */
+
 :root {
   color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+
+  /* The system UI font, so the panel reads like part of the desktop rather than a page. */
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
   font-size: 14px;
+  line-height: 1.45;
+
+  --surface: light-dark(#ffffff, #1c1c1e);
+  --surface-raised: light-dark(#f2f2f7, #2c2c2e);
+  --text: light-dark(#1c1c1e, #f2f2f7);
+  --text-muted: light-dark(#6b6b70, #a1a1a6);
+  --border: light-dark(#d8d8dc, #3a3a3c);
+  --accent: light-dark(#0a5bd3, #4c9aff);
+  --space: 12px;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  /* The panel is exactly as wide as the window; the height is driven from the content. */
+  overflow-x: hidden;
 }
 
-#app {
-  padding: 12px;
+.app {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * The drag handle. The window has no decorations (`decorations: false`), so this strip is
+ * the only way to move it; `data-tauri-drag-region` on it is what makes the gesture reach
+ * the window manager.
+ */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--space);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+  user-select: none;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.content {
+  padding: var(--space);
+}
+
+.view h1 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.view p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* The temporary switcher of the skeleton; it is compiled out of a release build. */
+.dev-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px var(--space);
+  border-bottom: 1px dashed var(--border);
+}
+
+.dev-menu-item {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dev-menu-item[aria-current='page'] {
+  color: var(--accent);
+  border-color: var(--accent);
 }

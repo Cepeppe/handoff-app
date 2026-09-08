@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Least privilege for the overlay window: read the app version, exchange events with the Rust side, and read the window geometry. Every later task adds the single permission it needs and nothing more — window setters, clipboard, notification, opener, global shortcut and autostart are all absent on purpose.",
+  "description": "Least privilege for the overlay window: read the app version, exchange events with the Rust side, read the window geometry, and drag the window by its header. Every later task adds the single permission it needs and nothing more — the window setters (the height goes through the `resize_to_content` command instead), clipboard, notification, opener, global shortcut and autostart are all absent on purpose.",
   "windows": ["main"],
-  "permissions": ["core:app:default", "core:event:default", "core:window:default"]
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging"
+  ]
 }
