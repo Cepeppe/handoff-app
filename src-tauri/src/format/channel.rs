@@ -43,6 +43,16 @@ use serde::{Deserialize, Deserializer, Serialize};
 use super::outcome::{Outcome, ResumedFrom, SecretTreated};
 use super::spec::{HandoffSpec, HandoffStep};
 
+/// The version this app speaks (§6.5).
+///
+/// Equal to the vendored `protocol/channel/protocol_version` and to the
+/// `protocol_version_current` constant of the schema; both peers require **equality**,
+/// there is no negotiation. It is a constant rather than a read of the file for the reason
+/// the server gives for its own: the value has to exist before anything is parsed, and a
+/// number this small is better pinned by a test than resolved at run time.
+/// `tests/contract/channel.rs` is that test.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Reads a field that is both optional and nullable, keeping the two apart.
 ///
 /// Three of the protocol's fields are `anyOf [something, null]` **and** absent from their

@@ -77,6 +77,11 @@ pub fn run() {
     let entitlement = license::check();
     tracing::info!(entitlement = %entitlement, "starting");
 
+    // §7.2: the shared folder, the token and the listener, before the window exists. A
+    // server that connects while the UI is still starting is registered all the same,
+    // because registration is the channel's business and not the window's (SRV-20).
+    let channel = start_channel();
+
     tauri::Builder::default()
         // First, as the plugin requires: a second launch must reach the running instance
         // before that instance has finished starting. The overlay is one window and one
@@ -95,4 +100,45 @@ pub fn run() {
         .setup(|app| ui_bridge::init(app.handle()))
         .run(tauri::generate_context!())
         .expect("error while running the Baton application");
+
+    // The peers are owed the `app.shutdown` of §6.3 before the socket goes away: a server
+    // that is told why its channel went down degrades to text mode at once, while one left
+    // to infer it from an EOF spends the backoff schedule finding out.
+    if let Some(handle) = channel {
+        tauri::async_runtime::block_on(handle.shutdown("the user quit the app"));
+    }
+}
+
+/// Starts the channel, or reports why it could not start and lets the app run without it.
+///
+/// A listener that cannot bind is a bad day, not a reason to deny the user the window: the
+/// overlay still shows what the log holds, the settings screen still repairs the token, and
+/// every agent call degrades to text mode, which is a supported way to work (SRV-14).
+fn start_channel() -> Option<channel::ChannelHandle> {
+    match tauri::async_runtime::block_on(channel::start()) {
+        Ok((handle, events)) => {
+            tracing::info!(endpoint = %handle.endpoint().display(), "the channel is listening");
+            // The store actor of T-034 is what consumes this stream: it completes the
+            // ancestor chain, registers the session, answers `hook.stop` and drives the
+            // handoff state machine. Until it exists the events are drained and counted, so
+            // that a peer is never blocked by an unread queue and a `cargo tauri dev`
+            // session still shows a server connecting.
+            // TASK: T-034 — replace this drain with the store actor.
+            tauri::async_runtime::spawn(drain_until_the_store_exists(events));
+            Some(handle)
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "the channel could not start; agents will use text mode");
+            None
+        }
+    }
+}
+
+// TASK: T-034
+async fn drain_until_the_store_exists(
+    mut events: tokio::sync::mpsc::Receiver<channel::ChannelEvent>,
+) {
+    while let Some(event) = events.recv().await {
+        tracing::debug!(event = ?event, "channel event with no store to consume it");
+    }
 }

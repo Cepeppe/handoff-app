@@ -53,6 +53,16 @@ pub fn handoff_home() -> PathBuf {
     resolve_handoff_home(env_value(ENV_HANDOFF_HOME), &home_dir())
 }
 
+/// The value of `HANDOFF_HOME`, trimmed, or nothing when it is unset or blank.
+///
+/// The Windows pipe name mixes it in when it is set, and the server derives the same name
+/// from the same raw value (§0.4 item 4): what the digest eats is this string, not the
+/// resolved folder, so the two peers cannot disagree about which instance is addressed.
+#[must_use]
+pub fn handoff_home_override() -> Option<String> {
+    env_value(ENV_HANDOFF_HOME)
+}
+
 /// `~/.handoff/runbooks/`: the one root the reader is configured with (§12.3).
 pub fn runbooks_dir() -> PathBuf {
     handoff_home().join(RUNBOOKS_FOLDER_NAME)
@@ -69,15 +79,13 @@ pub fn app_data_dir() -> PathBuf {
     resolve_app_data_dir(env_value(ENV_HANDOFF_APP_DATA_DIR), &platform_data_root())
 }
 
-/// Where the app listens for the server (§4.1, §5.8, DD-26).
+/// `~/.handoff/app.sock`: where the app listens on POSIX while the path fits in `sun_path`.
 ///
-/// Placeholder: only the Unix-socket half of the endpoint can be written here. The Windows
-/// named pipe is `\\.\pipe\handoff-<h>`, `h` being a digest of `USERDOMAIN\USERNAME` and,
-/// when it is set, of `HANDOFF_HOME`; that derivation has to reproduce byte for byte the
-/// values `handoff-mcp` pinned in `test/unit/platform/paths.test.ts`, and it belongs with
-/// the listener that also owns the pipe DACL and the pointer file of FM-12.
-// TASK: T-031 — replace this with the real endpoint and its parity tests.
-pub fn socket_endpoint() -> PathBuf {
+/// It is a name of the contract folder and nothing more. Which endpoint the app actually
+/// binds — this path, the shorter one the pointer file of FM-12 points at, or the named
+/// pipe of Windows — is [`crate::channel::endpoint`], because that resolution belongs with
+/// the listener that owns the pipe DACL and writes the pointer file.
+pub fn socket_path() -> PathBuf {
     handoff_home().join(SOCKET_FILE_NAME)
 }
 
@@ -140,7 +148,12 @@ fn resolve_app_data_dir(override_dir: Option<String>, platform_root: &Path) -> P
 }
 
 /// An environment variable as configuration: trimmed, and blank counts as unset.
-fn env_value(name: &str) -> Option<String> {
+///
+/// `pub(crate)` for [`crate::channel::endpoint`], which reads `USERDOMAIN` and `USERNAME`
+/// under the same rule: an unset or blank variable contributes an empty string to the pipe
+/// digest, never a substitute from the OS user database, because the server derives the
+/// same name from the same two variables (§5.8).
+pub(crate) fn env_value(name: &str) -> Option<String> {
     read_env(env::var(name).ok())
 }
 
@@ -208,7 +221,7 @@ mod tests {
         let home = handoff_home();
         assert_eq!(runbooks_dir(), home.join(RUNBOOKS_FOLDER_NAME));
         assert_eq!(token_path(), home.join(TOKEN_FILE_NAME));
-        assert_eq!(socket_endpoint(), home.join(SOCKET_FILE_NAME));
+        assert_eq!(socket_path(), home.join(SOCKET_FILE_NAME));
         assert_eq!(socket_pointer_path(), home.join(SOCKET_POINTER_FILE_NAME));
     }
 

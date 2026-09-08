@@ -13,12 +13,12 @@
 use std::collections::BTreeSet;
 
 use handoff_app_lib::format::channel::{
-    ChannelErrorCode, ChannelMessage, NotificationBody, RequestBody,
+    ChannelErrorCode, ChannelMessage, NotificationBody, RequestBody, PROTOCOL_VERSION,
 };
 use handoff_app_lib::format::schema::{validate, Document};
 use serde_json::Value;
 
-use crate::support::{fixture_files, name_of, read_to_string};
+use crate::support::{fixture_dir, fixture_files, name_of, read_json, read_to_string};
 
 /// One line of a golden: the direction, and the message.
 struct Line {
@@ -177,6 +177,28 @@ fn the_error_codes_are_the_ones_the_protocol_readme_assigns() {
             (-32013, "no_verify_in_spec"),
             (-32014, "not_found"),
         ]
+    );
+}
+
+#[test]
+fn the_version_the_app_speaks_is_the_one_the_pinned_release_defines() {
+    // `PROTOCOL_VERSION` is a constant rather than a read of the file, for the reason the
+    // server gives for its own: it has to exist before anything is parsed. This is what
+    // stops it from drifting. A constant one ahead of the artifact would make every
+    // connection fail with `protocol_unsupported` and nothing would say why.
+    let pinned = read_to_string(&fixture_dir("protocol/channel/protocol_version"));
+    assert_eq!(
+        pinned
+            .trim()
+            .parse::<u32>()
+            .expect("the file holds an integer"),
+        PROTOCOL_VERSION
+    );
+
+    let schema = read_json(&fixture_dir("protocol/channel/channel.v1.schema.json"));
+    assert_eq!(
+        schema.pointer("/$defs/protocol_version_current/const"),
+        Some(&Value::from(PROTOCOL_VERSION))
     );
 }
 

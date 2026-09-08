@@ -55,6 +55,11 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 sha2 = "0.11.0"
+# The constant-time comparison of the channel token (§6.2, SRV-07). The peer the token
+# defends against can reconnect as often as it likes, so a comparison that returned early on
+# the first wrong nibble would hand the token out four bits at a time. Hand-writing one is a
+# way to have it optimised away without noticing.
+subtle = "2.6.1"
 sysinfo = "0.39.6"
 tauri = { version = "2.11.5", features = ["tray-icon"] }
 tauri-plugin-autostart = "2.5.1"
@@ -71,3 +76,15 @@ tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 # NFKC, the first step of both normalisations of the matching rule (§4.5.3). The server
 # gets it from `String.prototype.normalize`; this is the same algorithm.
 unicode-normalization = { version = "0.1.25", default-features = false }
+
+# The named pipe of the channel carries an explicit DACL granting access to this user alone
+# (§6.2, A-16), which needs the process token's SID and an SDDL conversion; the token file
+# is created with the same descriptor. Nothing else in the crate calls Win32 directly.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
