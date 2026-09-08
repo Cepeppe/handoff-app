@@ -3,22 +3,37 @@ name: CI
 # A tag push would otherwise run this whole matrix a second time, on top of the release
 # workflow that the tag already triggers. Windows minutes cost double, so the branch filter
 # is here from the first commit.
+#
+# A `workflow_dispatch` exists to run the macOS leg, which is dispatch-only while macOS is
+# deferred (TASKS.md §0.4 item 7). The push run of the same commit already has the Windows
+# result, so a dispatch skips the Windows job unless it is asked for; the input is the
+# escape hatch for re-running Windows by hand.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows:
+        description: 'Also run the Windows job (2x minutes); a push already covers it'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# One group per event and ref: a newer push cancels the superseded push run of the same
+# branch, a newer dispatch the superseded dispatch, and a dispatch never cancels the push
+# run of the commit it is checking. With one group shared by both events, the dispatch
+# that runs the macOS leg would cancel the Windows run of the very commit it checks.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   windows:
     name: windows-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.windows
     runs-on: windows-latest
     defaults:
       run:
@@ -91,9 +106,9 @@ jobs:
         run: pnpm tauri build --debug
 
   # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
-  # this leg runs only when it is dispatched by hand. What it proves is that the
-  # `cfg(target_os = "macos")` branches written along the way still compile and that their
-  # unit tests pass; it does not package anything.
+  # this leg runs only when it is dispatched by hand; T-059 makes it run on every push.
+  # What it proves is that the `cfg(target_os = "macos")` branches written along the way
+  # still compile and that their unit tests pass; it does not package anything.
   macos:
     name: macos-latest
     if: github.event_name == 'workflow_dispatch'
