@@ -35,8 +35,8 @@ pub mod outcome;
 pub mod runbook_sink;
 
 pub use actor::{
-    Command, Delivery, HandoffSnapshot, OpenAccepted, OpenParams, ResumeSnapshot, Store,
-    StoreHandle, VerifyAccepted,
+    spawn, Command, Delivery, HandoffSnapshot, OpenAccepted, OpenParams, ResumeSnapshot, Store,
+    StoreHandle, UserAction, VerifyAccepted,
 };
 pub use handoff::{
     AttachedCall, Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued,
