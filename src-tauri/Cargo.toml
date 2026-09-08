@@ -34,6 +34,21 @@ secrets-write = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Only to compare `last_verified_at` as an instant when the matching rule ranks runbooks
+# (§4.5.3). `clock` is off: nothing here reads the wall clock, and the feature would pull a
+# time-zone database this crate has no use for.
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+# The order-preserving map behind every open object of the formats (`values`, `secrets`,
+# `step_values`, `values_to_fill`). The certain detector reports the locations of a spec in
+# document order (§5.5), which a sorted or hashed map would lose. It is already in the tree
+# as the map `serde_json/preserve_order` uses.
+indexmap = { version = "2.14", features = ["serde"] }
+# Draft 2020-12 validation of the vendored schemas. `default-features = false` is
+# load-bearing: the defaults enable `resolve-http`, which pulls `reqwest` — banned outright
+# by `deny.toml` and by `clippy.toml` while the app makes zero network connections (§7.13).
+# Without it the crate resolves nothing over the network, which is what we want anyway: the
+# four schemas are registered as in-memory resources.
+jsonschema = { version = "0.55", default-features = false }
 rand = "0.10.2"
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
@@ -53,3 +68,6 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
+# NFKC, the first step of both normalisations of the matching rule (§4.5.3). The server
+# gets it from `String.prototype.normalize`; this is the same algorithm.
+unicode-normalization = { version = "0.1.25", default-features = false }

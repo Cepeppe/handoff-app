@@ -17,6 +17,14 @@
 // deliberate bypass of the lock, so `--check` refuses it when `CI` is set and only warns
 // otherwise.
 //
+// `--format-only` fetches and verifies the format tarball alone, leaving `bin/` and
+// `src-tauri/binaries/` empty. The tarball is platform-neutral and is pinned like any other
+// asset, so nothing about the verification chain changes; what changes is that the run does
+// not need a platform binary the lock does not pin. That is the state of macOS while it is
+// deferred (`TASKS.md` §0.4 item 7): the app crate embeds the schemas, the channel protocol
+// and the pattern file at build time (T-029), so `cargo test` there needs the format and
+// nothing else. Combine it with `--check` for the matching gate.
+//
 // Node ≥ 22, no dependencies: the minisign verification is ported from
 // `handoff-mcp/build/verify-release.mjs` (Ed25519 through `crypto.verify`, BLAKE2b-512
 // through `crypto.createHash`) and the tar reader below is written here rather than
@@ -25,11 +33,13 @@
 // Usage:
 //   node scripts/fetch-server.mjs
 //   node scripts/fetch-server.mjs --check
+//   node scripts/fetch-server.mjs --format-only
 //   node scripts/fetch-server.mjs --dir dist/assets --keep
 //   node scripts/fetch-server.mjs --dir dist/assets --offline
 //
 // Options:
 //   --check              verify vendor/ against the lock and exit; downloads nothing
+//   --format-only        fetch or verify the format material alone, without a binary
 //   --repo <owner/name>  the release repository (default Cepeppe/handoff-mcp)
 //   --dir <dir>          where the release assets are written (default a temporary dir)
 //   --keep               do not delete that directory afterwards
@@ -546,6 +556,10 @@ async function placeExternalBin(source, platform) {
  * Writes the whole vendor tree in a staging directory and swaps it in at the end, so that
  * a failure halfway through leaves the previous artifact intact instead of a half-unpacked
  * one that `--check` would then have to recognise.
+ *
+ * `binaryPath` is null under `--format-only`: the format material is written and `bin/` and
+ * `src-tauri/binaries/` are left empty, which is all a job that compiles without bundling
+ * needs.
  */
 async function fillVendor(lock, platform, binaryPath, formatPath) {
   const vendor = join(repoRoot, VENDOR_DIR);
@@ -560,11 +574,13 @@ async function fillVendor(lock, platform, binaryPath, formatPath) {
     files = await extractTarGz(formatPath, formatDir);
     versions = await verifyFormatDirectory(formatDir, lock);
 
-    const binDir = join(staging, 'bin', platform);
-    await mkdir(binDir, { recursive: true });
-    const executable = join(binDir, executableName(platform));
-    await copyFile(binaryPath, executable);
-    if (process.platform !== 'win32') await chmod(executable, 0o755);
+    if (binaryPath !== null) {
+      const binDir = join(staging, 'bin', platform);
+      await mkdir(binDir, { recursive: true });
+      const executable = join(binDir, executableName(platform));
+      await copyFile(binaryPath, executable);
+      if (process.platform !== 'win32') await chmod(executable, 0o755);
+    }
 
     await writeFile(join(staging, VERSION_FILE), `${lock.version}\n`);
 
@@ -576,6 +592,7 @@ async function fillVendor(lock, platform, binaryPath, formatPath) {
     await rm(staging, { recursive: true, force: true });
   }
 
+  if (binaryPath === null) return { files, versions, placed: null };
   const installed = join(vendor, 'bin', platform, executableName(platform));
   const placed = await placeExternalBin(installed, platform);
   return { files, versions, placed };
@@ -589,7 +606,7 @@ async function fillVendor(lock, platform, binaryPath, formatPath) {
  * is reported and tolerated on a developer machine, and refused wherever `CI` is set, so
  * no release build can be made from a locally built server.
  */
-async function check(lock, platform) {
+async function check(lock, platform, options = {}) {
   const vendor = join(repoRoot, VENDOR_DIR);
   if (!(await exists(vendor))) {
     fail(`${VENDOR_DIR} is absent: run \`node scripts/fetch-server.mjs\``);
@@ -610,21 +627,24 @@ async function check(lock, platform) {
     fail(`${VENDOR_DIR} is ${version}, ${LOCK_FILE} pins ${lock.version}`);
   }
 
-  const executable = join(vendor, 'bin', platform, executableName(platform));
-  if (!(await exists(executable))) {
-    fail(`${VENDOR_DIR} carries no ${platform} server: run \`node scripts/fetch-server.mjs\``);
-  }
-  const external = join(BINARIES_DIR, externalBinName(platform));
-  if (!(await exists(join(repoRoot, external)))) {
-    fail(`${external} is absent: run \`node scripts/fetch-server.mjs\``);
+  if (!options.formatOnly) {
+    const executable = join(vendor, 'bin', platform, executableName(platform));
+    if (!(await exists(executable))) {
+      fail(`${VENDOR_DIR} carries no ${platform} server: run \`node scripts/fetch-server.mjs\``);
+    }
+    const external = join(BINARIES_DIR, externalBinName(platform));
+    if (!(await exists(join(repoRoot, external)))) {
+      fail(`${external} is absent: run \`node scripts/fetch-server.mjs\``);
+    }
   }
   await verifyFormatDirectory(join(vendor, 'format'), lock, { pinnedVersion: !development });
 
+  const what = options.formatOnly ? 'format material' : `server for ${platform}`;
   if (development) {
     console.error(`[dev] ${VENDOR_DIR} is ${version}, not the pinned ${lock.version}`);
     console.error('      it was filled by scripts/dev-link, which bypasses the lock file');
   } else {
-    console.error(`[ok] ${VENDOR_DIR} is ${version} for ${platform}, as ${LOCK_FILE} pins`);
+    console.error(`[ok] ${VENDOR_DIR} is the ${what} of ${version}, as ${LOCK_FILE} pins`);
   }
   process.stdout.write(`${version}\n`);
 }
@@ -633,7 +653,7 @@ async function check(lock, platform) {
 
 async function fetch_(lock, platform, options) {
   const publicKey = await readPublicKey();
-  const binaryName = binaryAsset(lock.version, platform);
+  const binaryName = options.formatOnly ? null : binaryAsset(lock.version, platform);
   const formatName = formatAsset(lock.version);
 
   const dir =
@@ -649,7 +669,7 @@ async function fetch_(lock, platform, options) {
       const auth = token();
       await mkdir(dir, { recursive: true });
       const published = await releaseAssets(options.repo, lock.version, auth);
-      const wanted = [binaryName, formatName, SUMS, SIGNATURE];
+      const wanted = [binaryName, formatName, SUMS, SIGNATURE].filter((name) => name !== null);
       for (const name of wanted) {
         const asset = published.find((entry) => entry.name === name);
         if (asset === undefined) fail(`the release v${lock.version} has no ${name}`);
@@ -669,14 +689,24 @@ async function fetch_(lock, platform, options) {
     console.error(`  verified   ${SIGNATURE} — key ${publicKey.keyId}, ${parsed.trustedComment}`);
 
     const sums = parseSums(sumsText);
-    await verifyAsset(dir, binaryName, pinnedPlatform(lock, platform), sums);
+    if (binaryName !== null) {
+      await verifyAsset(dir, binaryName, pinnedPlatform(lock, platform), sums);
+    }
     await verifyAsset(dir, formatName, lock.assets.format.sha256, sums);
 
-    const result = await fillVendor(lock, platform, join(dir, binaryName), join(dir, formatName));
+    const result = await fillVendor(
+      lock,
+      platform,
+      binaryName === null ? null : join(dir, binaryName),
+      join(dir, formatName),
+    );
     console.error(`  unpacked   ${result.files} format files into ${join(VENDOR_DIR, 'format')}`);
-    console.error(`  placed     ${join(BINARIES_DIR, externalBinName(platform))}`);
+    if (result.placed !== null) {
+      console.error(`  placed     ${join(BINARIES_DIR, externalBinName(platform))}`);
+    }
+    const scope = binaryName === null ? 'format material only' : `for ${platform}`;
     console.error(
-      `\nvendor is handoff-mcp ${lock.version} for ${platform}, ` +
+      `\nvendor is handoff-mcp ${lock.version} ${scope}, ` +
         `channel protocol ${result.versions.get('protocol_version')}, ` +
         `patterns ${result.versions.get('patterns_version')}`,
     );
@@ -697,7 +727,7 @@ async function main(argv) {
   for (const argument of argv) {
     if (
       argument.startsWith('--') &&
-      !['--check', '--keep', '--offline', '--repo', '--dir'].includes(argument)
+      !['--check', '--format-only', '--keep', '--offline', '--repo', '--dir'].includes(argument)
     ) {
       fail(`unknown option ${argument} (scripts/README.md lists them)`);
     }
@@ -705,9 +735,12 @@ async function main(argv) {
 
   const lock = await readLock();
   const platform = hostPlatform();
+  // The format tarball is platform-neutral, so `--format-only` never consults the platform
+  // entry of the lock: that entry is exactly what a host with no pinned binary lacks.
+  const formatOnly = flag('--format-only');
   if (flag('--check')) {
-    pinnedPlatform(lock, platform);
-    await check(lock, platform);
+    if (!formatOnly) pinnedPlatform(lock, platform);
+    await check(lock, platform, { formatOnly });
     return;
   }
 
@@ -716,6 +749,7 @@ async function main(argv) {
     dir: value('--dir'),
     keep: flag('--keep'),
     offline: flag('--offline'),
+    formatOnly,
   };
   if (options.offline && options.dir === undefined) fail('--offline needs --dir');
   await fetch_(lock, platform, options);

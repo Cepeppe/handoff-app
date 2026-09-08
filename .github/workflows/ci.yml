@@ -102,18 +102,22 @@ jobs:
       run:
         shell: bash
     # `tauri-build` runs in `build.rs`, so it validates `externalBin` and `bundle.resources`
-    # for `cargo check`, `clippy` and `test` as well, not only for a bundle. There is
-    # nothing to validate them against here: no darwin asset is released while macOS is
-    # deferred (`server.lock.json` pins `win32-x64` and `format` alone), so `fetch-server`
-    # has nothing to download and `vendor/` stays empty. This job compiles and unit-tests
-    # the `cfg(target_os = "macos")` branches and never bundles, so it clears the two bundle
-    # inputs instead of standing a placeholder in for the server. `null` is how a JSON merge
-    # patch removes a key; the Windows job, which does bundle, uses the real artifact.
+    # for `cargo check`, `clippy` and `test` as well, not only for a bundle. There is no
+    # darwin *binary* to validate them against: macOS is deferred (`server.lock.json` pins
+    # `win32-x64` and `format` alone) and the release builds its darwin legs only on demand.
+    # This job compiles and unit-tests the `cfg(target_os = "macos")` branches and never
+    # bundles, so it clears the two bundle inputs instead of standing a placeholder in for
+    # the server. `null` is how a JSON merge patch removes a key; the Windows job, which
+    # does bundle, uses the real artifact.
     # TASK: T-060 — drop this once darwin binaries are pinned and can be fetched here.
     env:
       TAURI_CONFIG: '{"bundle":{"externalBin":[],"resources":null}}'
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Rust toolchain
         run: |
@@ -123,6 +127,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      # The format material of the pinned release, and only that: the crate embeds the
+      # schemas, the channel protocol and the pattern file with `include_str!` (T-029), so
+      # nothing compiles without it. The tarball is platform-neutral and is pinned like any
+      # other asset, which is why it can be fetched here while the binary cannot.
+      - name: Fetch the pinned format material
+        run: node scripts/fetch-server.mjs --format-only
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      - name: Check the pinned format material
+        run: node scripts/fetch-server.mjs --check --format-only
 
       - name: cargo fmt
         working-directory: src-tauri

@@ -8,8 +8,9 @@ anything.
 ## `fetch-server.mjs`
 
 ```sh
-node scripts/fetch-server.mjs            # download, verify and unpack the pinned release
-node scripts/fetch-server.mjs --check    # verify what is already in vendor/, download nothing
+node scripts/fetch-server.mjs                # download, verify and unpack the pinned release
+node scripts/fetch-server.mjs --check        # verify what is already in vendor/, download nothing
+node scripts/fetch-server.mjs --format-only  # the format material alone, without a binary
 ```
 
 It needs Node 22 or newer and has no dependencies: the minisign verification is Ed25519
@@ -75,6 +76,7 @@ unnecessary if the server repository is ever made public.
 | Option | Effect |
 |---|---|
 | `--check` | verify `vendor/` against the lock and exit; downloads nothing, needs no token |
+| `--format-only` | fetch, or with `--check` verify, the format material alone; `bin/` and `src-tauri/binaries/` stay empty |
 | `--repo <owner/name>` | read the release from another repository (default `Cepeppe/handoff-mcp`) |
 | `--dir <dir>` | keep the downloaded assets here instead of a temporary directory |
 | `--keep` | do not delete that directory afterwards |
@@ -82,6 +84,28 @@ unnecessary if the server repository is ever made public.
 
 Exit status is 0 on success and 1 on any refusal, so `--check` is usable as a build gate.
 Both modes print the vendored version on stdout and everything else on stderr.
+
+## `--format-only`, and where it is needed
+
+The format tarball is platform-neutral: one asset, pinned like any other, carrying the
+schemas, the pattern file, the channel definition, the fixtures and the docs. The binary is
+not — there is one per platform, and `server.lock.json` pins only the platforms the release
+actually publishes.
+
+`--format-only` fetches and verifies the tarball alone, through the same two authorities as
+a full run, and leaves `bin/` and `src-tauri/binaries/` empty. `--check --format-only` is
+the matching gate: same version and `FORMAT-VERSION` checks, no binary.
+
+It exists because the app crate embeds the schemas, the channel protocol and the pattern
+file at build time (`src-tauri/src/format/`), so **`vendor/handoff-mcp/format/` has to be
+there for anything to compile** — `cargo check`, `cargo clippy` and `cargo test` included,
+not only a bundle. On a platform the lock pins no binary for, a full run cannot even start,
+and today that is every macOS host: macOS is deferred (`TASKS.md` §0.4 item 7) and the
+release builds its darwin legs only on demand. The `macos` job of `ci.yml` therefore fetches
+the format material, compiles and unit-tests, and never bundles.
+
+Nothing about the verification is relaxed: the signature, the checksums, the pinned version
+and the pinned `protocol_version` are all checked exactly as in a full run.
 
 ## Development builds and `--check`
 

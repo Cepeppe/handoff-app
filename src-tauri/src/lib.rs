@@ -11,6 +11,11 @@
 //! design section it implements and the task that fills it, so that the layout is decided
 //! once and no later task has to move code between modules.
 //!
+//! Two modules sit beside that tree rather than in it, because what they carry is not the
+//! app's to define: [`format`] is the Rust side of the schemas, the pattern file and the
+//! channel protocol of the pinned `handoff-mcp` release (§3.4), and [`ids`] is the shape of
+//! the identifiers §4.1 fixes. Everything else reads them.
+//!
 //! # The rule that shapes all of them: no `AppHandle` in the core
 //!
 //! Core logic — the state machine, the store, the session registry, the hook decision, the
@@ -32,8 +37,10 @@
 pub mod capture;
 pub mod channel;
 pub mod crash;
+pub mod format;
 pub mod hook;
 pub mod i18n;
+pub mod ids;
 pub mod install;
 pub mod license;
 pub mod log;
