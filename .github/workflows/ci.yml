@@ -125,8 +125,15 @@ jobs:
         run: node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe
 
       # The positive control, and it is not decoration: a grep for a string nobody writes
-      # passes for ever, including on the day the grep breaks. The debug binary the step
-      # above left behind was built **with** the feature, so the same script must report it.
+      # passes for ever, including on the day the grep breaks. It needs a build that *has*
+      # the channel, and it has to ask for one explicitly: `cargo test --features e2e --test
+      # e2e_channel` does not rebuild the binary target, and `pnpm tauri build --debug` above
+      # overwrites `target/debug/handoff-app.exe` without the feature. The first run of this
+      # check failed for exactly that reason, which is the control working.
+      - name: A build that does carry the automation channel
+        working-directory: src-tauri
+        run: cargo build --features e2e --bin handoff-app
+
       - name: The check can still fail
         run: node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe
 

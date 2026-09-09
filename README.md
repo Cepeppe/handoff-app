@@ -63,6 +63,18 @@ pnpm build          # svelte-check + the production frontend bundle
 pnpm tauri build --debug
 ```
 
+And, when the change touches the channel, the store, the state machine, the hook decision or
+the tool contract, the end-to-end suite — nine scenarios against a **real** Claude Code and a
+real build of the app, about four minutes. It is run by hand, not in CI:
+
+```sh
+scripts\e2e.ps1     # from the workspace root: builds everything, then runs pnpm e2e
+```
+
+`docs/dev/e2e.md` is the harness, the traps and how to read a failure. The automation channel
+it drives is compiled only with `--features e2e` and CI asserts it is absent from a release
+binary (`scripts/check-no-automation.mjs`).
+
 ### Layout
 
 ```

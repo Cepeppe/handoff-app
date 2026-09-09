@@ -11,6 +11,12 @@ canary of `handoff-mcp` (`docs/agent-facts.md` there).
 
 Budget about forty minutes the first time.
 
+> Most of what is below is automated now: `pnpm e2e` runs nine of the §11.5 scenarios in four
+> minutes, driving the same paths through the automation channel of an `--features e2e` build
+> ([`e2e.md`](e2e.md)). Run that first. What stays here and cannot be automated is the part
+> that needs eyes and a mouse: the onboarding walk, the consent screen, the restart with a
+> live handoff, and the two launch notices.
+
 - [What it proves](#what-it-proves)
 - [The harness](#the-harness)
 - [Setting it up](#setting-it-up)
