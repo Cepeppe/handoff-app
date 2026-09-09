@@ -9,29 +9,30 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import App from '../App.svelte';
 import { setBridge, type Bridge, type Unlisten } from '../bridge';
 import { DEFAULT_LANGUAGE, setLanguage } from '../i18n';
+import { resetOverlay } from '../overlay/state.svelte';
 import { resetView } from '../view-state.svelte';
 import { VIEW_NAMES, type ViewName } from '../views';
+import { fakeBridge } from './fake-bridge';
 
 /** A bridge that hands back the handler the application registered for the tray event. */
 function recordingBridge(): { bridge: Bridge; show: (view: ViewName) => void } {
   let handler: ((view: ViewName) => void) | null = null;
   return {
-    bridge: {
-      async resizeToContent() {},
-      async setUiLanguage() {},
+    bridge: fakeBridge({
       async onShowView(next): Promise<Unlisten> {
         handler = next;
         return () => {
           handler = null;
         };
       },
-    },
+    }),
     show: (view) => handler?.(view),
   };
 }
 
 beforeEach(() => {
   resetView();
+  resetOverlay();
   setLanguage(DEFAULT_LANGUAGE);
 });
 
@@ -43,7 +44,9 @@ afterEach(() => {
 describe('App', () => {
   it('opens on the overlay', () => {
     render(App);
-    expect(screen.getByRole('heading', { name: 'Overlay' })).toBeDefined();
+    // The overlay is the step view now, so what identifies it is the view marker and not a
+    // heading: a handoff whose spec has arrived shows its goal there, and an empty overlay
+    // shows the sentence of §7.6.
     expect(document.querySelector('[data-view="overlay"]')).not.toBeNull();
   });
 
@@ -85,7 +88,7 @@ describe('App', () => {
     setLanguage('it');
     render(App);
 
-    screen.getByRole('button', { name: 'Impostazioni' }).click();
+    screen.getAllByRole('button', { name: 'Impostazioni' })[0]?.click();
     await tick();
 
     expect(screen.getByRole('heading', { name: 'Impostazioni' })).toBeDefined();

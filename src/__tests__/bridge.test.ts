@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bridge, inTauri, noopBridge, setBridge, type Bridge } from '../bridge';
+import { fakeBridge } from './fake-bridge';
 
 afterEach(() => setBridge(null));
 
@@ -20,11 +21,10 @@ describe('bridge', () => {
   });
 
   it('hands out the installed replacement', async () => {
-    const fake: Bridge = {
+    const fake: Bridge = fakeBridge({
       resizeToContent: vi.fn().mockResolvedValue(undefined),
       setUiLanguage: vi.fn().mockResolvedValue(undefined),
-      onShowView: vi.fn().mockResolvedValue(() => {}),
-    };
+    });
     setBridge(fake);
 
     await bridge().resizeToContent(240);

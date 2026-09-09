@@ -119,7 +119,11 @@ impl Session {
     /// [`Session::project_label`] rather than splitting this.
     #[must_use]
     pub fn display_name(&self) -> String {
-        format!("{} · {}", self.agent_label(), self.project_label())
+        format!(
+            "{}{LABEL_SEPARATOR}{}",
+            self.agent_label(),
+            self.project_label()
+        )
     }
 
     /// This session as the `resumed_from` of an outcome opened by it (TOOL-08, §4.3).
@@ -151,6 +155,14 @@ impl Session {
                 .is_some_and(|project_dir| same_folder(project_dir, cwd))
     }
 }
+
+/// What sits between the agent and the project wherever the two are printed together: a
+/// tab (§7.6), the FM-22 picker, a log line.
+///
+/// One constant rather than one `format!` per view, because a user meets the same session
+/// under both spellings otherwise — the tab strip and the `resumed_from` of an outcome name
+/// the same thing.
+pub const LABEL_SEPARATOR: &str = " · ";
 
 /// What [`Registry::bind_hook`] concluded (§7.5).
 #[derive(Debug, Clone, PartialEq, Eq)]

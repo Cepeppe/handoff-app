@@ -19,6 +19,8 @@
 //!   [`actor::StoreHandle`] is the tokio task around it.
 //! - [`runbook_sink`] holds the two seams to the rest of the app: the runbook writer and
 //!   the user-request queue.
+//! - [`watch`] is the third seam: the window is told which tab changed, so that it re-reads
+//!   this store rather than keeping a copy of it.
 //!
 //! # The two rules that shape it
 //!
@@ -34,16 +36,18 @@ pub mod actor;
 pub mod handoff;
 pub mod outcome;
 pub mod runbook_sink;
+pub mod watch;
 
 pub use actor::{
-    spawn, Command, Delivery, HandoffSnapshot, OpenAccepted, OpenParams, ResumeSnapshot, Store,
-    StoreHandle, UserAction, VerifyAccepted,
+    spawn, Command, Delivery, HandoffSnapshot, OpenAccepted, OpenParams, Reply, ResumeSnapshot,
+    RoundSummary, Store, StoreHandle, UserAction, VerifyAccepted,
 };
 pub use handoff::{
     AttachedCall, Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued,
     Round, ScreenshotPayload,
 };
 pub use runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
+pub use watch::{HandoffsObserver, NoWatchers};
 
 use crate::format::channel::ChannelErrorCode;
 use crate::log::{HandoffState, StoreError};

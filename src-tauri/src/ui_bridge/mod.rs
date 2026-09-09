@@ -14,15 +14,24 @@
 //!   `Quit` (WIN-04). Both halves live here: the close handler and the menu.
 //! - the frontend reports the language it resolved ([`set_ui_language`]) so the tray menu
 //!   speaks the same language as the window (APP-02).
-// TASK: T-036 — the view model and the handoff commands.
+//!
+//! T-036 added the rest: [`view`] is the projection the window draws, [`commands`] is
+//! everything the window may ask of the core, and [`events::Notifier`] is how the core tells
+//! the window that something changed without ever naming Tauri itself.
 
+pub mod commands;
+pub mod events;
 mod tray;
+pub mod view;
 
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter as _, LogicalSize, Manager as _, Window, WindowEvent};
 
 use crate::i18n::Language;
+
+pub use commands::{Core, CoreState};
+pub use events::{Notice, NoticeKind, Notifier};
 
 /// The label of the overlay window, as `tauri.conf.json` declares it.
 pub const MAIN_WINDOW: &str = "main";
@@ -36,6 +45,31 @@ pub const EVENT_SHOW_VIEW: &str = "ui://show-view";
 
 /// The fixed width of the panel (WIN-02, §7.6). `tauri.conf.json` declares the same value.
 pub const WINDOW_WIDTH: f64 = 360.0;
+
+/// The tab moved on and the button the user pressed is no longer offered (§7.4).
+pub const NOTICE_ACTION_REFUSED: &str = "notice.actionRefused";
+
+/// The disk refused the transition; the state is unchanged and the action can be retried
+/// (FM-28).
+pub const NOTICE_ACTION_FAILED: &str = "notice.actionFailed";
+
+/// The clipboard refused the value.
+pub const NOTICE_COPY_FAILED: &str = "notice.copyFailed";
+
+/// A link whose scheme SPEC-07 does not allow.
+pub const NOTICE_URL_REFUSED: &str = "notice.urlRefused";
+
+/// A URL or a file the operating system would not open.
+pub const NOTICE_OPEN_FAILED: &str = "notice.openFailed";
+
+/// Every notice this module can push, so one test can prove all of them are translated.
+pub const NOTICE_KEYS: [&str; 5] = [
+    NOTICE_ACTION_REFUSED,
+    NOTICE_ACTION_FAILED,
+    NOTICE_COPY_FAILED,
+    NOTICE_URL_REFUSED,
+    NOTICE_OPEN_FAILED,
+];
 
 /// The smallest window the content may ask for: the header alone is about this tall, and a
 /// zero-height window would be a window the user cannot grab.
@@ -54,9 +88,20 @@ const FALLBACK_MAX_WINDOW_HEIGHT: f64 = 1200.0;
 pub struct Ui {
     language: Mutex<Language>,
     tray: Mutex<Option<tray::Handles>>,
+    notifier: Notifier,
 }
 
 impl Ui {
+    /// The interface state, carrying the notifier the core was given before the window
+    /// existed (`events::Notifier` says why it arrives in two halves).
+    #[must_use]
+    pub fn with_notifier(notifier: Notifier) -> Self {
+        Self {
+            notifier,
+            ..Self::default()
+        }
+    }
+
     /// The language the interface is showing.
     pub fn language(&self) -> Language {
         *self
@@ -66,11 +111,25 @@ impl Ui {
     }
 }
 
+/// The language the window reported, from anywhere that has the application.
+fn language_of(app: &AppHandle) -> Language {
+    app.state::<Ui>().language()
+}
+
+/// The notifier the core was built with, from anywhere that has the application.
+fn notifier(app: &AppHandle) -> Notifier {
+    app.state::<Ui>().notifier.clone()
+}
+
 /// Builds the tray and, in a development build, shows the window once.
 ///
 /// Called from `setup()` once the application exists.
 pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let state = app.state::<Ui>();
+    // From here on the core's observers have a window to emit through; everything they
+    // fired while the channel was starting was dropped, and the view reads the core when it
+    // mounts.
+    state.notifier.attach(app.clone());
     let handles = tray::install(app, state.language())?;
     *state.tray.lock().expect("the tray mutex is poisoned") = Some(handles);
 

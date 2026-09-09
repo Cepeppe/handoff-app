@@ -52,6 +52,7 @@ use super::handoff::{
 };
 use super::outcome::{already_delivered, build};
 use super::runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
+use super::watch::{HandoffsObserver, NoWatchers};
 use super::{Refusal, Result};
 
 /// How many commands may wait for the actor before a sender is made to wait.
@@ -123,11 +124,59 @@ pub struct VerifyAccepted {
     pub outcome: Outcome,
 }
 
+/// One closed round, as the History section of §7.6 shows it.
+///
+/// Only rounds the cursor has left: the current one is the flat `steps` / `confirmed` /
+/// `skipped` / `notes` of [`HandoffSnapshot`], so nothing is carried twice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundSummary {
+    /// 1-based round number, as the counter printed it.
+    pub no: u32,
+    /// The steps of that round.
+    pub steps: Vec<HandoffStep>,
+    /// 1-based indices the user confirmed.
+    pub confirmed: Vec<u32>,
+    /// 1-based indices the user skipped.
+    pub skipped: Vec<u32>,
+    /// What the user wrote on its steps.
+    pub notes: Vec<crate::format::outcome::OutcomeNote>,
+    /// What the agent reported about it (VER-05, VER-10).
+    pub verify: Option<VerifyReport>,
+}
+
+/// What an agent answered, and on which step (RESP-04, TOOL-04).
+///
+/// Read from the diary rather than from the record: a reply is an `events` row of kind
+/// `reply`, because §7.4 keeps no field for it — the tool result carried it to the agent's
+/// caller and the overlay shows it on the step it referred to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reply {
+    /// The round it was written in.
+    pub round: u32,
+    /// The 1-based step it answered.
+    pub step: u32,
+    /// What the agent wrote.
+    pub text: String,
+    /// When it arrived.
+    pub at: Timestamp,
+}
+
 /// What a view needs to draw one tab (§7.6, §8.4).
 ///
 /// A projection, not the record: the store stays the only owner, and a view that held a
 /// [`Handoff`] would be a second one.
-// TASK: T-036 — the view model grows here as the tab strip and the step view need more.
+///
+/// Everything here is a clone of what is already in memory, because the list is rebuilt on
+/// every Stop hook as well as on every repaint (`hook::decide`) and a query per handoff
+/// there would spend a real-time budget on the window's behalf. The two things a view needs
+/// and this does not carry are read on their own: the agent's replies
+/// ([`Store::replies`], one query for one tab) and whether the session is still connected,
+/// which belongs to the registry (SRV-21).
+///
+/// **`values` are the true values.** §5.5 sends the app the spec unmasked so that the copy
+/// button can copy what the user has to paste (DET-04); `secret_treated` says which of them
+/// the window must show as `••••••`. Masking is `ui_bridge::view`'s, and it is the only
+/// thing that crosses into the webview: this type is not serialisable on purpose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffSnapshot {
     /// `hf_` + 10 characters.
@@ -158,10 +207,32 @@ pub struct HandoffSnapshot {
     pub call_attached: bool,
     /// The session that opened it.
     pub session_ref: Option<String>,
+    /// Agent and project of the opening session, which is what the tab is labelled with
+    /// (OPEN-02, MULTI-01).
+    pub opener_label: Option<ResumedFrom>,
+    /// The project folder of the opening session; `secrets` destinations are relative to it
+    /// (SEC-02).
+    pub project_dir: Option<String>,
     /// The spec's goal, once there is a spec.
     pub goal: Option<String>,
     /// The spec's `where`.
     pub location: Option<String>,
+    /// The spec's own starting point, when it has one (GUIDE-03).
+    pub url: Option<String>,
+    /// BCP-47 tag of the spec's texts; the steps are shown in the language the agent wrote
+    /// them, whatever the UI language is (GUIDE-06).
+    pub lang: Option<String>,
+    /// The spec's values, **true** (DET-04). See the note on this type.
+    pub values: indexmap::IndexMap<String, crate::format::spec::SpecValue>,
+    /// Variable name to destination file (SEC-02). Names only; never a value (PRIN-03).
+    pub secrets: Option<indexmap::IndexMap<String, String>>,
+    /// What the certain detector matched at ingress: which locations are masked, and with
+    /// which family (DET-04, §5.9).
+    pub secret_treated: Vec<SecretTreated>,
+    /// The rounds the cursor has left, oldest first (VER-09).
+    pub history: Vec<RoundSummary>,
+    /// What the agent reported about the last round (VER-05, §8.4 "declared by agent").
+    pub verify_report: Option<VerifyReport>,
     /// What the agent will check (VER-04).
     pub verify: Option<String>,
     /// The user's own words, when it grew from a request.
@@ -239,6 +310,7 @@ pub struct Store {
     handoffs: BTreeMap<String, Handoff>,
     runbooks: Box<dyn RunbookSink>,
     requests: Box<dyn Requests>,
+    watchers: Box<dyn HandoffsObserver>,
     outbox: Vec<Delivery>,
 }
 
@@ -261,8 +333,19 @@ impl Store {
             handoffs: BTreeMap::new(),
             runbooks: Box::new(NoRunbookSink),
             requests: Box::new(NoRequests),
+            watchers: Box::new(NoWatchers),
             outbox: Vec::new(),
         }
+    }
+
+    /// The same store, telling `watchers` which tab changed (§7.6).
+    ///
+    /// A builder rather than a fourth constructor parameter: watching is the window's
+    /// business, and every test and every headless build wants the store without it.
+    #[must_use]
+    pub fn watched_by(mut self, watchers: Box<dyn HandoffsObserver>) -> Self {
+        self.watchers = watchers;
+        self
     }
 
     /// The store as the database left it (§7.2, NFR-12, FM-13).
@@ -298,6 +381,7 @@ impl Store {
             handoffs,
             runbooks,
             requests,
+            watchers: Box::new(NoWatchers),
             outbox: Vec::new(),
         })
     }
@@ -1336,7 +1420,71 @@ impl Store {
             let handoff = self.handoffs.get(&id).expect("just inserted");
             self.runbooks.on_finalised(handoff, final_state);
         }
+        // Last, and only here: a window told about a transition the disk refused would draw
+        // a tab that does not exist (FM-28). Every path that changes a handoff comes
+        // through this function, so the event fires once per transition and no caller has
+        // to remember it.
+        self.watchers.handoff_changed(&id);
         Ok(())
+    }
+
+    /// What the agents answered on this handoff, oldest first (RESP-04, TOOL-04).
+    ///
+    /// Read from `events` rather than from the record, which keeps no reply: §7.4 has no
+    /// field for it because the text went to the agent's caller in the tool result, and the
+    /// overlay shows it again on the step it referred to. One query for one tab, which is
+    /// why it is not part of [`HandoffSnapshot`].
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Persistence`] when the rows cannot be read.
+    pub fn replies(&self, handoff_id: &str) -> Result<Vec<Reply>> {
+        let rows = crate::log::events::list_for_handoff(&self.db, handoff_id)?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| row.kind == EventKind::Reply)
+            .filter_map(|row| {
+                let text = row
+                    .payload_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                    .and_then(|payload| {
+                        payload
+                            .get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .map(std::borrow::ToOwned::to_owned)
+                    })?;
+                Some(Reply {
+                    round: u32::try_from(row.round.unwrap_or(1)).unwrap_or(1),
+                    step: u32::try_from(row.step_index.unwrap_or(1)).unwrap_or(1),
+                    text,
+                    at: row.at,
+                })
+            })
+            .collect())
+    }
+
+    /// The **true** value `key` names, as the copy button and the ten-second reveal need it
+    /// (DET-04, GUIDE-02).
+    ///
+    /// One entry for a single value, one per item for an array, so that "copy the whole" and
+    /// "copy this item" are the same call with and without an index. Empty when the handoff
+    /// has no spec yet or declares no such value; there is no error to report, because the
+    /// window drew the chip from the same spec.
+    #[must_use]
+    pub fn value(&self, handoff_id: &str, key: &str) -> Vec<String> {
+        let Some(spec) = self
+            .handoffs
+            .get(handoff_id)
+            .and_then(|it| it.spec.as_ref())
+        else {
+            return Vec::new();
+        };
+        match spec.values.get(key) {
+            Some(crate::format::spec::SpecValue::One(value)) => vec![value.clone()],
+            Some(crate::format::spec::SpecValue::Many(items)) => items.clone(),
+            None => Vec::new(),
+        }
     }
 }
 
@@ -1549,8 +1697,37 @@ fn snapshot_of(handoff: &Handoff, now: &Timestamp) -> HandoffSnapshot {
         undelivered: handoff.undelivered.len(),
         call_attached: handoff.attached_call.is_some(),
         session_ref: handoff.session_ref.clone(),
+        opener_label: handoff.opener_label.clone(),
+        project_dir: handoff.project_dir.clone(),
         goal: handoff.spec.as_ref().map(|spec| spec.goal.clone()),
         location: handoff.spec.as_ref().map(|spec| spec.r#where.clone()),
+        url: handoff.spec.as_ref().and_then(|spec| spec.url.clone()),
+        lang: handoff.lang.clone(),
+        values: handoff
+            .spec
+            .as_ref()
+            .map(|spec| spec.values.clone())
+            .unwrap_or_default(),
+        secrets: handoff.spec.as_ref().and_then(|spec| spec.secrets.clone()),
+        secret_treated: handoff.secret_treated.clone(),
+        history: handoff
+            .rounds
+            .iter()
+            .filter(|past| past.no != handoff.cursor.round)
+            .map(summary_of)
+            .collect(),
+        verify_report: handoff
+            .last_round()
+            .and_then(|last| last.verify.clone())
+            .or_else(|| {
+                // A late report (DD-16) lands on the round it belongs to, which is not
+                // always the last one; the banner still has to say "declared by agent".
+                handoff
+                    .rounds
+                    .iter()
+                    .rev()
+                    .find_map(|round| round.verify.clone())
+            }),
         verify: handoff.spec.as_ref().and_then(|spec| spec.verify.clone()),
         request_text: handoff.request_text.clone(),
         linked_request_id: handoff.linked_request_id.clone(),
@@ -1559,6 +1736,18 @@ fn snapshot_of(handoff: &Handoff, now: &Timestamp) -> HandoffSnapshot {
         orphan: handoff.is_orphan(now),
         created_at: handoff.created_at.clone(),
         closed_at: handoff.closed_at.clone(),
+    }
+}
+
+/// One round of the history (§7.6).
+fn summary_of(round: &Round) -> RoundSummary {
+    RoundSummary {
+        no: round.no,
+        steps: round.steps.clone(),
+        confirmed: round.confirmed.clone(),
+        skipped: round.skipped.clone(),
+        notes: round.notes.clone(),
+        verify: round.verify.clone(),
     }
 }
 
@@ -1672,6 +1861,22 @@ pub enum Command {
         at: Timestamp,
         /// Where the projections go.
         reply_to: oneshot::Sender<Vec<HandoffSnapshot>>,
+    },
+    /// What the agents answered on one handoff (§7.6, RESP-04).
+    Replies {
+        /// Which handoff.
+        handoff_id: String,
+        /// Where they go; empty when the rows cannot be read.
+        reply_to: oneshot::Sender<Vec<Reply>>,
+    },
+    /// The true value behind a chip (DET-04, GUIDE-02).
+    Value {
+        /// Which handoff.
+        handoff_id: String,
+        /// Which key of the spec's `values`.
+        key: String,
+        /// One entry for a single value, one per item for an array.
+        reply_to: oneshot::Sender<Vec<String>>,
     },
 }
 
@@ -1878,6 +2083,31 @@ impl StoreHandle {
         self.ask(|reply_to| Command::ListForUi { at, reply_to }, Vec::new)
             .await
     }
+
+    /// What the agents answered on one handoff, oldest first.
+    pub async fn replies(&self, handoff_id: String) -> Vec<Reply> {
+        self.ask(
+            |reply_to| Command::Replies {
+                handoff_id,
+                reply_to,
+            },
+            Vec::new,
+        )
+        .await
+    }
+
+    /// The true value behind a chip, one entry per item.
+    pub async fn value(&self, handoff_id: String, key: String) -> Vec<String> {
+        self.ask(
+            |reply_to| Command::Value {
+                handoff_id,
+                key,
+                reply_to,
+            },
+            Vec::new,
+        )
+        .await
+    }
 }
 
 /// Starts the store's task and returns the handle and the stream of outcomes to send.
@@ -2005,6 +2235,25 @@ fn apply(store: &mut Store, command: Command) {
         }
         Command::ListForUi { at, reply_to } => {
             let _ = reply_to.send(store.list_for_ui(&at));
+        }
+        Command::Replies {
+            handoff_id,
+            reply_to,
+        } => {
+            // A diary that cannot be read costs the tab its replies and nothing else; the
+            // step, the values and the buttons are all in memory.
+            let replies = store.replies(&handoff_id).unwrap_or_else(|error| {
+                tracing::warn!(error = %error, handoff_id, "the replies could not be read");
+                Vec::new()
+            });
+            let _ = reply_to.send(replies);
+        }
+        Command::Value {
+            handoff_id,
+            key,
+            reply_to,
+        } => {
+            let _ = reply_to.send(store.value(&handoff_id, &key));
         }
     }
 }

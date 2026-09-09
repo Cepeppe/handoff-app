@@ -41,10 +41,13 @@
 
   /**
    * The dev-only view switcher. It exists so that the placeholder views can be reached
-   * before the tab strip, the tray and the request shortcut do it for real; a release
-   * build has no way to show it.
+   * before the real routing does it for them; a release build has no way to show it.
+   *
+   * T-036 built the overlay and left this: the tray already reaches the request sheet and
+   * the settings, but onboarding is opened by a first launch (T-040) and the preview by a
+   * screenshot (T-049), so until then those two have no other door.
    */
-  // TASK: T-036 — delete this once the tab strip and the real routing exist.
+  // TASK: T-049 — delete this once every view has a way in of its own.
   const showDevMenu = import.meta.env.DEV;
 
   let root = $state<HTMLElement | null>(null);

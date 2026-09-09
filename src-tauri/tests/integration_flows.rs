@@ -103,7 +103,7 @@ impl App {
 
         let dispatch = Dispatch::new(
             registry_db,
-            registry,
+            std::sync::Arc::new(std::sync::Mutex::new(registry)),
             store.clone(),
             handle.clone(),
             std::sync::Arc::clone(&queue),

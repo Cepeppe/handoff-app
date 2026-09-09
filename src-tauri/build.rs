@@ -30,6 +30,9 @@ const EMBEDDED: &[&str] = &[
 /// `handoff-app/vendor/handoff-mcp/format/`, relative to this manifest.
 const FORMAT_DIR: &str = "../vendor/handoff-mcp/format";
 
+/// The Windows application manifest, embedded into every binary. See [`windows_manifest`].
+const MANIFEST: &str = "windows-app-manifest.xml";
+
 fn main() {
     let format = Path::new(FORMAT_DIR);
     for name in EMBEDDED {
@@ -47,5 +50,39 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
-    tauri_build::build()
+    windows_manifest();
+
+    // The manifest is embedded by the linker instead of by Tauri's resource, so Tauri is
+    // asked not to produce one; everything else it puts in that resource — the icons, the
+    // version information — is unchanged and still reaches the application binary alone.
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest()),
+    )
+    .expect("failed to run tauri-build");
+}
+
+/// Embeds `windows-app-manifest.xml` into **every** binary this crate produces.
+///
+/// `tauri-build` links its resource with `cargo:rustc-link-arg-bins`, which reaches the
+/// application and not the test harnesses, and Cargo has no flag that reaches the unit-test
+/// binary of a library (`rustc-link-arg-tests` covers `tests/` and not that one). Asking
+/// the linker to embed the manifest itself covers all of them at once, with no duplicate
+/// resource to reconcile.
+///
+/// It matters because the manifest is what declares the dependency on Common Controls
+/// **version 6**: `muda`, `tray-icon` and `tauri-runtime-wry` call `TaskDialogIndirect`,
+/// which `comctl32.dll` exports only in v6. Without it Windows loads v5.82 and the binary
+/// dies before `main` with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) — no output, no
+/// backtrace, no failing test to read.
+fn windows_manifest() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let manifest = Path::new(MANIFEST).canonicalize().unwrap_or_else(|error| {
+        panic!("{MANIFEST} cannot be read: {error}");
+    });
+    println!("cargo:rerun-if-changed={MANIFEST}");
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
 }

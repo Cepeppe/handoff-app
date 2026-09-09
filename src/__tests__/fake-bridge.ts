@@ -1,0 +1,66 @@
+/**
+ * A whole {@link Bridge} for a test, with the parts a case cares about replaced.
+ *
+ * The bridge is the only seam between the window and the core, so a component test that
+ * wants to observe one call still has to satisfy the whole interface. Building it here
+ * rather than in each test means a command added to the bridge does not break every case
+ * that never mentions it — and the handful that should break, break where they are wrong.
+ */
+import { vi } from 'vitest';
+
+import { noopBridge, type Bridge, type Unlisten } from '../bridge';
+import type { HandoffView, Notice, TabView } from '../model';
+
+/** The handlers a fake bridge collected, so a test can fire an event by hand. */
+export interface FakeEvents {
+  handoffChanged?: (id: string) => void;
+  sessionsChanged?: () => void;
+  notice?: (notice: Notice) => void;
+}
+
+/** A bridge whose every method is a spy, with `overrides` applied on top. */
+export function fakeBridge(overrides: Partial<Bridge> = {}): Bridge {
+  const base = noopBridge();
+  const spied: Bridge = {
+    resizeToContent: vi.fn(base.resizeToContent),
+    setUiLanguage: vi.fn(base.setUiLanguage),
+    onShowView: vi.fn(base.onShowView),
+    listHandoffs: vi.fn(base.listHandoffs),
+    getHandoffView: vi.fn(base.getHandoffView),
+    act: vi.fn(base.act),
+    copyValue: vi.fn(base.copyValue),
+    revealValue: vi.fn(base.revealValue),
+    openUrl: vi.fn(base.openUrl),
+    openSecretFile: vi.fn(base.openSecretFile),
+    scanTypedText: vi.fn(base.scanTypedText),
+    showWindow: vi.fn(base.showWindow),
+    onHandoffChanged: vi.fn(base.onHandoffChanged),
+    onSessionsChanged: vi.fn(base.onSessionsChanged),
+    onNotice: vi.fn(base.onNotice),
+  };
+  return { ...spied, ...overrides };
+}
+
+/** A bridge that serves `tabs` and `views`, and hands the event handlers back in `events`. */
+export function servingBridge(
+  tabs: TabView[],
+  views: Record<string, HandoffView>,
+  events: FakeEvents = {},
+): Bridge {
+  return fakeBridge({
+    listHandoffs: vi.fn(async () => tabs),
+    getHandoffView: vi.fn(async (id: string) => views[id] ?? null),
+    onHandoffChanged: vi.fn(async (handler: (id: string) => void): Promise<Unlisten> => {
+      events.handoffChanged = handler;
+      return () => {};
+    }),
+    onSessionsChanged: vi.fn(async (handler: () => void): Promise<Unlisten> => {
+      events.sessionsChanged = handler;
+      return () => {};
+    }),
+    onNotice: vi.fn(async (handler: (notice: Notice) => void): Promise<Unlisten> => {
+      events.notice = handler;
+      return () => {};
+    }),
+  });
+}

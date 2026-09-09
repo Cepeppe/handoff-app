@@ -87,14 +87,27 @@ export function setLanguage(next: Language): void {
 }
 
 /**
- * The text of `key` in the active language.
+ * The text of `key` in the active language, with `{name}` placeholders filled in.
  *
  * A key missing from the active catalogue falls back to English and then to the key itself:
  * the parity test makes both impossible in a committed state, and a visible key beats a
  * blank line in the window while a translation is being written.
+ *
+ * The substitution runs once over the catalogue text and never over what it substituted, so
+ * a step whose own words contain `{total}` stays the agent's words — the same rule
+ * `requests::text` follows on the Rust side.
  */
-export function t(key: string): string {
-  return CATALOGUES[active][key] ?? CATALOGUES[DEFAULT_LANGUAGE][key] ?? key;
+export function t(key: string, params?: Readonly<Record<string, string | number>>): string {
+  const text = CATALOGUES[active][key] ?? CATALOGUES[DEFAULT_LANGUAGE][key] ?? key;
+  if (params === undefined) {
+    return text;
+  }
+  return text.replace(/\{(\w+)\}/g, (whole, name: string) => {
+    const value = params[name];
+    // A placeholder nobody supplied is left as it is rather than printed as `undefined`:
+    // it is a mistake in the caller, and showing it names the key that is wrong.
+    return value === undefined ? whole : String(value);
+  });
 }
 
 /** The catalogue of a language, for tests and for the parity check. */

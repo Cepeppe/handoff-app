@@ -77,10 +77,15 @@ pub fn run() {
     let entitlement = license::check();
     tracing::info!(entitlement = %entitlement, "starting");
 
+    // The core half of the window (§7.6). It has to exist before the channel does — the
+    // registry and the store take it as their observer — and it is given the `AppHandle` in
+    // `setup()`, which is the first moment there is one; `ui_bridge::events` says why.
+    let notifier = ui_bridge::Notifier::new();
+
     // §7.2: the shared folder, the token and the listener, before the window exists. A
     // server that connects while the UI is still starting is registered all the same,
     // because registration is the channel's business and not the window's (SRV-20).
-    let channel = start_channel();
+    let (channel, core) = start_channel(&notifier);
 
     tauri::Builder::default()
         // First, as the plugin requires: a second launch must reach the running instance
@@ -89,10 +94,26 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             ui_bridge::show_main_window(app);
         }))
-        .manage(ui_bridge::Ui::default())
+        // The two plugins the commands of §7.6 need. Neither is granted to the webview:
+        // `capabilities/main.json` lists no clipboard and no opener permission, because the
+        // frontend never calls them — it calls `copy_value`, `open_url` and
+        // `open_secret_file`, which decide what may be copied and what may be opened.
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(ui_bridge::Ui::with_notifier(notifier))
+        .manage(ui_bridge::CoreState(core))
         .invoke_handler(tauri::generate_handler![
             ui_bridge::resize_to_content,
-            ui_bridge::set_ui_language
+            ui_bridge::set_ui_language,
+            ui_bridge::commands::list_handoffs,
+            ui_bridge::commands::get_handoff_view,
+            ui_bridge::commands::act,
+            ui_bridge::commands::copy_value,
+            ui_bridge::commands::reveal_value,
+            ui_bridge::commands::open_url,
+            ui_bridge::commands::open_secret_file,
+            ui_bridge::commands::scan_typed_text,
+            ui_bridge::commands::show_window
         ])
         // WIN-04: the close button hides the window to the tray; `Quit` in the tray menu is
         // the only way out.
@@ -114,30 +135,35 @@ pub fn run() {
 /// A listener that cannot bind is a bad day, not a reason to deny the user the window: the
 /// overlay still shows what the log holds, the settings screen still repairs the token, and
 /// every agent call degrades to text mode, which is a supported way to work (SRV-14).
-fn start_channel() -> Option<channel::ChannelHandle> {
+fn start_channel(
+    notifier: &ui_bridge::Notifier,
+) -> (Option<channel::ChannelHandle>, Option<ui_bridge::Core>) {
     match tauri::async_runtime::block_on(channel::start()) {
         Ok((handle, events)) => {
             tracing::info!(endpoint = %handle.endpoint().display(), "the channel is listening");
             // Inside `block_on` because `store::spawn` puts the actor on the runtime, and
             // `tokio::spawn` panics outside a runtime's context. Nothing here awaits; what
             // the block provides is the context, which the builder has not started yet.
-            match tauri::async_runtime::block_on(async { state_of_the_app(&handle) }) {
-                Some(dispatch) => {
-                    let (dispatch, deliveries) = dispatch;
+            let built =
+                tauri::async_runtime::block_on(async { state_of_the_app(&handle, notifier) });
+            match built {
+                Some((dispatch, deliveries, core)) => {
                     tauri::async_runtime::spawn(dispatch.run(events, deliveries));
+                    (Some(handle), Some(core))
                 }
                 // Without the store there is nothing to answer a peer with, but the queue
                 // still has to be read: an unread event stream is back-pressure on the
                 // socket, and a peer blocked on a write is worse than a peer in text mode.
+                // The window opens all the same, with an empty tab strip.
                 None => {
                     tauri::async_runtime::spawn(drain(events));
+                    (Some(handle), None)
                 }
             }
-            Some(handle)
         }
         Err(error) => {
             tracing::error!(error = %error, "the channel could not start; agents will use text mode");
-            None
+            (None, None)
         }
     }
 }
@@ -150,9 +176,11 @@ fn start_channel() -> Option<channel::ChannelHandle> {
 /// tabs, the shortcut, the agent scan — is assembled by T-042.
 fn state_of_the_app(
     handle: &channel::ChannelHandle,
+    notifier: &ui_bridge::Notifier,
 ) -> Option<(
     channel::Dispatch,
     tokio::sync::mpsc::Receiver<store::Delivery>,
+    ui_bridge::Core,
 )> {
     let open = |what: &str| match log::Db::open_app_data() {
         Ok(db) => Some(db),
@@ -164,11 +192,16 @@ fn state_of_the_app(
     let registry_db = open("session registry")?;
     let store_db = open("handoff store")?;
 
-    let registry = sessions::Registry::open(&registry_db, Box::new(sessions::NoObserver))
+    // The registry is shared with the window rather than owned by the dispatch alone:
+    // §7.6's `sessions_changed` carries no payload because the view re-reads the registry,
+    // and whether a session is still connected is what tells the "detached" row of §8.4
+    // from the rest (SRV-21).
+    let registry = sessions::Registry::open(&registry_db, Box::new(notifier.clone()))
         .inspect_err(
             |error| tracing::error!(error = %error, "the session registry could not start"),
         )
         .ok()?;
+    let registry = std::sync::Arc::new(std::sync::Mutex::new(registry));
 
     // The queue of §7.7, shared by the store (which links a request inside the transition
     // that answers it) and the dispatch (which hands it to sessions and reads it for every
@@ -185,12 +218,18 @@ fn state_of_the_app(
         Box::new(std::sync::Arc::clone(&queue)),
     )
     .inspect_err(|error| tracing::error!(error = %error, "the handoff store could not be restored"))
-    .ok()?;
+    .ok()?
+    .watched_by(Box::new(notifier.clone()));
 
     let (store, deliveries) = store::spawn(store);
+    let core = ui_bridge::Core {
+        store: store.clone(),
+        registry: std::sync::Arc::clone(&registry),
+    };
     Some((
         channel::Dispatch::new(registry_db, registry, store, handle.clone(), queue),
         deliveries,
+        core,
     ))
 }
 

@@ -13,12 +13,16 @@
  *
  * Adding a command here means adding it to `ui_bridge` on the Rust side; adding a Tauri
  * *plugin* call means adding its permission to `src-tauri/capabilities/main.json`, which
- * grants the least privilege each task needs and nothing more.
+ * grants the least privilege each task needs and nothing more. The clipboard and the opener
+ * are deliberately **not** listed there: the window never calls those plugins, it calls
+ * `copyValue`, `openUrl` and `openSecretFile`, and the Rust side decides what may be copied
+ * and what may be opened.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 import type { Language } from './i18n';
+import type { ActionName, HandoffView, Notice, Redacted, TabView } from './model';
 import { isViewName, type ViewName } from './views';
 
 /**
@@ -28,6 +32,15 @@ import { isViewName, type ViewName } from './views';
  * Rust test reads this file to prove the two spellings still agree.
  */
 export const EVENT_SHOW_VIEW = 'ui://show-view';
+
+/** A tab changed; the window re-reads it. Spelled in `ui_bridge/events.rs` as well. */
+export const EVENT_HANDOFF_CHANGED = 'handoff_changed';
+
+/** The set of sessions changed; the window re-reads the tabs (SRV-21). */
+export const EVENT_SESSIONS_CHANGED = 'sessions_changed';
+
+/** One sentence for the user, already in their language. */
+export const EVENT_NOTICE = 'notice';
 
 /** Stops delivering an event to the handler that returned it. */
 export type Unlisten = () => void;
@@ -48,6 +61,53 @@ export interface Bridge {
 
   /** Runs `handler` whenever the tray menu asks for a view (Show, New request, Settings). */
   onShowView(handler: (view: ViewName) => void): Promise<Unlisten>;
+
+  /** The tab strip, oldest handoff first (§7.6, MULTI-01). */
+  listHandoffs(): Promise<TabView[]>;
+
+  /** One whole tab, or `null` when the store no longer knows that id. */
+  getHandoffView(id: string): Promise<HandoffView | null>;
+
+  /**
+   * One user action (RESP-01..09). `payload` is the text of a sheet, or the request id of a
+   * relink; the actions that take none ignore it.
+   */
+  act(id: string, action: ActionName, payload?: string): Promise<void>;
+
+  /**
+   * Puts the **true** value on the clipboard, secret-treated or not (GUIDE-02, DET-04).
+   * With an index it copies that item of a list, without one the whole value.
+   */
+  copyValue(id: string, key: string, index?: number): Promise<void>;
+
+  /** The true value, for the ten-second reveal of DET-04. One entry per item. */
+  revealValue(id: string, key: string): Promise<string[]>;
+
+  /** Opens a URL, if its scheme is one of the four SPEC-07 allows. */
+  openUrl(url: string): Promise<void>;
+
+  /** Opens the file a `secrets` entry names, with its default application (SEC-02). */
+  openSecretFile(id: string, name: string): Promise<void>;
+
+  /** Runs the certain detector over typed text, before it can be sent (§7.10). */
+  scanTypedText(text: string): Promise<Redacted>;
+
+  /**
+   * Brings the overlay to the front (MULTI-03).
+   *
+   * Called for the first handoff opened while none is active, and never for one that
+   * arrives beside an active tab — that one gets a badge and waits.
+   */
+  showWindow(): Promise<void>;
+
+  /** Runs `handler` with the id of a handoff whose state changed. */
+  onHandoffChanged(handler: (id: string) => void): Promise<Unlisten>;
+
+  /** Runs `handler` when the set of sessions changed; it carries no payload by design. */
+  onSessionsChanged(handler: () => void): Promise<Unlisten>;
+
+  /** Runs `handler` with a sentence to show the user. */
+  onNotice(handler: (notice: Notice) => void): Promise<Unlisten>;
 }
 
 /** True inside a Tauri webview, false in a plain browser and under vitest. */
@@ -73,17 +133,75 @@ export function tauriBridge(): Bridge {
         }
       });
     },
+    async listHandoffs() {
+      return invoke<TabView[]>('list_handoffs');
+    },
+    async getHandoffView(id) {
+      return invoke<HandoffView | null>('get_handoff_view', { id });
+    },
+    async act(id, action, payload) {
+      await invoke('act', { id, action, payload: payload ?? null });
+    },
+    async copyValue(id, key, index) {
+      await invoke('copy_value', { id, key, index: index ?? null });
+    },
+    async revealValue(id, key) {
+      return invoke<string[]>('reveal_value', { id, key });
+    },
+    async openUrl(url) {
+      await invoke('open_url', { url });
+    },
+    async openSecretFile(id, name) {
+      await invoke('open_secret_file', { id, name });
+    },
+    async scanTypedText(text) {
+      return invoke<Redacted>('scan_typed_text', { text });
+    },
+    async showWindow() {
+      await invoke('show_window');
+    },
+    async onHandoffChanged(handler) {
+      return listen<string>(EVENT_HANDOFF_CHANGED, (event) => handler(event.payload));
+    },
+    async onSessionsChanged(handler) {
+      return listen(EVENT_SESSIONS_CHANGED, () => handler());
+    },
+    async onNotice(handler) {
+      return listen<Notice>(EVENT_NOTICE, (event) => handler(event.payload));
+    },
   };
 }
 
 /** A bridge that accepts every call and does nothing, for a browser or a test. */
 export function noopBridge(): Bridge {
+  const unlisten = async (): Promise<Unlisten> => () => {};
   return {
     async resizeToContent() {},
     async setUiLanguage() {},
-    async onShowView() {
-      return () => {};
+    onShowView: unlisten,
+    async listHandoffs() {
+      return [];
     },
+    async getHandoffView() {
+      return null;
+    },
+    async act() {},
+    async copyValue() {},
+    async revealValue() {
+      return [];
+    },
+    async openUrl() {},
+    async openSecretFile() {},
+    async scanTypedText(text) {
+      // Outside the webview there is no detector; saying "nothing was found" here would be
+      // a claim this side cannot make, so the text comes back as it went in and the sheet
+      // shows it unchanged.
+      return { text, kinds: [] };
+    },
+    async showWindow() {},
+    onHandoffChanged: unlisten,
+    onSessionsChanged: unlisten,
+    onNotice: unlisten,
   };
 }
 

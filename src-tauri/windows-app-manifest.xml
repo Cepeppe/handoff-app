@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  The Windows application manifest of every binary this crate produces.
+
+  Tauri normally embeds this same declaration into the application binary alone
+  (`tauri-build` links its resource with `cargo:rustc-link-arg-bins`). It is asked not to
+  here — `build.rs` calls `WindowsAttributes::new_without_app_manifest()` — and the manifest
+  is embedded by the linker instead, for the binary and for the test harnesses alike.
+
+  Why the test harnesses need it: `muda`, `tray-icon` and `tauri-runtime-wry` call
+  `TaskDialogIndirect`, which `comctl32.dll` exports only in version 6. Without this
+  dependency Windows loads version 5.82, the import cannot be resolved, and the test binary
+  dies before `main` with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) and no output at all.
+
+  The content is the one `tauri-build` ships (`src/windows-app-manifest.xml`); if a future
+  Tauri release changes it, this file is the copy to update.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

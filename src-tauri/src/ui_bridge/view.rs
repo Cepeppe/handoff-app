@@ -1,0 +1,1222 @@
+//! The view model: one tab, as the window draws it (§7.6, §8.4).
+//!
+//! It sits between [`crate::store::HandoffSnapshot`] — the store's own projection, which is
+//! Rust-only and carries the **true** values — and the webview, which receives this and
+//! nothing else. Three rules shape it, and they are the reason it exists as a layer at all:
+//!
+//! - **A secret-treated value never crosses on its own.** DET-04 shows it as `••••••` with a
+//!   local ten-second **Show**; the reveal and the copy are two commands the user has to
+//!   press, so the value crosses on demand and once, never as part of every repaint.
+//! - **No text is written here.** `src/locales/{en,it}.json` is the single catalogue of the
+//!   product (T-028), so what this builds is a *key* and its arguments — `counter.step` with
+//!   an index and a total, `banner.verifying` with the spec's own `verify` — and the window
+//!   renders them with `t()`. The only strings that leave here are the user's and the
+//!   agent's own words, which are never translated (GUIDE-06).
+//! - **A button the state does not offer is not drawn.** The store answers a user action it
+//!   cannot take with `Refusal::NotActive`, which §7.4 calls a defect of the view; the
+//!   `actions` block is that contract, written once, next to the states it reads.
+//!
+//! What it does not decide is the badge of the tab strip. "Unseen events" is a fact about
+//! which tab the user is looking at, and the core does not know that; the window keeps it
+//! (`src/overlay/state.svelte.ts`).
+
+use serde::Serialize;
+
+use crate::format::outcome::{ResumedFrom, VerifyReport};
+use crate::format::spec::{url_allowed, SpecValue};
+use crate::log::{HandoffState, Timestamp};
+use crate::store::{HandoffSnapshot, Reply, RoundSummary};
+
+/// What a secret-treated value looks like until the user asks to see it (DET-04, §7.6).
+pub const MASK: &str = "••••••";
+
+/// The separator between the agent and the project in a tab label.
+///
+/// Imported rather than written again: `Session::display_name` prints the same two parts,
+/// and the tab and an outcome's `resumed_from` name the same session — a user reading both
+/// must not meet two spellings of it.
+use crate::sessions::registry::LABEL_SEPARATOR;
+
+/// The row of §8.4 a tab is on.
+///
+/// Not a second vocabulary for [`HandoffState`]: three of the rows are the `active` state
+/// told apart by what is attached to it, and one — `Detached` — is a state of the *session*
+/// rather than of the handoff, which is why the session's own connection is an input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UiState {
+    /// `awaiting_spec`: a user request the agent has not answered yet.
+    WaitingForSpec,
+    /// `active` with a call attached: the ordinary case, and the only one with no banner.
+    Guiding,
+    /// `active`, no call, nothing queued: the agent will pick it up at its next resume.
+    AgentAway,
+    /// `active` with a question or a screenshot the agent has not answered.
+    QuestionSent,
+    /// Deferred once.
+    Deferred,
+    /// Deferred twice; it waits for the user (RESP-07).
+    Parked,
+    /// Done on the last step of a spec that carries a `verify`.
+    Verifying,
+    /// One of the five final states.
+    Final,
+    /// Not final, and the session that owns it is gone (SRV-22).
+    Detached,
+}
+
+/// Where a tab sits in the strip: the ordinary list, or the collapsible "waiting" group
+/// §7.6 puts orphans and parked handoffs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabGroup {
+    /// Drawn in the strip.
+    Open,
+    /// Drawn in the collapsible group.
+    Waiting,
+}
+
+/// One entry of the tab strip (MULTI-01, OPEN-02).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabView {
+    /// `hf_` + 10 characters.
+    pub id: String,
+    /// Agent and project, as the tab is labelled.
+    pub label: String,
+    /// The agent alone, for a layout that wants the two apart.
+    pub agent: Option<String>,
+    /// The project folder's name alone.
+    pub project: Option<String>,
+    /// The state of §8.1, by its wire name.
+    pub state: &'static str,
+    /// The row of §8.4.
+    pub ui_state: UiState,
+    /// Which part of the strip it belongs to.
+    pub group: TabGroup,
+    /// The spec's goal, once there is one; the tooltip and the "waiting" group show it.
+    pub goal: Option<String>,
+    /// A final outcome nobody collected for seven days (SRV-23).
+    pub orphan: bool,
+    /// When it opened; the strip is ordered by it.
+    pub created_at: Timestamp,
+}
+
+/// The counter of GUIDE-01, as a key and its numbers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CounterView {
+    /// `counter.step` in the first round, `counter.correction` in a correction round.
+    pub key: &'static str,
+    /// 1-based step inside the round.
+    pub index: u32,
+    /// How many steps the round has.
+    pub total: u32,
+    /// Which round, 1-based.
+    pub round: u32,
+}
+
+/// A link the user may open with one click, or plain text (GUIDE-03, SPEC-07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkView {
+    /// The URL as the spec wrote it.
+    pub href: String,
+    /// Whether its scheme is one of the four SPEC-07 allows. A spec's own URLs always are —
+    /// the schema refused anything else — so this is what tells an **Open** button from a
+    /// line of text the user has to copy.
+    pub openable: bool,
+}
+
+impl LinkView {
+    /// The link `href` is, with its scheme already judged.
+    #[must_use]
+    pub fn of(href: String) -> Self {
+        let openable = url_allowed(&href);
+        Self { href, openable }
+    }
+}
+
+/// One value chip (GUIDE-02, DET-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValueChipView {
+    /// The key of the spec's `values`.
+    pub name: String,
+    /// Whether the certain detector matched it at ingress, so the window shows the mask and
+    /// offers **Show** (DET-04).
+    pub masked: bool,
+    /// The family that matched, when it did: `api_key`, `token`, … never the pattern id.
+    pub kind: Option<String>,
+    /// Whether the value is a list, which is copyable as a whole and per item (GUIDE-02).
+    pub list: bool,
+    /// What to draw: the value's items, or one [`MASK`] per item.
+    pub items: Vec<String>,
+}
+
+/// One entry of the `secrets` list (SEC-01, SEC-02).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretEntryView {
+    /// The variable name.
+    pub name: String,
+    /// The destination file, as the spec wrote it: relative to the project, or absolute.
+    pub file: String,
+}
+
+/// The step the user is on (GUIDE-01..04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepView {
+    /// The counter.
+    pub counter: CounterView,
+    /// The step's own text, in the language the agent wrote it (GUIDE-06).
+    pub text: String,
+    /// What the person should know before acting (GUIDE-04).
+    pub warning: Option<String>,
+    /// The step's `url`, else the spec's, else nothing (§7.6).
+    pub url: Option<LinkView>,
+    /// The values this step names, in the order it names them (GUIDE-02).
+    pub values: Vec<ValueChipView>,
+    /// Whether this step was already confirmed in this round.
+    pub confirmed: bool,
+    /// Whether it was skipped.
+    pub skipped: bool,
+    /// What the user wrote on it (RESP-03).
+    pub notes: Vec<StepNoteView>,
+    /// What an agent answered on it (RESP-04, TOOL-04).
+    pub replies: Vec<StepReplyView>,
+    /// Whether it is the last step of the round, which is where **Done** ends the round
+    /// rather than advancing (RESP-09).
+    pub last: bool,
+}
+
+/// A note the user wrote on a step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepNoteView {
+    /// The 1-based step.
+    pub step: u32,
+    /// What the user wrote.
+    pub text: String,
+    /// When, RFC 3339.
+    pub at: String,
+}
+
+/// An agent's answer, on the step it referred to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepReplyView {
+    /// The round it belongs to.
+    pub round: u32,
+    /// The 1-based step it answered.
+    pub step: u32,
+    /// What the agent wrote.
+    pub text: String,
+    /// When.
+    pub at: Timestamp,
+}
+
+/// The interruption an agent has not answered yet (§8.4 "Question sent").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingView {
+    /// `question` or `screenshot`.
+    pub kind: &'static str,
+    /// The 1-based step it was raised on.
+    pub step: u32,
+}
+
+/// One closed round, collapsed (VER-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRoundView {
+    /// 1-based round number.
+    pub no: u32,
+    /// Its steps' texts, in order.
+    pub steps: Vec<String>,
+    /// Which of them were confirmed.
+    pub confirmed: Vec<u32>,
+    /// Which of them were skipped.
+    pub skipped: Vec<u32>,
+    /// The notes written in it.
+    pub notes: Vec<StepNoteView>,
+    /// The replies given in it.
+    pub replies: Vec<StepReplyView>,
+    /// What the agent reported about it.
+    pub verify: Option<VerifyResultView>,
+}
+
+/// A verification report, as the tab shows it (VER-05, §8.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResultView {
+    /// `true`, `false`, or absent when the agent could not verify.
+    pub ok: Option<bool>,
+    /// What the agent found.
+    pub detail: Option<String>,
+    /// When it reported, RFC 3339.
+    pub reported_at: String,
+    /// Whether it arrived after the handoff had already been declared `not_verified`.
+    pub late: bool,
+}
+
+impl From<&VerifyReport> for VerifyResultView {
+    fn from(report: &VerifyReport) -> Self {
+        Self {
+            ok: report.ok,
+            detail: report.detail.clone(),
+            reported_at: report.reported_at.clone(),
+            late: report.late,
+        }
+    }
+}
+
+/// The banner of §8.4: a catalogue key and, for the two rows that quote something, its
+/// argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BannerView {
+    /// The key in `src/locales/*.json`.
+    pub key: &'static str,
+    /// What `{text}` stands for, when the row quotes the spec or the agent.
+    pub arg: Option<String>,
+}
+
+/// Which buttons the state of §8.4 offers.
+///
+/// The store refuses an action a state does not have (`Refusal::NotActive`) and §7.4 calls
+/// that a defect of the view, so this block is the view's half of the same rule and the unit
+/// tests below walk every state against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionsView {
+    /// Step done, next step, or the end of the round on the last one.
+    pub done: bool,
+    /// Ask the agent (RESP-04).
+    pub ask: bool,
+    /// Annotate the step locally (RESP-02, RESP-03).
+    pub note: bool,
+    /// Skip the step (RESP-03).
+    pub skip: bool,
+    /// Defer (RESP-05, RESP-07).
+    pub defer: bool,
+    /// Abandon, always beside Defer (RESP-08).
+    pub abandon: bool,
+    /// Send what the user sees. Never true yet: the capture pipeline is T-046 to T-049, and
+    /// the button is drawn disabled with a tooltip that says so.
+    pub screenshot: bool,
+    /// Pick a parked or deferred handoff up again (RESP-07, FM-31).
+    pub resume: bool,
+    /// Close a final outcome nobody collected (SRV-23).
+    pub close_orphan: bool,
+}
+
+/// The request a handoff answers, when the link is not the id itself (OPEN-08, FM-20).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedRequestView {
+    /// The request's id.
+    pub id: String,
+    /// The user's own words.
+    pub text: Option<String>,
+}
+
+/// One handoff, whole, as the overlay draws it (§7.6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandoffView {
+    /// The tab this belongs to, so a window that has the view has the strip entry too.
+    pub tab: TabView,
+    /// Where it stands in §8.1, by its wire name.
+    pub state: &'static str,
+    /// The row of §8.4.
+    pub ui_state: UiState,
+    /// The banner that row shows, if any.
+    pub banner: Option<BannerView>,
+    /// What must be achieved.
+    pub goal: Option<String>,
+    /// Where to act.
+    pub location: Option<String>,
+    /// The spec's own starting point.
+    pub url: Option<LinkView>,
+    /// BCP-47 tag of the spec's texts (GUIDE-06).
+    pub lang: Option<String>,
+    /// The step the user is on; absent while there is no spec and once it is final.
+    pub step: Option<StepView>,
+    /// The `secrets` list (SEC-02).
+    pub secrets: Vec<SecretEntryView>,
+    /// Every note of the current round.
+    pub notes: Vec<StepNoteView>,
+    /// The interruption the agent owes an answer to.
+    pub pending: Option<PendingView>,
+    /// The previous rounds, collapsed (VER-09).
+    pub history: Vec<HistoryRoundView>,
+    /// What the agent will check (VER-04).
+    pub verify: Option<String>,
+    /// What it reported (VER-05); the label "declared by agent" belongs to it.
+    pub verify_result: Option<VerifyResultView>,
+    /// Which buttons to draw.
+    pub actions: ActionsView,
+    /// The user's own words, when it grew from a request (OPEN-04).
+    pub request_text: Option<String>,
+    /// The request it answers, with the **Change** control of FM-20.
+    pub linked_request: Option<LinkedRequestView>,
+    /// The opening session, when the current call comes from another one (TOOL-08).
+    pub resumed_from: Option<ResumedFrom>,
+    /// Whether a call is listening right now.
+    pub call_attached: bool,
+    /// How many outcomes wait for the next resume (DD-12).
+    pub undelivered: usize,
+    /// When it opened.
+    pub created_at: Timestamp,
+    /// When it closed.
+    pub closed_at: Option<Timestamp>,
+}
+
+/// The tab strip, in the order the store lists the handoffs (oldest first).
+///
+/// `connected` answers "is the session that owns this handoff still there", which is the
+/// registry's to know (SRV-21) and the reason it is a parameter: the store deliberately
+/// keeps no notion of it.
+#[must_use]
+pub fn tabs(
+    snapshots: &[HandoffSnapshot],
+    connected: &dyn Fn(&str) -> bool,
+    now: &Timestamp,
+) -> Vec<TabView> {
+    snapshots
+        .iter()
+        .map(|snapshot| tab_of(snapshot, ui_state_of(snapshot, connected), now))
+        .collect()
+}
+
+/// One whole tab (§7.6).
+#[must_use]
+pub fn build(
+    snapshot: &HandoffSnapshot,
+    replies: &[Reply],
+    connected: &dyn Fn(&str) -> bool,
+    now: &Timestamp,
+) -> HandoffView {
+    let ui_state = ui_state_of(snapshot, connected);
+    let verify_result = snapshot.verify_report.as_ref().map(VerifyResultView::from);
+
+    HandoffView {
+        tab: tab_of(snapshot, ui_state, now),
+        state: snapshot.state.as_str(),
+        ui_state,
+        banner: banner_of(snapshot, ui_state),
+        goal: snapshot.goal.clone(),
+        location: snapshot.location.clone(),
+        url: snapshot.url.clone().map(LinkView::of),
+        lang: snapshot.lang.clone(),
+        step: step_of(snapshot, replies),
+        secrets: secrets_of(snapshot),
+        notes: snapshot.notes.iter().map(note_view).collect(),
+        pending: snapshot
+            .pending_question
+            .as_ref()
+            .map(|pending| PendingView {
+                kind: match pending.kind {
+                    crate::store::PendingKind::Question => "question",
+                    crate::store::PendingKind::Screenshot => "screenshot",
+                },
+                step: pending.step,
+            }),
+        history: history_of(snapshot, replies),
+        verify: snapshot.verify.clone(),
+        verify_result,
+        actions: actions_of(snapshot),
+        request_text: snapshot.request_text.clone(),
+        linked_request: snapshot
+            .linked_request_id
+            .clone()
+            .map(|id| LinkedRequestView {
+                id,
+                text: snapshot.request_text.clone(),
+            }),
+        resumed_from: snapshot.resumed_from.clone(),
+        call_attached: snapshot.call_attached,
+        undelivered: snapshot.undelivered,
+        created_at: snapshot.created_at.clone(),
+        closed_at: snapshot.closed_at.clone(),
+    }
+}
+
+/// The row of §8.4 this handoff is on.
+///
+/// The order of the arms **is** the precedence, and the one place it had to be decided is
+/// `Detached`: §8.4 gives it "any non-final, session disconnected", which overlaps every
+/// other non-final row. It wins, because it is the only one that is still true — a tab that
+/// says "waiting for the reply" when the agent's process is gone is telling the user to wait
+/// for something that cannot arrive, while SRV-22's sentence stays correct in every case
+/// (the outcome is delivered at the next resume, by whichever session does it).
+fn ui_state_of(snapshot: &HandoffSnapshot, connected: &dyn Fn(&str) -> bool) -> UiState {
+    if snapshot.state.is_final() {
+        return UiState::Final;
+    }
+    if snapshot
+        .session_ref
+        .as_deref()
+        .is_some_and(|session_ref| !connected(session_ref))
+    {
+        return UiState::Detached;
+    }
+    match snapshot.state {
+        HandoffState::AwaitingSpec => UiState::WaitingForSpec,
+        HandoffState::Deferred => UiState::Deferred,
+        HandoffState::Parked => UiState::Parked,
+        HandoffState::AwaitingVerification => UiState::Verifying,
+        HandoffState::Active if snapshot.pending_question.is_some() => UiState::QuestionSent,
+        HandoffState::Active if snapshot.call_attached => UiState::Guiding,
+        HandoffState::Active => UiState::AgentAway,
+        // Unreachable: the five final states are answered above. Written as an arm rather
+        // than as a panic because a `state_json` a future version wrote must not be able to
+        // take the window down (FM-28).
+        _ => UiState::Guiding,
+    }
+}
+
+/// The banner of §8.4, as a key and its argument.
+fn banner_of(snapshot: &HandoffSnapshot, ui_state: UiState) -> Option<BannerView> {
+    let plain = |key| Some(BannerView { key, arg: None });
+    match ui_state {
+        UiState::WaitingForSpec => plain("banner.awaitingSpec"),
+        UiState::Guiding => None,
+        UiState::AgentAway => plain("banner.agentAway"),
+        UiState::QuestionSent => plain("banner.questionSent"),
+        UiState::Deferred => plain("banner.deferred"),
+        UiState::Parked => plain("banner.parked"),
+        UiState::Detached => plain("banner.detached"),
+        UiState::Verifying => Some(BannerView {
+            key: "banner.verifying",
+            arg: snapshot.verify.clone(),
+        }),
+        // The final row is the state's own label, and the detail beside it — "declared by
+        // agent", "orphan" — is drawn from `verifyResult` and `tab.orphan`.
+        UiState::Final => Some(BannerView {
+            key: state_key(snapshot.state),
+            arg: None,
+        }),
+    }
+}
+
+/// The catalogue key of a state's label (§8.4).
+fn state_key(state: HandoffState) -> &'static str {
+    match state {
+        HandoffState::AwaitingSpec => "state.awaitingSpec",
+        HandoffState::Active => "state.active",
+        HandoffState::Deferred => "state.deferred",
+        HandoffState::Parked => "state.parked",
+        HandoffState::AwaitingVerification => "state.awaitingVerification",
+        HandoffState::Verified => "state.verified",
+        HandoffState::Failed => "state.failed",
+        HandoffState::NotVerified => "state.notVerified",
+        HandoffState::ConfirmedByUser => "state.confirmedByUser",
+        HandoffState::Abandoned => "state.abandoned",
+    }
+}
+
+fn tab_of(snapshot: &HandoffSnapshot, ui_state: UiState, _now: &Timestamp) -> TabView {
+    let label = snapshot
+        .opener_label
+        .as_ref()
+        .map(|opener| format!("{}{LABEL_SEPARATOR}{}", opener.agent, opener.project))
+        // A handoff with no opening session — a request the user typed before any agent
+        // registered — still needs a tab, and its own id is the only thing it can be
+        // called until a spec arrives.
+        .unwrap_or_else(|| snapshot.id.clone());
+
+    TabView {
+        id: snapshot.id.clone(),
+        label,
+        agent: snapshot
+            .opener_label
+            .as_ref()
+            .map(|opener| opener.agent.clone()),
+        project: snapshot
+            .opener_label
+            .as_ref()
+            .map(|opener| opener.project.clone()),
+        state: snapshot.state.as_str(),
+        ui_state,
+        group: if snapshot.orphan || snapshot.state == HandoffState::Parked {
+            TabGroup::Waiting
+        } else {
+            TabGroup::Open
+        },
+        goal: snapshot.goal.clone(),
+        orphan: snapshot.orphan,
+        created_at: snapshot.created_at.clone(),
+    }
+}
+
+/// The step the cursor is on, with everything that hangs off it.
+///
+/// Absent when there is no spec yet and when the handoff is final: in both cases §8.4 gives
+/// the tab a banner and no step to walk.
+fn step_of(snapshot: &HandoffSnapshot, replies: &[Reply]) -> Option<StepView> {
+    if snapshot.state == HandoffState::AwaitingSpec || snapshot.state.is_final() {
+        return None;
+    }
+    let index = snapshot.step_index;
+    let step = snapshot
+        .steps
+        .get(usize::try_from(index).ok()?.checked_sub(1)?)?;
+
+    Some(StepView {
+        counter: CounterView {
+            key: if snapshot.round > 1 {
+                "counter.correction"
+            } else {
+                "counter.step"
+            },
+            index,
+            total: snapshot.step_total,
+            round: snapshot.round,
+        },
+        text: step.text.clone(),
+        warning: step.warning.clone(),
+        // §7.6: the step's own starting point, and the spec's when the step has none.
+        url: step
+            .url
+            .clone()
+            .or_else(|| snapshot.url.clone())
+            .map(LinkView::of),
+        values: chips_of(snapshot, step.values.as_deref().unwrap_or_default()),
+        confirmed: snapshot.confirmed.contains(&index),
+        skipped: snapshot.skipped.contains(&index),
+        notes: snapshot
+            .notes
+            .iter()
+            .filter(|note| note.step == index)
+            .map(note_view)
+            .collect(),
+        replies: replies
+            .iter()
+            .filter(|reply| reply.round == snapshot.round && reply.step == index)
+            .map(reply_view)
+            .collect(),
+        last: index >= snapshot.step_total,
+    })
+}
+
+/// The chips of the values a step names, in the order it names them (GUIDE-02).
+///
+/// A key the spec does not declare cannot occur — S3 refuses it at ingress — and is dropped
+/// here rather than drawn as an empty chip.
+fn chips_of(snapshot: &HandoffSnapshot, names: &[String]) -> Vec<ValueChipView> {
+    names
+        .iter()
+        .filter_map(|name| {
+            let value = snapshot.values.get(name)?;
+            let kind = secret_kind(snapshot, name);
+            let items = match value {
+                SpecValue::One(one) => vec![one.clone()],
+                SpecValue::Many(many) => many.clone(),
+            };
+            let list = matches!(value, SpecValue::Many(_));
+            Some(ValueChipView {
+                name: name.clone(),
+                masked: kind.is_some(),
+                // The mask replaces the value here and not in the window: what crosses the
+                // boundary for a secret-treated value is the mask, and the true one only
+                // when the user presses **Show** or **Copy** (DET-04).
+                items: if kind.is_some() {
+                    items.iter().map(|_| MASK.to_owned()).collect()
+                } else {
+                    items
+                },
+                kind,
+                list,
+            })
+        })
+        .collect()
+}
+
+/// The family the certain detector reported for a top-level value, if it reported one.
+///
+/// The locations the server sends are display paths (`values.api_key`, §4.7.5), so a name is
+/// matched against exactly that prefix — the same rule
+/// [`crate::store::Handoff::is_secret_value`] applies, which cannot be reused here because a
+/// snapshot is not a handoff.
+fn secret_kind(snapshot: &HandoffSnapshot, name: &str) -> Option<String> {
+    let location = format!("values.{name}");
+    snapshot
+        .secret_treated
+        .iter()
+        .find(|treated| treated.location == location)
+        .map(|treated| treated.kind.clone())
+}
+
+fn secrets_of(snapshot: &HandoffSnapshot) -> Vec<SecretEntryView> {
+    snapshot
+        .secrets
+        .as_ref()
+        .map(|secrets| {
+            secrets
+                .iter()
+                .map(|(name, file)| SecretEntryView {
+                    name: name.clone(),
+                    file: file.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn history_of(snapshot: &HandoffSnapshot, replies: &[Reply]) -> Vec<HistoryRoundView> {
+    snapshot
+        .history
+        .iter()
+        .map(|round| history_round(round, replies))
+        .collect()
+}
+
+fn history_round(round: &RoundSummary, replies: &[Reply]) -> HistoryRoundView {
+    HistoryRoundView {
+        no: round.no,
+        steps: round.steps.iter().map(|step| step.text.clone()).collect(),
+        confirmed: round.confirmed.clone(),
+        skipped: round.skipped.clone(),
+        notes: round.notes.iter().map(note_view).collect(),
+        replies: replies
+            .iter()
+            .filter(|reply| reply.round == round.no)
+            .map(reply_view)
+            .collect(),
+        verify: round.verify.as_ref().map(VerifyResultView::from),
+    }
+}
+
+fn note_view(note: &crate::format::outcome::OutcomeNote) -> StepNoteView {
+    StepNoteView {
+        step: note.step,
+        text: note.text.clone(),
+        at: note.at.clone(),
+    }
+}
+
+fn reply_view(reply: &Reply) -> StepReplyView {
+    StepReplyView {
+        round: reply.round,
+        step: reply.step,
+        text: reply.text.clone(),
+        at: reply.at.clone(),
+    }
+}
+
+/// Which buttons the state offers, mirroring what the store accepts.
+///
+/// `close_orphan` is offered only on an orphan, although the store accepts it on any final
+/// outcome nobody collected: SRV-23 gives the user the control on the orphan list, and a
+/// narrower view than the store is safe in the direction that matters — it can never produce
+/// a `Refusal::NotActive`.
+fn actions_of(snapshot: &HandoffSnapshot) -> ActionsView {
+    let active = snapshot.state == HandoffState::Active;
+    let is_final = snapshot.state.is_final();
+    ActionsView {
+        done: active,
+        ask: active,
+        note: active,
+        skip: active,
+        defer: matches!(
+            snapshot.state,
+            HandoffState::Active | HandoffState::Deferred
+        ),
+        abandon: !is_final,
+        // TASK: T-049 — the preview sends the screenshot, and this becomes `active`.
+        screenshot: false,
+        resume: matches!(
+            snapshot.state,
+            HandoffState::Deferred | HandoffState::Parked
+        ),
+        close_orphan: snapshot.orphan,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use indexmap::IndexMap;
+
+    use crate::format::outcome::{OutcomeNote, SecretTreated};
+    use crate::format::spec::HandoffStep;
+    use crate::store::{PendingKind, PendingQuestion};
+
+    const SESSION: &str = "ses_00000001";
+
+    fn at(text: &str) -> Timestamp {
+        Timestamp::parse(text).expect("rfc 3339")
+    }
+
+    fn now() -> Timestamp {
+        at("2026-09-09T10:00:00Z")
+    }
+
+    fn step(text: &str) -> HandoffStep {
+        HandoffStep {
+            text: text.to_owned(),
+            url: None,
+            values: None,
+            warning: None,
+        }
+    }
+
+    /// A snapshot in the shape the store produces for an ordinary guided handoff.
+    fn snapshot() -> HandoffSnapshot {
+        let mut values = IndexMap::new();
+        values.insert(
+            "endpoint_url".to_owned(),
+            SpecValue::One("https://api.example.test/hook".to_owned()),
+        );
+        values.insert(
+            "events".to_owned(),
+            SpecValue::Many(vec![
+                "payment.succeeded".to_owned(),
+                "payment.failed".to_owned(),
+            ]),
+        );
+        values.insert(
+            "api_key".to_owned(),
+            SpecValue::One("sk_live_0123456789abcdef".to_owned()),
+        );
+
+        HandoffSnapshot {
+            id: "hf_0000000001".to_owned(),
+            state: HandoffState::Active,
+            round: 1,
+            step_index: 1,
+            step_total: 2,
+            steps: vec![
+                HandoffStep {
+                    text: "Open the dashboard and add the endpoint.".to_owned(),
+                    url: Some("https://dashboard.example.test/webhooks".to_owned()),
+                    values: Some(vec![
+                        "endpoint_url".to_owned(),
+                        "events".to_owned(),
+                        "api_key".to_owned(),
+                    ]),
+                    warning: Some("This is the live account.".to_owned()),
+                },
+                step("Save and copy the signing secret."),
+            ],
+            confirmed: Vec::new(),
+            skipped: Vec::new(),
+            notes: Vec::new(),
+            deferral_count: 0,
+            pending_question: None,
+            undelivered: 0,
+            call_attached: true,
+            session_ref: Some(SESSION.to_owned()),
+            opener_label: Some(ResumedFrom {
+                agent: "Claude Code".to_owned(),
+                project: "baton".to_owned(),
+            }),
+            project_dir: Some("C:\\projects\\baton".to_owned()),
+            goal: Some("Register the webhook".to_owned()),
+            location: Some("Dashboard → Webhooks".to_owned()),
+            url: Some("https://dashboard.example.test".to_owned()),
+            lang: Some("en".to_owned()),
+            values,
+            secrets: Some(IndexMap::from([(
+                "STRIPE_SIGNING_SECRET".to_owned(),
+                ".env.local".to_owned(),
+            )])),
+            secret_treated: vec![SecretTreated {
+                location: "values.api_key".to_owned(),
+                kind: "api_key".to_owned(),
+            }],
+            history: Vec::new(),
+            verify_report: None,
+            verify: Some("the webhook fires".to_owned()),
+            request_text: None,
+            linked_request_id: None,
+            resumed_from: None,
+            final_outcome: None,
+            orphan: false,
+            created_at: at("2026-09-09T09:00:00Z"),
+            closed_at: None,
+        }
+    }
+
+    fn connected(_session_ref: &str) -> bool {
+        true
+    }
+
+    fn gone(_session_ref: &str) -> bool {
+        false
+    }
+
+    fn view(snapshot: &HandoffSnapshot) -> HandoffView {
+        build(snapshot, &[], &connected, &now())
+    }
+
+    #[test]
+    fn every_row_of_the_state_table_has_its_own_label_and_banner() {
+        // §8.4, row by row. The banner keys are what the window looks up, so a row that
+        // silently fell back to another row's text would show the wrong sentence with no
+        // failure anywhere else.
+        let mut it = snapshot();
+
+        it.state = HandoffState::AwaitingSpec;
+        assert_eq!(view(&it).ui_state, UiState::WaitingForSpec);
+        assert_eq!(
+            view(&it).banner.expect("a banner").key,
+            "banner.awaitingSpec"
+        );
+
+        it = snapshot();
+        assert_eq!(view(&it).ui_state, UiState::Guiding);
+        assert!(view(&it).banner.is_none(), "the guided row has no banner");
+
+        it.call_attached = false;
+        assert_eq!(view(&it).ui_state, UiState::AgentAway);
+        assert_eq!(view(&it).banner.expect("a banner").key, "banner.agentAway");
+
+        it = snapshot();
+        it.pending_question = Some(PendingQuestion {
+            kind: PendingKind::Question,
+            step: 1,
+            at: at("2026-09-09T09:30:00Z"),
+        });
+        assert_eq!(view(&it).ui_state, UiState::QuestionSent);
+        assert_eq!(
+            view(&it).banner.expect("a banner").key,
+            "banner.questionSent"
+        );
+
+        it = snapshot();
+        it.state = HandoffState::Deferred;
+        assert_eq!(view(&it).ui_state, UiState::Deferred);
+        assert_eq!(view(&it).banner.expect("a banner").key, "banner.deferred");
+
+        it.state = HandoffState::Parked;
+        assert_eq!(view(&it).ui_state, UiState::Parked);
+        assert_eq!(view(&it).banner.expect("a banner").key, "banner.parked");
+
+        it = snapshot();
+        it.state = HandoffState::AwaitingVerification;
+        let banner = view(&it).banner.expect("a banner");
+        assert_eq!(banner.key, "banner.verifying");
+        assert_eq!(
+            banner.arg.as_deref(),
+            Some("the webhook fires"),
+            "the verifying row quotes the spec"
+        );
+
+        it = snapshot();
+        it.state = HandoffState::Verified;
+        it.closed_at = Some(now());
+        assert_eq!(view(&it).ui_state, UiState::Final);
+        assert_eq!(view(&it).banner.expect("a banner").key, "state.verified");
+
+        it = snapshot();
+        assert_eq!(
+            build(&it, &[], &gone, &now()).ui_state,
+            UiState::Detached,
+            "a session that is gone outranks every other non-final row"
+        );
+        assert_eq!(
+            build(&it, &[], &gone, &now()).banner.expect("a banner").key,
+            "banner.detached"
+        );
+    }
+
+    #[test]
+    fn each_of_the_ten_states_has_a_label_key_of_its_own() {
+        let keys: Vec<&str> = [
+            HandoffState::AwaitingSpec,
+            HandoffState::Active,
+            HandoffState::Deferred,
+            HandoffState::Parked,
+            HandoffState::AwaitingVerification,
+            HandoffState::Verified,
+            HandoffState::Failed,
+            HandoffState::NotVerified,
+            HandoffState::ConfirmedByUser,
+            HandoffState::Abandoned,
+        ]
+        .into_iter()
+        .map(state_key)
+        .collect();
+
+        let mut unique = keys.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), keys.len(), "two states share a label");
+    }
+
+    #[test]
+    fn a_final_handoff_keeps_its_report_and_its_orphan_flag() {
+        let mut it = snapshot();
+        it.state = HandoffState::Failed;
+        it.closed_at = Some(now());
+        it.orphan = true;
+        it.verify_report = Some(VerifyReport {
+            ok: Some(false),
+            detail: Some("the endpoint answered 404".to_owned()),
+            reported_at: "2026-09-09T09:45:00.000Z".to_owned(),
+            late: false,
+        });
+
+        let view = view(&it);
+        assert_eq!(view.banner.expect("a banner").key, "state.failed");
+        let report = view.verify_result.expect("a report");
+        assert_eq!(report.ok, Some(false));
+        assert_eq!(report.detail.as_deref(), Some("the endpoint answered 404"));
+        assert!(view.tab.orphan);
+        assert_eq!(view.tab.group, TabGroup::Waiting);
+        assert!(view.step.is_none(), "a closed handoff has no step to walk");
+        assert!(view.actions.close_orphan);
+    }
+
+    #[test]
+    fn the_counter_says_step_in_the_first_round_and_correction_afterwards() {
+        let mut it = snapshot();
+        let counter = view(&it).step.expect("a step").counter;
+        assert_eq!(counter.key, "counter.step");
+        assert_eq!((counter.index, counter.total, counter.round), (1, 2, 1));
+
+        it.round = 2;
+        it.step_index = 1;
+        it.step_total = 3;
+        it.steps = vec![step("redo one"), step("redo two"), step("redo three")];
+        let counter = view(&it).step.expect("a step").counter;
+        assert_eq!(counter.key, "counter.correction");
+        assert_eq!((counter.index, counter.total, counter.round), (1, 3, 2));
+    }
+
+    #[test]
+    fn a_secret_treated_value_crosses_as_the_mask_and_never_as_itself() {
+        let view = view(&snapshot());
+        let chips = view.step.expect("a step").values;
+        let key = chips
+            .iter()
+            .find(|chip| chip.name == "api_key")
+            .expect("the api_key chip");
+
+        assert!(key.masked);
+        assert_eq!(key.kind.as_deref(), Some("api_key"));
+        assert_eq!(key.items, vec![MASK.to_owned()]);
+
+        let serialised = serde_json::to_string(&chips).expect("serialisable");
+        assert!(
+            !serialised.contains("sk_live_0123456789abcdef"),
+            "the true value reached the webview"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_value_keeps_its_text_and_a_list_keeps_its_items() {
+        let chips = view(&snapshot()).step.expect("a step").values;
+        assert_eq!(
+            chips
+                .iter()
+                .map(|chip| chip.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["endpoint_url", "events", "api_key"],
+            "the chips follow the order the step names them in"
+        );
+
+        let url = &chips[0];
+        assert!(!url.masked);
+        assert!(!url.list);
+        assert_eq!(url.items, vec!["https://api.example.test/hook".to_owned()]);
+
+        let events = &chips[1];
+        assert!(events.list, "an array is copyable as a whole and per item");
+        assert_eq!(events.items.len(), 2);
+    }
+
+    #[test]
+    fn a_step_with_no_url_falls_back_to_the_specs_and_only_allowed_schemes_open() {
+        let mut it = snapshot();
+        let step_url = view(&it).step.expect("a step").url.expect("a link");
+        assert_eq!(step_url.href, "https://dashboard.example.test/webhooks");
+        assert!(step_url.openable);
+
+        it.step_index = 2;
+        let fallback = view(&it).step.expect("a step").url.expect("a link");
+        assert_eq!(
+            fallback.href, "https://dashboard.example.test",
+            "the second step has no url of its own"
+        );
+
+        it.url = Some("file:///etc/passwd".to_owned());
+        let refused = view(&it).step.expect("a step").url.expect("a link");
+        assert!(
+            !refused.openable,
+            "a scheme outside SPEC-07 is text, never a button"
+        );
+    }
+
+    #[test]
+    fn the_tab_is_labelled_the_way_a_session_names_itself() {
+        let view = view(&snapshot());
+        assert_eq!(view.tab.label, "Claude Code · baton");
+        assert_eq!(view.tab.agent.as_deref(), Some("Claude Code"));
+        assert_eq!(view.tab.project.as_deref(), Some("baton"));
+        assert_eq!(view.tab.group, TabGroup::Open);
+    }
+
+    #[test]
+    fn a_handoff_with_no_opening_session_is_still_a_tab() {
+        let mut it = snapshot();
+        it.opener_label = None;
+        it.session_ref = None;
+        it.state = HandoffState::AwaitingSpec;
+
+        let view = view(&it);
+        assert_eq!(view.tab.label, "hf_0000000001");
+        assert_eq!(
+            view.ui_state,
+            UiState::WaitingForSpec,
+            "with no session there is nothing that can be disconnected"
+        );
+    }
+
+    #[test]
+    fn the_buttons_follow_the_state_the_store_will_accept() {
+        let mut it = snapshot();
+        let actions = view(&it).actions;
+        assert!(actions.done && actions.ask && actions.note && actions.skip);
+        assert!(actions.defer && actions.abandon);
+        assert!(!actions.screenshot, "the capture pipeline is not built yet");
+        assert!(!actions.resume && !actions.close_orphan);
+
+        it.state = HandoffState::Deferred;
+        let actions = view(&it).actions;
+        assert!(!actions.done && !actions.ask && !actions.note && !actions.skip);
+        assert!(actions.defer, "a deferred handoff may be deferred again");
+        assert!(actions.abandon && actions.resume);
+
+        it.state = HandoffState::Parked;
+        let actions = view(&it).actions;
+        assert!(
+            !actions.defer,
+            "a parked handoff is the user's, not the agent's"
+        );
+        assert!(actions.resume && actions.abandon);
+
+        it.state = HandoffState::Abandoned;
+        it.closed_at = Some(now());
+        let actions = view(&it).actions;
+        assert!(!actions.abandon && !actions.defer && !actions.resume);
+    }
+
+    #[test]
+    fn the_notes_and_the_reply_land_on_the_step_they_belong_to() {
+        let mut it = snapshot();
+        it.notes = vec![
+            OutcomeNote {
+                step: 1,
+                text: "the button is called Add endpoint now".to_owned(),
+                at: "2026-09-09T09:20:00.000Z".to_owned(),
+            },
+            OutcomeNote {
+                step: 2,
+                text: "not there yet".to_owned(),
+                at: "2026-09-09T09:25:00.000Z".to_owned(),
+            },
+        ];
+        let replies = vec![
+            Reply {
+                round: 1,
+                step: 1,
+                text: "use the Developers tab".to_owned(),
+                at: at("2026-09-09T09:30:00Z"),
+            },
+            Reply {
+                round: 1,
+                step: 2,
+                text: "not this step".to_owned(),
+                at: at("2026-09-09T09:31:00Z"),
+            },
+        ];
+
+        let view = build(&it, &replies, &connected, &now());
+        let step = view.step.expect("a step");
+        assert_eq!(step.notes.len(), 1);
+        assert_eq!(step.notes[0].step, 1);
+        assert_eq!(step.replies.len(), 1);
+        assert_eq!(step.replies[0].text, "use the Developers tab");
+        assert_eq!(view.notes.len(), 2, "the tab keeps the round's notes whole");
+    }
+
+    #[test]
+    fn a_correction_round_collapses_the_one_before_it() {
+        let mut it = snapshot();
+        it.round = 2;
+        it.step_index = 1;
+        it.step_total = 1;
+        it.steps = vec![step("try again with the other endpoint")];
+        it.history = vec![RoundSummary {
+            no: 1,
+            steps: vec![step("open the dashboard"), step("save")],
+            confirmed: vec![1],
+            skipped: vec![2],
+            notes: vec![OutcomeNote {
+                step: 1,
+                text: "was already there".to_owned(),
+                at: "2026-09-09T09:10:00.000Z".to_owned(),
+            }],
+            verify: Some(VerifyReport {
+                ok: Some(false),
+                detail: Some("404".to_owned()),
+                reported_at: "2026-09-09T09:40:00.000Z".to_owned(),
+                late: false,
+            }),
+        }];
+
+        let replies = vec![Reply {
+            round: 1,
+            step: 2,
+            text: "the endpoint was wrong".to_owned(),
+            at: at("2026-09-09T09:41:00Z"),
+        }];
+
+        let view = build(&it, &replies, &connected, &now());
+        assert_eq!(view.history.len(), 1);
+        let past = &view.history[0];
+        assert_eq!(past.no, 1);
+        assert_eq!(past.steps.len(), 2);
+        assert_eq!(past.confirmed, vec![1]);
+        assert_eq!(past.skipped, vec![2]);
+        assert_eq!(past.notes.len(), 1);
+        assert_eq!(past.replies.len(), 1);
+        assert_eq!(past.verify.as_ref().expect("a report").ok, Some(false));
+        assert_eq!(
+            view.step.expect("a step").replies.len(),
+            0,
+            "the previous round's reply stays in the history"
+        );
+    }
+
+    #[test]
+    fn the_secrets_list_carries_names_and_files_and_no_value() {
+        let view = view(&snapshot());
+        assert_eq!(view.secrets.len(), 1);
+        assert_eq!(view.secrets[0].name, "STRIPE_SIGNING_SECRET");
+        assert_eq!(view.secrets[0].file, ".env.local");
+    }
+
+    #[test]
+    fn the_strip_is_the_store_order_with_the_waiting_group_marked() {
+        let mut parked = snapshot();
+        parked.id = "hf_0000000002".to_owned();
+        parked.state = HandoffState::Parked;
+        parked.created_at = at("2026-09-09T09:30:00Z");
+
+        let tabs = tabs(&[snapshot(), parked], &connected, &now());
+        assert_eq!(
+            tabs.iter().map(|tab| tab.id.as_str()).collect::<Vec<_>>(),
+            vec!["hf_0000000001", "hf_0000000002"]
+        );
+        assert_eq!(tabs[0].group, TabGroup::Open);
+        assert_eq!(tabs[1].group, TabGroup::Waiting);
+        assert_eq!(tabs[1].ui_state, UiState::Parked);
+    }
+}

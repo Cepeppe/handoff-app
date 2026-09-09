@@ -6,7 +6,9 @@
 //! is burned into the pixels before anything leaves the machine, and the preview the user
 //! must confirm shows the burned image (PRIN-09).
 //!
-//! [`certain`] is here. The suspected detector, the geometry and the burn-in are not.
+//! [`certain`] is here, and [`typed`], which applies it to what the user writes in a sheet
+//! before it is sent (§7.10). The suspected detector, the geometry and the burn-in are not.
 // TASK: T-048 — suspected detector, redaction geometry, burn-in, the synthetic corpus.
 
 pub mod certain;
+pub mod typed;

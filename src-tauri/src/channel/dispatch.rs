@@ -44,7 +44,7 @@
 //! the connection would end a session over a full disk.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::mpsc::Receiver;
 
@@ -80,7 +80,12 @@ pub struct Dispatch {
     /// The registry's own connection. The store has its own; §7.11's note on the pragmas
     /// says two connections are expected, and WAL serialises the writers.
     db: Db,
-    registry: Registry,
+    /// Shared with the window, which re-reads it whenever `sessions_changed` fires (§7.6):
+    /// the registry is the one source of truth about who is connected (SRV-21), so the view
+    /// borrows it rather than keeping a copy that could be stale by the time it is drawn.
+    /// Every use here is one short synchronous call, and the guard never crosses an
+    /// `await`.
+    registry: Arc<Mutex<Registry>>,
     store: StoreHandle,
     channel: ChannelHandle,
     /// The queue of §7.7, shared with the store: this task hands it to a session that
@@ -105,7 +110,7 @@ impl Dispatch {
     #[must_use]
     pub fn new(
         db: Db,
-        registry: Registry,
+        registry: Arc<Mutex<Registry>>,
         store: StoreHandle,
         channel: ChannelHandle,
         queue: Arc<Queue>,
@@ -173,7 +178,7 @@ impl Dispatch {
         let table = SystemProcessTable::snapshot();
         match peer.role {
             PeerRole::Server => {
-                match self.registry.register(&self.db, &peer, &table) {
+                match self.registry().register(&self.db, &peer, &table) {
                     Ok(session_ref) => {
                         // OPEN-04a: a request queued with no session goes to the first one
                         // that registers. A queue that cannot be read is a log line and not
@@ -204,7 +209,7 @@ impl Dispatch {
                     return;
                 };
                 let binding = self
-                    .registry
+                    .registry()
                     .bind_hook(&self.db, &peer.identity, hook, &table)
                     .unwrap_or_else(|error| {
                         tracing::error!(error = %error, "a hook could not be bound to a session");
@@ -412,7 +417,7 @@ impl Dispatch {
     async fn on_disconnected(&mut self, conn_id: ConnId, reason: DisconnectReason) {
         self.hooks.remove(&conn_id);
         let now = Timestamp::now();
-        let session_ref = match self.registry.disconnect(&self.db, conn_id, &now) {
+        let session_ref = match self.registry().disconnect(&self.db, conn_id, &now) {
             Ok(session_ref) => session_ref,
             Err(error) => {
                 tracing::error!(error = %error, "a session could not be marked disconnected");
@@ -476,14 +481,14 @@ impl Dispatch {
     /// considers sessions that are already disconnected, and a disconnection writes the
     /// instant itself.
     fn touch(&mut self, conn_id: ConnId) {
-        if let Err(error) = self.registry.touch(&self.db, conn_id, &Timestamp::now()) {
+        if let Err(error) = self.registry().touch(&self.db, conn_id, &Timestamp::now()) {
             tracing::error!(error = %error, "a session's last sign of life could not be recorded");
         }
     }
 
     /// The session that opened a handoff on this connection (§7.4).
     fn opener(&self, conn_id: ConnId) -> Option<Opener> {
-        self.registry.of_connection(conn_id).map(Opener::from)
+        self.registry().of_connection(conn_id).map(Opener::from)
     }
 
     /// The Stop-hook decision of §7.5 and F-10.
@@ -520,10 +525,22 @@ impl Dispatch {
         if !decision.needs_session_picker.is_empty() {
             // FM-22, SRV-18: nothing separates the candidates, so the hook is answered
             // neutrally and the overlay asks the user which tab this was.
-            self.registry
+            self.registry()
                 .needs_session_picker(&decision.needs_session_picker);
         }
         decision
+    }
+
+    /// The registry, for one synchronous call.
+    ///
+    /// A poisoned lock means another thread panicked while holding it, which in this process
+    /// means the window's own command handler did; the registry itself is a map that a panic
+    /// cannot leave half written, so the guard is taken anyway rather than taking the
+    /// channel down with it.
+    fn registry(&self) -> MutexGuard<'_, Registry> {
+        self.registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The call a request carries, with the session it belongs to when there is one.
@@ -532,7 +549,7 @@ impl Dispatch {
             conn_id,
             call_id,
             session_ref: self
-                .registry
+                .registry()
                 .of_connection(conn_id)
                 .map(|session| session.session_ref.clone()),
         }
