@@ -310,7 +310,7 @@ impl RunbookWriter {
         trust: RunbookTrust,
         now: &Timestamp,
     ) -> Runbook {
-        let filled = placeholders::apply(spec, executed, &|name| handoff.is_secret_value(name));
+        let filled = placeholders::apply(spec, executed, &|name| secret_treated(handoff, name));
         Runbook {
             runbook_version: 1,
             id: new_runbook_id(),
@@ -395,6 +395,23 @@ impl RunbookSink for RunbookWriter {
             }
         }
     }
+}
+
+/// Whether the ingress detector matched anything inside the value `name` (DET-04, §4.5.2).
+///
+/// [`Handoff::is_secret_value`] answers this for a single-valued entry, whose location the
+/// server reports as exactly `values.<name>`. An array's items are reported one index at a
+/// time (`values.<name>[0]`, §4.7.5) and that helper's equality does not see them, while
+/// §4.5.2 calls the **value** secret-treated however many of its items matched — its
+/// description must say nothing about it either way. Hence the prefix, which covers both
+/// shapes; nothing here changes what the helper answers for its own callers.
+fn secret_treated(handoff: &Handoff, name: &str) -> bool {
+    let exact = format!("values.{name}");
+    let indexed = format!("{exact}[");
+    handoff
+        .secret_treated
+        .iter()
+        .any(|treated| treated.location == exact || treated.location.starts_with(&indexed))
 }
 
 /// `handoff-app` and its version, as every file it writes records them.
@@ -538,6 +555,7 @@ mod tests {
     use crate::format::spec::{HandoffStep, SpecValue};
     use crate::log::sessions;
     use crate::log::testing::{at, session, STRIPE_KEY};
+    use crate::runbooks::placeholders::SECRET_DESCRIPTION;
     use crate::store::handoff::{Call, Opener};
     use crate::store::{NoRequests, NoRunbookSink, OpenParams, Store};
 
@@ -1191,6 +1209,63 @@ mod tests {
             runbook.why_human,
             "The key [treated as secret: api_key] is only on the production account."
         );
+        let text = fs::read_to_string(folder.0.join(&folder.names()[0])).expect("the file");
+        assert!(!text.contains(STRIPE_KEY), "{text}");
+    }
+
+    #[test]
+    fn an_array_value_one_of_whose_items_is_a_secret_is_a_secret_treated_value() {
+        // §4.5.2 describes a secret-treated value by the fixed sentence, and the server
+        // reports an array one index at a time (`values.events[0]`, §4.7.5).
+        let folder = Folder::new();
+        let mut store = store(&folder);
+        let mut planted = spec(&["Select the events."], Some("it fires"));
+        planted.values.insert(
+            "events".to_owned(),
+            SpecValue::Many(vec![STRIPE_KEY.to_owned(), "charge.refunded".to_owned()]),
+        );
+        planted.steps[0].text = format!("Select {STRIPE_KEY} and charge.refunded.");
+        // The channel carries the server's own list; `scan_spec` is the same rule applied
+        // here, so the fixture is the shape a real `handoff.open` would arrive with.
+        let secret_treated: Vec<crate::format::outcome::SecretTreated> =
+            crate::redaction::certain::scan_spec(&planted)
+                .into_iter()
+                .map(|treated| crate::format::outcome::SecretTreated {
+                    location: treated.location,
+                    kind: treated.kind.to_string(),
+                })
+                .collect();
+        assert!(
+            secret_treated
+                .iter()
+                .any(|treated| treated.location == "values.events[0]"),
+            "the fixture reproduces the indexed location: {secret_treated:?}"
+        );
+
+        let id = store
+            .open(
+                OpenParams {
+                    spec: planted,
+                    secret_treated,
+                    request_id: None,
+                    opener: opener(),
+                    call: call("call_00000001"),
+                },
+                &at("2026-09-09T11:00:00Z"),
+            )
+            .expect("the open is accepted")
+            .handoff_id;
+        walk(&mut store, &id, 1, "2026-09-09T11:00:00Z");
+        store
+            .verify(&id, Some(true), None, &at("2026-09-09T11:00:00Z"))
+            .expect("the report");
+
+        let runbook = folder.only();
+        assert_eq!(
+            runbook.values["events"].description.as_deref(),
+            Some(SECRET_DESCRIPTION)
+        );
+        assert_eq!(runbook.steps[0].text, "Select {{events}} and {{events}}.");
         let text = fs::read_to_string(folder.0.join(&folder.names()[0])).expect("the file");
         assert!(!text.contains(STRIPE_KEY), "{text}");
     }
