@@ -38,7 +38,7 @@
     noteInteraction,
     stopIdleTimer,
   } from './overlay/collapse.svelte';
-  import { currentView, refreshCurrent, refreshTabs } from './overlay/state.svelte';
+  import { currentView, refreshCurrent, refreshTabs, showNotice } from './overlay/state.svelte';
   import { showView, view } from './view-state.svelte';
   import { VIEW_NAMES, viewTitleKey, type ViewName } from './views';
   import OnboardingView from './views/OnboardingView.svelte';
@@ -108,12 +108,49 @@
     await refreshTabs();
   }
 
+  /**
+   * The two launch checks of §7.2 that decide whether the window opens by itself.
+   *
+   * §7.16 keeps the panel hidden until there is something to show, and the Rust side no
+   * longer shows it at startup: what is worth interrupting the user for is decided here,
+   * where both answers are sentences a person reads.
+   *
+   * - **A first launch shows onboarding** (F-13). Nothing else runs then: the scan would
+   *   announce as a discovery the very agent the consent screen is about to show, and
+   *   `finishOnboarding` records what was found so it is never announced later either.
+   * - **A moved bundle shows the repair offer** (FM-23). The agents still spawn the old
+   *   path, so every session of this machine is in text mode with nothing on screen to say
+   *   why; the Agents page names both paths and repairs them in one press.
+   * - **A newly found agent gets one discreet notice** (INST-05), and only that: it is news,
+   *   not a problem, and the window is not taken away from whatever it was showing.
+   */
+  async function checkAtLaunch(): Promise<void> {
+    if ((await bridge().onboarding()).needed) {
+      await bridge().showWindow();
+      showView('onboarding');
+      return;
+    }
+
+    const report = await bridge().scanAgents();
+    if (report.moved.length > 0) {
+      await bridge().showWindow();
+      showView('settings');
+      return;
+    }
+    for (const agent of report.newAgents) {
+      showNotice({ kind: 'info', text: t('install.newAgent', { agent: t(agent.nameKey) }) });
+    }
+  }
+
   onMount(() => {
     const stopping: Array<() => void> = [];
 
     void bridge()
       .onShowView((next: ViewName) => showView(next))
       .then((unlisten) => stopping.push(unlisten));
+
+    // §7.2: the scan and the path check, once per launch.
+    void checkAtLaunch();
 
     // WIN-03: clicking elsewhere collapses the panel, clicking back on it expands it. The
     // Rust side is where Tauri reports the focus, so the fact arrives as an event.

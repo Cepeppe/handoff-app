@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    survives_project_scope, InstallAdapter, InstallError, Modification, Registration, Scope,
+    self, survives_project_scope, InstallAdapter, InstallError, Modification, Registration, Scope,
 };
 use serde_json::Value;
 
@@ -516,6 +516,105 @@ fn detect_finds_the_agent_by_its_configuration_and_names_the_files_of_the_scope(
     );
     // INST-05 runs this at every launch: no subprocess, so no version.
     assert_eq!(detection.version, None);
+}
+
+// -------------------------------------------------------------- the consent path (T-040)
+
+#[test]
+fn the_consent_path_registers_exactly_what_it_showed_and_then_has_nothing_left_to_do() {
+    // The whole of F-13's first half, as onboarding walks it: the screen asks for a plan,
+    // shows three modifications on two lines, and applies the plan it showed. The files it
+    // produces are the same goldens a bare `apply` produces — the consent screen adds a
+    // question, not a second way of writing.
+    let home = TempHome::from_case("empty");
+    let adapter = home.adapter();
+
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let shown = install::digest(&plan);
+    assert_eq!(plan.len(), 3, "INST-02 counts three modifications");
+
+    let lines = adapter.consent_lines(&plan);
+    assert_eq!(lines.len(), 2, "the two hooks are one line (INST-02)");
+    assert!(lines.iter().all(|line| !line.is_noop));
+
+    adapter.apply(&plan).expect("the plan is applied");
+    assert_matches(&home, "empty", "out");
+
+    // A second visit to the same screen: three modifications still, every one of them a
+    // no-op, so the screen can say "already in order" and `apply` writes nothing at all.
+    let again = adapter.plan(&Scope::User).expect("the plan is made again");
+    assert_eq!(again.len(), 3);
+    assert!(again.iter().all(Modification::is_noop));
+    assert!(adapter
+        .consent_lines(&again)
+        .iter()
+        .all(|line| line.is_noop));
+    assert_ne!(
+        install::digest(&again),
+        shown,
+        "a plan over a registered machine is not the plan over an empty one"
+    );
+}
+
+#[test]
+fn the_digest_of_a_plan_changes_the_moment_the_file_does() {
+    // The other half of INST-01. `apply` refuses a stale plan, but the consent screen cannot
+    // hand a plan back through a webview and be believed, so it hands back this fingerprint
+    // and the command re-plans: a file that moved on hashes differently, and the screen asks
+    // again rather than writing something nobody saw.
+    let home = TempHome::from_case("populated");
+    let adapter = home.adapter();
+    let shown = install::digest(&adapter.plan(&Scope::User).expect("the plan is made"));
+
+    // A key we do not touch is not part of what was consented to, and moving it leaves the
+    // fingerprint alone: the screen would be asking again about a change the user never saw.
+    fs::write(
+        home.join(".claude.json"),
+        "{\n  \"mcpServers\": {\n    \"other\": { \"command\": \"somewhere-else\" }\n  }\n}\n",
+    )
+    .expect("the file is rewritten");
+    assert_eq!(
+        install::digest(&adapter.plan(&Scope::User).expect("the plan is made again")),
+        shown
+    );
+
+    // One of ours, on the other hand, is exactly what the screen showed.
+    fs::write(
+        home.join(".claude.json"),
+        "{\n  \"mcpServers\": {\n    \"handoff\": { \"command\": \"somewhere-else\" }\n  }\n}\n",
+    )
+    .expect("the file is rewritten");
+    assert_ne!(
+        install::digest(&adapter.plan(&Scope::User).expect("the plan is made again")),
+        shown
+    );
+}
+
+#[test]
+fn a_moved_bundle_is_named_by_the_launch_check_and_repaired_by_the_consent_path() {
+    // FM-23 end to end: §7.2's `check_registered_paths` finds it, the repair is the ordinary
+    // plan, and afterwards the registration is `Registered` again. The check itself reads the
+    // *real* home, so what is exercised here is the adapter half of it, over the fixture.
+    let home = TempHome::from_case("moved");
+    let adapter = home.adapter();
+
+    let Registration::PathMismatch {
+        registered,
+        current,
+    } = adapter.verify(&Scope::User)
+    else {
+        panic!("the moved bundle was not reported as a path mismatch");
+    };
+    assert_eq!(registered, PathBuf::from(OLD_SERVER));
+    assert_eq!(current, PathBuf::from(SERVER));
+
+    let plan = adapter.plan(&Scope::User).expect("the repair plan is made");
+    assert!(
+        plan.iter().any(|change| !change.is_noop()),
+        "a repair with nothing to repair"
+    );
+    adapter.apply(&plan).expect("the repair is applied");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
 }
 
 #[test]

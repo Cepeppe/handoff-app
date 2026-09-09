@@ -112,6 +112,10 @@ pub fn run() {
         // and this side decides what may be copied, opened, said and registered.
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        // INST-06: the folder picker of the project scope, in the Agents settings page. Like
+        // the others it is never granted to the webview — the window calls
+        // `pick_project_folder`, and this side is what opens a dialog.
+        .plugin(tauri_plugin_dialog::init())
         // OPEN-05: the notification that carries a request when its terminal could not be
         // brought forward (FM-21).
         .plugin(tauri_plugin_notification::init())
@@ -144,7 +148,17 @@ pub fn run() {
             ui_bridge::commands::answer_session_picker,
             ui_bridge::commands::window_settings,
             ui_bridge::commands::set_collapse_fallback,
-            ui_bridge::commands::show_window
+            ui_bridge::commands::show_window,
+            ui_bridge::install::onboarding,
+            ui_bridge::install::finish_onboarding,
+            ui_bridge::install::agents,
+            ui_bridge::install::scan_agents,
+            ui_bridge::install::consent_plan,
+            ui_bridge::install::install_agent,
+            ui_bridge::install::uninstall_agent,
+            ui_bridge::install::repair_token,
+            ui_bridge::install::pick_project_folder,
+            ui_bridge::install::open_screen_recording_settings
         ])
         // WIN-02, WIN-03, WIN-04: the close button hides the window to the tray, the focus
         // change is what the panel collapses on, and a move is remembered per monitor.

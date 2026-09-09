@@ -36,15 +36,18 @@ pub mod diff;
 pub mod error;
 pub mod fixed_path;
 pub mod json;
+pub mod scan;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 
 pub use claude_code::ClaudeCode;
 pub use error::{InstallError, Result};
+pub use scan::{scan, AgentStatus, MovedRegistration};
 
 use json::Document;
 
@@ -75,7 +78,12 @@ pub const ENV_HANDOFF_TOOL_TIMEOUT_MS: &str = "HANDOFF_TOOL_TIMEOUT_MS";
 pub const STRIPPED_ENV_SUBSTRINGS: [&str; 5] = ["TOKEN", "SECRET", "PASSWORD", "KEY", "AUTH"];
 
 /// Where a registration is written (INST-06).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// Deserialized as well as serialized because the settings page sends it back: the scope
+/// selector of T-040 is `{ "kind": "user" }` or `{ "kind": "project", "path": … }`, and a
+/// second type mirroring this one on the way in would be a second place for the two spellings
+/// to drift.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Scope {
     /// The user's own configuration, the default of INST-06 and the only scope onboarding
@@ -245,6 +253,98 @@ impl Modification {
     }
 }
 
+/// One line of the consent screen (INST-01, INST-02).
+///
+/// A line and a [`Modification`] are **not** the same thing, and INST-02 is where the two
+/// part company: Claude Code makes three modifications and the screen lists the two hooks on
+/// one line, "two hooks (Stop and SubagentStop), same command". So the count the user is told
+/// is the number of modifications and the number of rows they read is the number of lines,
+/// and both are right.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsentLine {
+    /// What the line says, as a catalogue key (see [`Description`]).
+    pub description: Description,
+    /// The places it covers, as [`Modification::location`] renders them.
+    pub locations: Vec<String>,
+    /// Everything the **Show** control reveals: the diffs of those places, in order.
+    pub diff: String,
+    /// Whether every place it covers is already what it should be.
+    pub is_noop: bool,
+}
+
+impl ConsentLine {
+    /// The line of one modification.
+    #[must_use]
+    pub fn of(modification: &Modification) -> Self {
+        Self {
+            description: modification.description.clone(),
+            locations: vec![modification.location()],
+            diff: modification.diff.clone(),
+            is_noop: modification.is_noop(),
+        }
+    }
+
+    /// One line covering several modifications, under a description of its own.
+    ///
+    /// The diffs are joined with a blank line between them: **Show** reveals the whole of
+    /// what the line stands for, and the user reading it has to be able to tell the two
+    /// hooks apart. It is a no-op only when every place it covers is already in order — a
+    /// line that says "already in order" while half of it is missing would be a lie the
+    /// repair flow of the settings page reads.
+    #[must_use]
+    pub fn of_many(description: Description, modifications: &[&Modification]) -> Self {
+        Self {
+            description,
+            locations: modifications
+                .iter()
+                .map(|modification| modification.location())
+                .collect(),
+            diff: modifications
+                .iter()
+                .map(|modification| modification.diff.as_str())
+                .collect::<Vec<&str>>()
+                .join("\n"),
+            is_noop: modifications
+                .iter()
+                .all(|modification| modification.is_noop()),
+        }
+    }
+}
+
+/// The fingerprint of a plan (INST-01).
+///
+/// The consent screen shows a plan and the user accepts *that* plan; by the time they press
+/// the button the file may have moved on, and [`apply`] refuses it then
+/// ([`InstallError::Stale`]). But a screen that re-plans before applying — which it must,
+/// because a `Modification` cannot be trusted to come back from a webview unchanged — would
+/// always apply a plan nobody had seen. So the screen carries this digest of what it showed
+/// and hands it back: a re-plan that hashes differently is the same refusal, arrived at from
+/// the other side.
+///
+/// Over the location, the `before` and the `after` of every modification, in the plan's own
+/// order, with a length prefix on each part so that no two plans can be spelled into one.
+#[must_use]
+pub fn digest(plan: &[Modification]) -> String {
+    let mut hasher = Sha256::new();
+    for modification in plan {
+        for part in [
+            modification.location(),
+            modification.before.clone().unwrap_or_default(),
+            modification.after.clone(),
+        ] {
+            hasher.update(part.len().to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+    }
+    let mut hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
 /// `<file name> · <a.b.c>`: short enough for a line of the consent screen, exact enough to
 /// find by hand.
 fn render_location(file: &Path, path: &[&str]) -> String {
@@ -278,6 +378,15 @@ pub trait InstallAdapter {
     ///
     /// When a configuration file exists and cannot be read or is not a JSON object.
     fn plan(&self, scope: &Scope) -> Result<Vec<Modification>>;
+
+    /// The plan as the consent screen lists it (INST-01, INST-02).
+    ///
+    /// One line per modification, which is the honest default for an adapter that has
+    /// nothing to group. Claude Code overrides it, because INST-02 asks for its two hooks on
+    /// one line; the count of *modifications* is unchanged by any of this.
+    fn consent_lines(&self, plan: &[Modification]) -> Vec<ConsentLine> {
+        plan.iter().map(ConsentLine::of).collect()
+    }
 
     /// Writes a plan: backup, edit, re-read, verify (§7.15). Also creates the channel token
     /// on the first run (INST-07).
@@ -439,6 +548,46 @@ mod tests {
             "the stamp {stamp} cannot be a file name on Windows"
         );
         assert!(stamp.ends_with('Z'), "the stamp {stamp} is not UTC");
+    }
+
+    /// One modification, spelled out, for the digest cases below.
+    fn modification(before: Option<&str>, after: &str) -> Modification {
+        Modification {
+            file: PathBuf::from("/home/x/.claude.json"),
+            path: vec!["mcpServers", "handoff"],
+            description: Description::new("install.claudeCode.mcpEntry"),
+            before: before.map(str::to_owned),
+            after: after.to_owned(),
+            diff: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_plan_hashes_to_itself_and_to_nothing_else() {
+        let plan = vec![modification(None, "{}")];
+        assert_eq!(digest(&plan), digest(&plan.clone()));
+        // The value that will be written is what the user consented to.
+        assert_ne!(digest(&plan), digest(&[modification(None, "{ }")]));
+        // And so is the value that is there now: the same target reached from a different
+        // starting point is a different diff on the screen.
+        assert_ne!(digest(&plan), digest(&[modification(Some("null"), "{}")]));
+    }
+
+    #[test]
+    fn no_two_plans_can_be_spelled_into_one_digest() {
+        // Without the length prefix, ("ab", "c") and ("a", "bc") would hash alike, and a
+        // file could move a character across a boundary without changing the fingerprint.
+        assert_ne!(
+            digest(&[modification(Some("ab"), "c")]),
+            digest(&[modification(Some("a"), "bc")])
+        );
+    }
+
+    #[test]
+    fn an_empty_plan_still_has_a_digest() {
+        // A machine already in order plans three no-ops, never nothing; but the function is
+        // total, and a caller comparing digests must not have to special-case a length.
+        assert_eq!(digest(&[]).len(), 64);
     }
 
     #[test]

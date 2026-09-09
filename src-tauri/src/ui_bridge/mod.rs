@@ -27,9 +27,13 @@
 //! is the combination of OPEN-03 that opens the sheet from anywhere, and [`requests`] is
 //! what happens when something in the queue can be put in front of an agent — the clipboard,
 //! the terminal's window, the notification (OPEN-05).
+//!
+//! T-040 added [`install`]: onboarding, the consent screen, the Agents settings page and the
+//! two launch checks of §7.2 — the scan of INST-05 and the moved-bundle check of FM-23.
 
 pub mod commands;
 pub mod events;
+pub mod install;
 pub mod requests;
 pub mod shortcut;
 mod tray;
@@ -231,13 +235,11 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // in the menu is the path the user is left with (FM-18), and it exists by now.
     shortcut::install(app);
 
-    // §7.16 keeps the window hidden until there is something to show, and from here on the
-    // tray is what brings it back. A development build still shows it once: onboarding is
-    // what will open the window on a first launch, and until that exists every run of
-    // `cargo tauri dev` would otherwise show nothing but a tray icon.
-    // TASK: T-040 — delete this when onboarding decides the first-launch window.
-    #[cfg(debug_assertions)]
-    show_main_window(app);
+    // §7.16 keeps the window hidden until there is something to show, and the tray is what
+    // brings it back. The two things that open it by themselves are decided by the window
+    // and not here: a first launch shows onboarding, and a moved bundle shows the repair
+    // offer of FM-23 (`install::onboarding`, `install::scan_agents`). Both are sentences for
+    // a person, and at this point there is no webview listening to be told anything.
 
     Ok(())
 }

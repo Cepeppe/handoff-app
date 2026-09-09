@@ -24,10 +24,15 @@ import { listen } from '@tauri-apps/api/event';
 import type { Language } from './i18n';
 import type {
   ActionName,
+  AgentStatus,
+  ConsentView,
   HandoffView,
   Notice,
+  OnboardingView,
   Redacted,
   RequestChoice,
+  ScanReport,
+  Scope,
   SessionChoice,
   ShortcutStatus,
   TabView,
@@ -178,6 +183,46 @@ export interface Bridge {
    */
   showWindow(): Promise<void>;
 
+  /** Whether this launch shows onboarding, and what it consists of (§7.6, F-13). */
+  onboarding(): Promise<OnboardingView>;
+
+  /** Onboarding is over: remember it, and remember the autostart answer (APP-01). */
+  finishOnboarding(autostart: boolean): Promise<void>;
+
+  /** The state of every adapter in `scope`: the Agents page and "Find agents" (INST-05). */
+  agents(scope: Scope): Promise<AgentStatus[]>;
+
+  /**
+   * The launch scan: which agents are new, and what has moved (INST-05, FM-23).
+   *
+   * It writes: an agent it reports as new is recorded, so it is announced once and never
+   * again however many times this is called.
+   */
+  scanAgents(): Promise<ScanReport>;
+
+  /** The plan for `agentId` in `scope`, as the consent screen shows it (INST-01). */
+  consentPlan(agentId: string, scope: Scope): Promise<ConsentView>;
+
+  /**
+   * Writes the plan the user accepted (INST-01).
+   *
+   * `digest` is the one `consentPlan` handed over. The Rust side plans again and refuses when
+   * the fingerprint no longer matches: the caller shows the new plan and asks again.
+   */
+  installAgent(agentId: string, scope: Scope, digest: string): Promise<void>;
+
+  /** Removes exactly our entries from `scope` (INST-04). */
+  uninstallAgent(agentId: string, scope: Scope): Promise<void>;
+
+  /** Regenerates `~/.handoff/channel.token` (FM-10). */
+  repairToken(): Promise<void>;
+
+  /** The folder picker of the project scope; `null` when the user cancelled (INST-06). */
+  pickProjectFolder(): Promise<string | null>;
+
+  /** Opens the macOS screen-recording pane (CAP-04). Rejects off macOS. */
+  openScreenRecordingSettings(): Promise<void>;
+
   /** Runs `handler` with the id of a handoff whose state changed. */
   onHandoffChanged(handler: (id: string) => void): Promise<Unlisten>;
 
@@ -277,6 +322,36 @@ export function tauriBridge(): Bridge {
     async showWindow() {
       await invoke('show_window');
     },
+    async onboarding() {
+      return invoke<OnboardingView>('onboarding');
+    },
+    async finishOnboarding(autostart) {
+      await invoke('finish_onboarding', { autostart });
+    },
+    async agents(scope) {
+      return invoke<AgentStatus[]>('agents', { scope });
+    },
+    async scanAgents() {
+      return invoke<ScanReport>('scan_agents');
+    },
+    async consentPlan(agentId, scope) {
+      return invoke<ConsentView>('consent_plan', { agentId, scope });
+    },
+    async installAgent(agentId, scope, digest) {
+      await invoke('install_agent', { agentId, scope, digest });
+    },
+    async uninstallAgent(agentId, scope) {
+      await invoke('uninstall_agent', { agentId, scope });
+    },
+    async repairToken() {
+      await invoke('repair_token');
+    },
+    async pickProjectFolder() {
+      return (await invoke<string | null>('pick_project_folder')) ?? null;
+    },
+    async openScreenRecordingSettings() {
+      await invoke('open_screen_recording_settings');
+    },
     async onHandoffChanged(handler) {
       return listen<string>(EVENT_HANDOFF_CHANGED, (event) => handler(event.payload));
     },
@@ -347,6 +422,30 @@ export function noopBridge(): Bridge {
     async setShortcut() {},
     async dismissShortcutQuestion() {},
     async showWindow() {},
+    async onboarding() {
+      // Outside the webview there is no settings table to have been through onboarding, and
+      // an onboarding that cannot record its own completion would run at every reload.
+      return { needed: false, steps: [] };
+    },
+    async finishOnboarding() {},
+    async agents() {
+      return [];
+    },
+    async scanAgents() {
+      return { newAgents: [], moved: [] };
+    },
+    async consentPlan() {
+      // Answering with an empty plan would say "nothing to change" about files this side has
+      // never read; the caller shows its failure instead.
+      throw new Error('no adapters');
+    },
+    async installAgent() {},
+    async uninstallAgent() {},
+    async repairToken() {},
+    async pickProjectFolder() {
+      return null;
+    },
+    async openScreenRecordingSettings() {},
     onHandoffChanged: unlisten,
     onSessionsChanged: unlisten,
     onNotice: unlisten,

@@ -274,3 +274,107 @@ export interface WindowSettings {
   /** How long after the last interaction it fires, in milliseconds. */
   collapseFallbackMs: number;
 }
+
+/**
+ * The steps of onboarding (§7.6), as `ui_bridge::install` names them.
+ *
+ * `move` and `screenRecording` exist on macOS alone, and `move` only while the bundle is
+ * somewhere other than `/Applications`. The Rust side decides the list; this side draws it
+ * in the order it arrives, so a platform rule is never written twice.
+ */
+export type OnboardingStep =
+  | 'welcome'
+  | 'move'
+  | 'agents'
+  | 'autostart'
+  | 'screenRecording'
+  | 'shortcut'
+  | 'done';
+
+/** Whether onboarding runs on this launch, and what it consists of (F-13). */
+export interface OnboardingView {
+  /** True on a first launch: the `onboarded` setting is unset. */
+  needed: boolean;
+  steps: OnboardingStep[];
+}
+
+/** Where a registration is written (INST-06). Mirrors `install::Scope`. */
+export type Scope = { kind: 'user' } | { kind: 'project'; path: string };
+
+/** What `verify` found in a scope (§7.15, FM-23). Mirrors `install::Registration`. */
+export type Registration =
+  | { kind: 'registered' }
+  /** Some of ours is there and some is not; `missing` names the places, as the plan does. */
+  | { kind: 'partial'; missing: string[] }
+  /** Ours is there and names another path: the bundle moved (FM-23). */
+  | { kind: 'path_mismatch'; registered: string; current: string }
+  | { kind: 'not_registered' };
+
+/** One agent, as the scan and the Agents page see it (INST-05). */
+export interface AgentStatus {
+  agentId: string;
+  /** The catalogue key of its name: a name is a text like any other (T-028). */
+  nameKey: string;
+  /** Whether the agent is on this machine at all. */
+  found: boolean;
+  /** The files this scope would touch, existing or not (INST-01 names them first). */
+  configFiles: string[];
+  registration: Registration;
+}
+
+/** An agent named for a sentence. */
+export interface AgentBrief {
+  agentId: string;
+  nameKey: string;
+}
+
+/** One registration that names a path which is no longer ours (FM-23). */
+export interface MovedRegistration {
+  agentId: string;
+  nameKey: string;
+  registered: string;
+  current: string;
+}
+
+/** What the launch scan found worth saying something about (INST-05, FM-23). */
+export interface ScanReport {
+  /** Agents seen for the first time. Each is announced once, ever. */
+  newAgents: AgentBrief[];
+  moved: MovedRegistration[];
+}
+
+/**
+ * One row of the consent screen (INST-01, INST-02).
+ *
+ * A row and a modification are not the same thing: Claude Code makes three modifications and
+ * lists the two hooks on one row, so `locations` has two entries there and the diff behind
+ * **Show** carries both.
+ */
+export interface ConsentLine {
+  /** What it says: a catalogue key and its substitutions, never a sentence. */
+  description: { key: string; args: Record<string, string> };
+  /** The places it covers, as `<file> · <a.b.c>`. */
+  locations: string[];
+  /** What **Show** reveals. */
+  diff: string;
+  /** Whether every place it covers is already what it should be. */
+  isNoop: boolean;
+}
+
+/** A plan, as the consent screen shows it (INST-01, INST-02). */
+export interface ConsentView {
+  agentId: string;
+  nameKey: string;
+  /** The number INST-02 fixes at three for Claude Code. Not the number of rows. */
+  modificationCount: number;
+  lines: ConsentLine[];
+  /**
+   * The fingerprint of the plan behind these rows.
+   *
+   * Handed back to `installAgent`, which re-plans and refuses when the two differ: what the
+   * user accepted is what gets written, or nothing is.
+   */
+  digest: string;
+  /** Whether there is nothing to do: a repair with nothing to repair. */
+  alreadyInOrder: boolean;
+}

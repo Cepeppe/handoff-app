@@ -726,3 +726,197 @@ body {
   display: flex;
   gap: 4px;
 }
+
+/*
+ * Onboarding, the consent screen and the Agents settings page (§7.6, §7.15, F-13).
+ *
+ * One vocabulary for both places the consent lines appear, because they are one screen shown
+ * twice: what a user reads before the first registration is what they read before a repair.
+ * The diff is the only monospaced block in the panel — it is a file, and a file has columns.
+ */
+.settings-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.settings-nav-item {
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-nav-item[aria-current='page'] {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+
+.settings-section {
+  margin-top: 6px;
+}
+
+.settings-section h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-explain,
+.settings-said,
+.settings-problem {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-problem {
+  color: var(--danger);
+}
+
+.scope {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.scope legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.scope label {
+  display: block;
+  font-size: 13px;
+}
+
+.scope-folder {
+  margin: 6px 0;
+  /* A path can be longer than the panel and must not widen it (WIN-02). */
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-list {
+  margin: 0 0 var(--space);
+  padding: 0;
+  list-style: none;
+}
+
+.agent {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.agent-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-status {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-detail {
+  margin: 2px 0 6px;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.token-repair {
+  margin-top: var(--space);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.consent-intro {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.consent-lines {
+  margin: 0 0 var(--space);
+  padding: 0;
+  list-style: none;
+}
+
+.consent-line {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.consent-what {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.consent-where {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.consent-state {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.consent-noop .consent-state {
+  color: var(--accent);
+}
+
+.consent-diff {
+  margin: 6px 0 0;
+  padding: 6px;
+  overflow-x: auto;
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  font-size: 11px;
+  white-space: pre;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.onboarding-autostart {
+  display: block;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.onboarding-none {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.onboarding-problem {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.onboarding-actions {
+  display: flex;
+  gap: 4px;
+  padding-top: 8px;
+}

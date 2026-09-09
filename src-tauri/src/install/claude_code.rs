@@ -46,8 +46,8 @@ use super::error::{InstallError, Result};
 use super::fixed_path;
 use super::json::Document;
 use super::{
-    Description, Detection, InstallAdapter, Modification, Registration, Scope, ENV_HANDOFF_AGENT,
-    ENV_HANDOFF_TOOL_TIMEOUT_MS, HOOK_TIMEOUT_SECONDS, RAISED_TOOL_TIMEOUT_MS,
+    ConsentLine, Description, Detection, InstallAdapter, Modification, Registration, Scope,
+    ENV_HANDOFF_AGENT, ENV_HANDOFF_TOOL_TIMEOUT_MS, HOOK_TIMEOUT_SECONDS, RAISED_TOOL_TIMEOUT_MS,
 };
 
 /// The agent id, shared with the server's capability table (INST-08, §5.6).
@@ -67,6 +67,9 @@ pub const KEY_STOP_HOOK: &str = "install.claudeCode.stopHook";
 
 /// The catalogue key of the SubagentStop-hook line.
 pub const KEY_SUBAGENT_STOP_HOOK: &str = "install.claudeCode.subagentStopHook";
+
+/// The catalogue key of the one line the two hooks are listed on (INST-02, ADPT-08).
+pub const KEY_HOOKS: &str = "install.claudeCode.hooks";
 
 /// The Claude Code adapter.
 ///
@@ -309,6 +312,14 @@ fn ours_in_group(group: &Value) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// The name of a file, as the consent screen names it.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("?")
+        .to_owned()
+}
+
 /// Whether `claude` is on `PATH`.
 ///
 /// No process is spawned: INST-05 runs the scan at every launch, and a launch that starts a
@@ -348,12 +359,6 @@ impl InstallAdapter for ClaudeCode {
         let settings_file = self.settings_file(scope);
         let settings = Document::read(&settings_file)?;
 
-        let file_name = |path: &Path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("?")
-                .to_owned()
-        };
         let server = self.server.display().to_string();
         let minutes = (RAISED_TOOL_TIMEOUT_MS / 60_000).to_string();
 
@@ -385,6 +390,32 @@ impl InstallAdapter for ClaudeCode {
             ));
         }
         Ok(plan)
+    }
+
+    /// Three modifications on two lines (INST-02, ADPT-08).
+    ///
+    /// The MCP entry has a line of its own; the Stop and SubagentStop hooks share one,
+    /// because they are the same command written in two places and INST-02 says so in as
+    /// many words. **Show** on that line reveals both diffs, so "same command" is something
+    /// the user can check rather than something they are told.
+    ///
+    /// The two are recognised by their location — `hooks.*` — and not by their position in
+    /// the plan: a plan is built by [`Self::plan`] above, but this is also handed the plan
+    /// the settings page is repairing, and a rule that counted entries would be a rule that
+    /// breaks the day an adapter gains a fourth.
+    fn consent_lines(&self, plan: &[Modification]) -> Vec<ConsentLine> {
+        let (hooks, rest): (Vec<&Modification>, Vec<&Modification>) = plan
+            .iter()
+            .partition(|modification| modification.path.first() == Some(&"hooks"));
+
+        let mut lines: Vec<ConsentLine> = rest.into_iter().map(ConsentLine::of).collect();
+        if let Some(first) = hooks.first() {
+            lines.push(ConsentLine::of_many(
+                Description::new(KEY_HOOKS).with("file", file_name(&first.file)),
+                &hooks,
+            ));
+        }
+        lines
     }
 
     fn apply(&self, plan: &[Modification]) -> Result<()> {
@@ -650,5 +681,62 @@ mod tests {
             ClaudeCode::hook_entries_without_ours(Some(&odd)),
             odd.as_array().cloned().expect("an array")
         );
+    }
+
+    /// A plan over a home that has nothing in it: three modifications, none of them a no-op.
+    fn plan_of_an_empty_machine() -> (ClaudeCode, Vec<Modification>) {
+        let adapter = ClaudeCode::with(
+            std::env::temp_dir().join(format!(
+                "handoff-consent-{}-{}",
+                std::process::id(),
+                crate::ids::new_session_ref()
+            )),
+            "/apps/Baton/handoff-mcp",
+            "/nowhere/channel.token",
+        );
+        let plan = adapter.plan(&Scope::User).expect("a plan over empty files");
+        (adapter, plan)
+    }
+
+    #[test]
+    fn the_consent_screen_lists_three_modifications_on_two_lines() {
+        // INST-02, exactly: three changes, and the two hooks are one line saying "same
+        // command". The count and the number of rows are different numbers on purpose.
+        let (adapter, plan) = plan_of_an_empty_machine();
+        assert_eq!(plan.len(), 3);
+
+        let lines = adapter.consent_lines(&plan);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].description.key, KEY_MCP_ENTRY);
+        assert_eq!(lines[1].description.key, KEY_HOOKS);
+        assert_eq!(lines[1].locations.len(), 2);
+    }
+
+    #[test]
+    fn the_hooks_line_reveals_both_diffs() {
+        // "Same command" is something the user can check, not something they are told: the
+        // Show control of INST-01 carries the Stop and the SubagentStop change.
+        let (adapter, plan) = plan_of_an_empty_machine();
+        let lines = adapter.consent_lines(&plan);
+        for event in HOOK_EVENTS {
+            assert!(
+                lines[1].diff.contains(&format!("hooks.{event}")),
+                "the hooks line does not show {event}:\n{}",
+                lines[1].diff
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_is_a_no_op_only_when_every_place_it_covers_is() {
+        let (adapter, plan) = plan_of_an_empty_machine();
+        let lines = adapter.consent_lines(&plan);
+        assert!(lines.iter().all(|line| !line.is_noop));
+
+        // Half a hooks line in order is not a line in order: the repair flow reads this.
+        let mut half = plan.clone();
+        half[1].before = Some(half[1].after.clone());
+        assert!(half[1].is_noop() && !half[2].is_noop());
+        assert!(!adapter.consent_lines(&half)[1].is_noop);
     }
 }
