@@ -147,10 +147,11 @@ node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe   
 node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe    # must be there
 ```
 
-The release workflow runs both before it publishes a binary, which is where a release build
-exists; a push to `main` builds none, so `ci.yml` does not run them. The second is the
-positive control and it is not decoration: a grep for a string nobody writes passes for ever,
-including on the day the grep itself breaks.
+`ci.yml` runs both on every push to `main`: the first on the debug bundle it has just built
+without the feature, which the `cfg` gate makes as clean as a release binary, the second on a
+debug build made with the feature. The release workflow runs the first again on the binary it
+publishes. The second is the positive control and it is not decoration: a grep for a string
+nobody writes passes for ever, including on the day the grep itself breaks.
 
 ## Reading a failure
 

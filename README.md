@@ -73,8 +73,8 @@ scripts\e2e.ps1     # from the workspace root: builds everything, then runs pnpm
 
 `docs/dev/e2e.md` is the harness, the traps and how to read a failure. The automation channel
 it drives is compiled only with `--features e2e`; `scripts/check-no-automation.mjs` proves a
-release binary carries none of it, by hand on any binary and in the release workflow before
-one is published.
+build without the feature carries none of it, on every push in CI and on the binary the
+release workflow publishes.
 
 ### Layout
 

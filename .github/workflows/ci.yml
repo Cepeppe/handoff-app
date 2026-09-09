@@ -113,12 +113,26 @@ jobs:
         run: pnpm tauri build --debug
 
       # DD-33, §11.5: the automation channel "does not exist in release builds ... CI asserts
-      # the symbol is absent from release binaries". That assertion runs where a release
-      # binary is made, the release workflow (T-054): `scripts/check-no-automation.mjs` on the
-      # binary it publishes, plus its positive control on a build made with `--features e2e`.
-      # A push builds no release binary, and a release build here was seventeen minutes of
-      # the job. The `cfg(feature = "e2e")` gate and the all-features clippy above keep the
-      # module out of every build that does not ask for it.
+      # the symbol is absent from release binaries". The gate is `cfg(feature = "e2e")`, so a
+      # debug build without the feature must be as clean as a release one, and the bundle
+      # above has just produced exactly that binary: the check costs a grep, where a release
+      # build here cost seventeen minutes. The release workflow (T-054) runs the same check
+      # on the binary it publishes.
+      - name: The build carries no automation channel
+        run: node scripts/check-no-automation.mjs src-tauri/target/debug/handoff-app.exe
+
+      # The positive control, and it is not decoration: a grep for a string nobody writes
+      # passes for ever, including on the day the grep breaks. It needs a binary that *has*
+      # the channel, built after the bundle above overwrote `target/debug/handoff-app.exe`
+      # without the feature; the dependencies are already compiled, so this is about a
+      # minute. The test executable of `e2e_channel` is not a substitute: the linker drops
+      # the two names from it, because that test never builds the endpoint path.
+      - name: A build that does carry the automation channel
+        working-directory: src-tauri
+        run: cargo build --features e2e --bin handoff-app
+
+      - name: The check can still fail
+        run: node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe
 
   # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
   # this leg runs only when it is dispatched by hand; T-059 makes it run on every push.
