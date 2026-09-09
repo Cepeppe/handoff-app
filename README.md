@@ -111,6 +111,24 @@ Two rules the layout depends on, both explained at the top of `src-tauri/src/lib
   webview CSP is `default-src 'self'` with no `connect-src`. The application makes zero
   network connections today.
 
+### OCR
+
+Every capture is read locally before anything can be sent, because the secret detection is
+built on the text (`OCR-01`). `src-tauri/src/ocr/` holds one `OcrEngine` trait, the engine
+of the operating system behind it, and the selection rule: the OS engine when it is
+available, the bundled one after it, and an engine that errors or takes longer than ten
+seconds falls through to the next. Nothing leaves the machine — no engine here is a service.
+
+| Engine | State |
+|---|---|
+| `windows` | `Windows.Media.Ocr`, the platform's own recogniser. Available only for a language whose **OCR language pack** is installed; a machine without one falls through, which is what the bundled engine is for. |
+| `vision` | macOS `VNRecognizeTextRequest`. A stub answering "unavailable" until T-059; macOS is deferred. |
+| bundled fallback | **Not chosen yet.** No published crate links Tesseract statically from a vendored source: the four that build it from source download it at build time with `reqwest`, which `deny.toml` refuses; the two `-sys` crates need a system install; and the one prebuilt crate has no Windows target. Until the owner decides, a Windows machine with no OCR language pack has no OCR at all. |
+
+There is therefore **no build prerequisite** for OCR beyond the ones above, and no
+`tessdata/` resource in `tauri.conf.json` — Tauri refuses a resource glob that matches
+nothing, so the entry arrives with the file it points at.
+
 ### Cargo features
 
 | Feature | State |

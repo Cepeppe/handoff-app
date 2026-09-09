@@ -103,6 +103,16 @@ const REGISTRY: &[Timer] = &[
                      reads when they ask what wakes the app up, and a site the suite is \
                      blind to is a site nobody re-reads.",
     },
+    Timer {
+        file: "src/ocr/mod.rs",
+        call: "tokio::time::timeout",
+        count: 1,
+        armed_when: "an OCR engine is reading a capture: the 10 s `OCR_ENGINE_TIMEOUT_MS` \
+                     of §4.1, after which §7.9 falls through to the next engine. One per \
+                     engine attempt, and an attempt only exists because the user pressed \
+                     the Screenshot button — nothing arms it at rest. A bound on one \
+                     operation, not a wake-up.",
+    },
 ];
 
 /// Everything that arms a timer, in the spelling the sources use. `tokio::time` is the only

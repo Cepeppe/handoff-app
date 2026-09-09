@@ -109,8 +109,10 @@ proptest = { version = "1.9.0", default-features = false, features = ["std"] }
 
 # The named pipe of the channel carries an explicit DACL granting access to this user alone
 # (§6.2, A-16), which needs the process token's SID and an SDDL conversion; the token file
-# is created with the same descriptor. The other caller is `requests::focus`, which raises
-# the terminal's window (OPEN-05); nothing else in the crate calls Win32 directly.
+# is created with the same descriptor. `requests::focus` raises the terminal's window
+# (OPEN-05). The five WinRT namespaces at the bottom are the OS OCR engine of §7.9: the
+# engine itself, the `SoftwareBitmap` a capture is handed to it as, the `DataWriter` that
+# carries the pixels into one, and the BCP-47 language the spec's `lang` becomes (OCR-05).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
   "Win32_Foundation",
@@ -119,7 +121,19 @@ windows = { version = "0.62", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
+  "Foundation",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Storage_Streams",
 ] }
+
+# GDI, to draw the synthetic text the OCR tests read back (`ocr::windows`). It is a
+# dev-dependency and not a feature of the entry above on purpose: nothing the application
+# ships draws anything with GDI, and a feature added for a test is a feature somebody will
+# reach for in production a year from now. Cargo leaves it out of a plain `cargo build`.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.62", features = ["Win32_Graphics_Gdi"] }
 
 # `NSRunningApplication`, and only that: the macOS half of the best-effort terminal focus of
 # OPEN-05 (`requests::focus`). It is already in the tree as a dependency of Tauri's own
