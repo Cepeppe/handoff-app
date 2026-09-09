@@ -27,7 +27,9 @@ import type {
   HandoffView,
   Notice,
   Redacted,
+  RequestChoice,
   SessionChoice,
+  ShortcutStatus,
   TabView,
   WindowSettings,
 } from './model';
@@ -141,6 +143,34 @@ export interface Bridge {
   answerSessionPicker(sessionRef: string | null): Promise<void>;
 
   /**
+   * The sessions the request sheet may address (OPEN-04).
+   *
+   * Only the connected ones, oldest first, so a single session pre-selects itself. An empty
+   * answer is the "no active session" notice of OPEN-04a: the sheet still sends.
+   */
+  sessions(): Promise<SessionChoice[]>;
+
+  /**
+   * Queues what the user typed, opens its tab and copies the sentence (OPEN-04, OPEN-05).
+   *
+   * Returns the id of the request, which is the id of the tab: they are the same thing
+   * (DD-13), and the agent quotes it back as `request_id`.
+   */
+  createRequest(text: string, sessionRef: string | null): Promise<string>;
+
+  /** The requests a handoff could be answering instead of the one it is (FM-20). */
+  openRequests(id: string): Promise<RequestChoice[]>;
+
+  /** The global shortcut in force, and whether to ask for another (OPEN-03, FM-18). */
+  shortcutStatus(): Promise<ShortcutStatus>;
+
+  /** The user chose another combination; rejects with the reason when it is not free. */
+  setShortcut(accelerator: string): Promise<void>;
+
+  /** The user closed the FM-18 dialog without choosing: never ask again. */
+  dismissShortcutQuestion(): Promise<void>;
+
+  /**
    * Brings the overlay to the front (MULTI-03).
    *
    * Called for the first handoff opened while none is active, and never for one that
@@ -226,6 +256,24 @@ export function tauriBridge(): Bridge {
     async answerSessionPicker(sessionRef) {
       await invoke('answer_session_picker', { sessionRef });
     },
+    async sessions() {
+      return invoke<SessionChoice[]>('sessions');
+    },
+    async createRequest(text, sessionRef) {
+      return invoke<string>('create_request', { text, sessionRef });
+    },
+    async openRequests(id) {
+      return invoke<RequestChoice[]>('open_requests', { id });
+    },
+    async shortcutStatus() {
+      return invoke<ShortcutStatus>('shortcut_status');
+    },
+    async setShortcut(accelerator) {
+      await invoke('set_shortcut', { accelerator });
+    },
+    async dismissShortcutQuestion() {
+      await invoke('dismiss_shortcut_question');
+    },
     async showWindow() {
       await invoke('show_window');
     },
@@ -280,6 +328,24 @@ export function noopBridge(): Bridge {
       return [];
     },
     async answerSessionPicker() {},
+    async sessions() {
+      return [];
+    },
+    async createRequest() {
+      // Outside the webview nothing is queued, and answering with an id would be a claim
+      // this side cannot make: the sheet reports the failure instead.
+      throw new Error('no core');
+    },
+    async openRequests() {
+      return [];
+    },
+    async shortcutStatus() {
+      // A browser has no global shortcut, so there is nothing registered and nothing to ask
+      // the user about (FM-18 only fires on a real registration failure).
+      return { accelerator: 'Control+Alt+H', registered: false, askForAnother: false };
+    },
+    async setShortcut() {},
+    async dismissShortcutQuestion() {},
     async showWindow() {},
     onHandoffChanged: unlisten,
     onSessionsChanged: unlisten,

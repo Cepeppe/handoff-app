@@ -606,3 +606,123 @@ body {
   flex: 0 0 auto;
   gap: 4px;
 }
+
+/*
+ * The request sheet of §7.7 (OPEN-04). One selector, one field, two keys: it is the only
+ * screen in this product where the user starts something rather than answers it, so the
+ * field is what the eye lands on and everything else is quiet around it.
+ */
+.request-session-label,
+.request-what-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.request-session,
+.request-what {
+  width: 100%;
+  margin-bottom: var(--space);
+  padding: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.request-no-session {
+  margin: 0 0 var(--space);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.request-hint {
+  margin: 0 0 var(--space);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.request-problem {
+  margin: 0 0 var(--space);
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.request-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* The one-click correction of a mis-linked request (FM-20, §12.4). */
+.relink {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 var(--space);
+  padding: 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.relink-title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.relink-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/*
+ * The one-time question of FM-18: the global shortcut was taken by another application. It
+ * sits above the view rather than inside it, because it is about the window and not about
+ * any handoff, and it is dismissible — `New request` in the tray works either way.
+ */
+.shortcut-dialog {
+  margin: 0 var(--space) var(--space);
+  padding: 8px;
+  background: var(--warning-surface);
+  border-radius: 4px;
+}
+
+.shortcut-dialog h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.shortcut-explain {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.shortcut-recorder {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  cursor: text;
+}
+
+.shortcut-problem {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.shortcut-actions {
+  display: flex;
+  gap: 4px;
+}

@@ -83,6 +83,16 @@ impl Notifier {
         Self::default()
     }
 
+    /// The handle it emits through, for the other things `ui_bridge` builds before there is
+    /// one (`requests::RequestDelivery`).
+    ///
+    /// Shared rather than copied: `attach` fills this one cell for everybody who holds it,
+    /// so a second late-attaching object needs no second call in `setup()`.
+    #[must_use]
+    pub fn handle(&self) -> std::sync::Arc<OnceLock<AppHandle>> {
+        std::sync::Arc::clone(&self.app)
+    }
+
     /// Gives it the application to emit through. Called once, from `setup()`.
     pub fn attach(&self, app: AppHandle) {
         if self.app.set(app).is_err() {

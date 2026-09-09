@@ -30,6 +30,7 @@
   import { t } from './i18n';
   import type { ActionName } from './model';
   import CollapsedBar from './overlay/CollapsedBar.svelte';
+  import ShortcutDialog from './overlay/ShortcutDialog.svelte';
   import {
     focusChanged,
     isCollapsed,
@@ -67,6 +68,14 @@
 
   let root = $state<HTMLElement | null>(null);
   const Current = $derived(VIEWS[view()]);
+
+  /**
+   * The combination whose registration failed at startup, while the FM-18 dialog is unanswered.
+   *
+   * Read once, when the window mounts: the shortcut is registered in `setup()` and the
+   * answer is a setting, so there is nothing to listen to. `null` is the ordinary case.
+   */
+  let shortcutProblem = $state<string | null>(null);
 
   /**
    * The handoff the collapsed bar would show, when there is one to show (WIN-03).
@@ -115,6 +124,14 @@
     // R-10: the fallback timer, off unless the user switched it on.
     void loadWindowSettings();
     stopping.push(stopIdleTimer);
+
+    // FM-18: the global shortcut was taken by something else and the user has not been asked
+    // yet. The tray's `New request` works meanwhile, so this is a dialog and not a blocker.
+    void bridge()
+      .shortcutStatus()
+      .then((status) => {
+        shortcutProblem = status.askForAnother ? status.accelerator : null;
+      });
 
     // The window height follows the content, so it is remeasured whenever the content
     // changes rather than only after a view switch. jsdom has no `ResizeObserver`, and a
@@ -170,6 +187,13 @@
           </button>
         {/each}
       </nav>
+    {/if}
+
+    {#if shortcutProblem !== null}
+      <ShortcutDialog
+        accelerator={shortcutProblem}
+        ondone={() => (shortcutProblem = null)}
+      />
     {/if}
 
     <main class="content">

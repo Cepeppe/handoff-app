@@ -87,7 +87,8 @@ proptest = { version = "1.9.0", default-features = false, features = ["std"] }
 
 # The named pipe of the channel carries an explicit DACL granting access to this user alone
 # (§6.2, A-16), which needs the process token's SID and an SDDL conversion; the token file
-# is created with the same descriptor. Nothing else in the crate calls Win32 directly.
+# is created with the same descriptor. The other caller is `requests::focus`, which raises
+# the terminal's window (OPEN-05); nothing else in the crate calls Win32 directly.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
   "Win32_Foundation",
@@ -95,4 +96,16 @@ windows = { version = "0.62", features = [
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# `NSRunningApplication`, and only that: the macOS half of the best-effort terminal focus of
+# OPEN-05 (`requests::focus`). It is already in the tree as a dependency of Tauri's own
+# windowing layer, so this adds a name rather than a crate; `libc` is the feature that
+# unlocks the one constructor that takes a pid.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSRunningApplication",
+  "libc",
 ] }

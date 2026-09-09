@@ -249,6 +249,24 @@ export interface SessionChoice {
   label: string;
 }
 
+/** One entry of the queue, as the FM-20 **Change** control lists it. */
+export interface RequestChoice {
+  id: string;
+  /** The user's own words. */
+  text: string;
+  createdAt: string;
+}
+
+/** The global shortcut in force, and whether to ask for another (OPEN-03, FM-18). */
+export interface ShortcutStatus {
+  /** The combination, in the plugin's accelerator syntax (`Control+Alt+H`). */
+  accelerator: string;
+  /** Whether the system accepted it. */
+  registered: boolean;
+  /** Whether the one-time "choose another combination" dialog should be shown now. */
+  askForAnother: boolean;
+}
+
 /** What the window needs to know about its own behaviour (§7.16, WIN-03, R-10). */
 export interface WindowSettings {
   /** Whether the fallback collapse of R-10 is switched on. Off unless the user said so. */

@@ -21,11 +21,13 @@ use tauri_plugin_opener::OpenerExt as _;
 
 use crate::log::{HandoffState, Timestamp};
 use crate::redaction::typed::{redact, Redacted};
+use crate::requests::queue::Queue;
 use crate::requests::text::render_request_text;
 use crate::sessions::Registry;
-use crate::store::{Refusal, StoreHandle, UserAction};
+use crate::store::{Opener, Refusal, StoreHandle, UserAction};
 
 use super::events::NoticeKind;
+use super::requests::RequestDelivery;
 use super::view::{self, HandoffView, TabView};
 
 /// The core, as the window reaches it.
@@ -39,6 +41,10 @@ pub struct Core {
     pub store: StoreHandle,
     /// The session registry (§7.5), shared with the channel dispatch.
     pub registry: Arc<Mutex<Registry>>,
+    /// The user-request queue (§7.7), shared with the store and the channel dispatch.
+    pub queue: Arc<Queue>,
+    /// The clipboard, focus and notification path of OPEN-05.
+    pub delivery: RequestDelivery,
 }
 
 impl Core {
@@ -58,6 +64,32 @@ impl Core {
             .connected()
             .map(|session| session.session_ref.clone())
             .collect()
+    }
+
+    /// The sessions the request sheet may address, oldest registration first (OPEN-04).
+    ///
+    /// Owned, for the same reason: the guard is dropped before anything else happens.
+    fn choices(&self) -> Vec<SessionChoice> {
+        let registry = self.registry();
+        let mut sessions: Vec<&crate::sessions::Session> = registry.connected().collect();
+        sessions.sort_by(|left, right| {
+            left.first_seen
+                .cmp(&right.first_seen)
+                .then_with(|| left.session_ref.cmp(&right.session_ref))
+        });
+        sessions
+            .into_iter()
+            .map(|session| SessionChoice {
+                session_ref: session.session_ref.clone(),
+                label: session.display_name(),
+            })
+            .collect()
+    }
+
+    /// The opener of a handoff a request is addressed to, when a session was selected.
+    fn opener(&self, session_ref: Option<&str>) -> Option<Opener> {
+        let session_ref = session_ref?;
+        Some(Opener::from(self.registry().get(session_ref)?))
     }
 }
 
@@ -400,6 +432,172 @@ pub async fn copy_handoff_id(
         super::notifier(&app).notice(NoticeKind::Error, super::NOTICE_COPY_FAILED);
         error.to_string()
     })
+}
+
+/// The sessions the request sheet may address (OPEN-04, OPEN-04a).
+///
+/// Only the connected ones: a request addressed to a session whose server has gone would be
+/// re-queued the moment it was written (FM-34), so offering it would be offering a choice
+/// that undoes itself. An empty answer is the "no active session" notice of OPEN-04a, and
+/// the sheet still opens — the request is queued for the first session that registers.
+#[tauri::command]
+pub fn sessions(core: State<'_, CoreState>) -> Vec<SessionChoice> {
+    core.get().map(Core::choices).unwrap_or_default()
+}
+
+/// What the user typed in the request sheet (§7.7, OPEN-04, OPEN-05).
+///
+/// Three things happen and the order is the pseudocode of §7.7: the entry is queued, the tab
+/// appears in "waiting for spec", and the sentence goes on the clipboard while the session's
+/// terminal is brought forward. The id is the same for all three — the tab *is* the request
+/// (DD-13) — and it is what the agent quotes back as `request_id`.
+///
+/// Returns the id, so the window can select the tab it has just created.
+#[tauri::command]
+pub async fn create_request(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+    text: String,
+    session_ref: Option<String>,
+) -> Result<String, String> {
+    let Some(core) = core.get().cloned() else {
+        return Err("the store is not running".to_owned());
+    };
+    // OPEN-04 gives the sheet one field and Enter sends it; a blank one is not a request,
+    // and the sheet refuses it too. Both, because this is the side that can be called by
+    // anything.
+    let text = text.trim().to_owned();
+    if text.is_empty() {
+        return Err("a request needs a sentence".to_owned());
+    }
+    // A session that has gone between the sheet opening and Enter is treated as no session
+    // at all: OPEN-04a queues it for the first one that registers, which is better than
+    // addressing it to a connection nobody is on.
+    let opener = core.opener(session_ref.as_deref());
+    let session_ref = opener.as_ref().map(|opener| opener.session_ref.clone());
+    let now = Timestamp::now();
+
+    let ui = app.state::<super::Ui>();
+    let queued = ui.with_db(|db| core.queue.create(db, &text, session_ref.as_deref(), &now));
+    let id = match queued {
+        Some(Ok(id)) => id,
+        Some(Err(error)) => return Err(error.to_string()),
+        None => return Err("the log is not available".to_owned()),
+    };
+
+    // The tab, before the clipboard: OPEN-04 says it appears immediately, and a user who
+    // pastes at once should find the handoff already there.
+    if let Err(error) = core.store.open_request(id.clone(), text, opener, now).await {
+        return Err(error.to_string());
+    }
+
+    // The fast path of OPEN-05. It is deliberately outside the two writes above: a clipboard
+    // that refuses, or a terminal that cannot be found, leaves a queued request the Stop hook
+    // delivers at the end of the turn (OPEN-06, FM-21).
+    let entry = ui
+        .with_db(|db| core.queue.get(db, &id))
+        .and_then(|read| match read {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(error = %error, "the queued request could not be read back");
+                None
+            }
+        });
+    if let Some(entry) = entry {
+        ui.with_db(|db| {
+            core.delivery.deliver(db, &entry, session_ref.as_deref());
+        });
+    }
+    Ok(id)
+}
+
+/// One entry of the queue, as the **Change** control lists it (FM-20, §12.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestChoice {
+    /// The `hf_` id of the queue entry.
+    pub id: String,
+    /// The user's own words.
+    pub text: String,
+    /// When they typed it, so the list can say which is the older one.
+    pub created_at: String,
+}
+
+/// The requests a handoff could be answering instead of the one it is (FM-20).
+///
+/// §7.7 links a spec that quoted no `request_id` to the **oldest** open request of its
+/// session, and §12.4 accepts that two open requests in one session may be matched the wrong
+/// way round. This is what makes the correction one click: the still-open requests of the
+/// same session, plus the one this handoff currently answers, so the user can also put it
+/// back. Resume entries are left out — they ask an agent to come back to a handoff and are
+/// not something another handoff can answer (FM-31).
+#[tauri::command]
+pub async fn open_requests(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+    id: String,
+) -> Result<Vec<RequestChoice>, String> {
+    let Some(core) = core.get().cloned() else {
+        return Ok(Vec::new());
+    };
+    let Some(snapshot) = core.store.snapshot(id, Timestamp::now()).await else {
+        return Ok(Vec::new());
+    };
+    let Some(session_ref) = snapshot.session_ref.clone() else {
+        return Ok(Vec::new());
+    };
+
+    let ui = app.state::<super::Ui>();
+    let read = ui.with_db(|db| {
+        let mut entries = core.queue.open_for_session(db, &session_ref)?;
+        // The one it answers today is closed, so it is not in the list above; it belongs
+        // there, because "put it back" is as much a correction as "move it".
+        if let Some(current) = snapshot.linked_request_id.as_deref() {
+            if let Some(entry) = core.queue.get(db, current)? {
+                entries.push(entry);
+            }
+        }
+        crate::log::Result::Ok(entries)
+    });
+    let entries = match read {
+        Some(Ok(entries)) => entries,
+        Some(Err(error)) => return Err(error.to_string()),
+        None => return Ok(Vec::new()),
+    };
+
+    Ok(entries
+        .into_iter()
+        .filter(|entry| entry.about_handoff_id.is_none())
+        .map(|entry| RequestChoice {
+            id: entry.id,
+            text: entry.text,
+            created_at: entry.created_at.to_string(),
+        })
+        .collect())
+}
+
+/// The global shortcut in force, and whether the user should be asked for another (OPEN-03,
+/// FM-18).
+#[tauri::command]
+pub fn shortcut_status(app: AppHandle) -> super::shortcut::Status {
+    app.state::<super::Ui>().shortcut().status()
+}
+
+/// The user chose another combination in the FM-18 dialog.
+///
+/// # Errors
+///
+/// The plugin's own message, which the dialog shows: a combination it cannot parse, or one
+/// another application already holds — the app never takes one that is taken (OPEN-03).
+#[tauri::command]
+pub fn set_shortcut(app: AppHandle, accelerator: String) -> Result<(), String> {
+    super::shortcut::choose(&app, &accelerator)
+}
+
+/// The user closed the FM-18 dialog without choosing: never ask again.
+#[tauri::command]
+pub fn dismiss_shortcut_question(app: AppHandle) {
+    super::shortcut::asked(&app);
 }
 
 /// One of the sessions the FM-22 picker asks the user to choose between.

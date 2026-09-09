@@ -178,7 +178,13 @@ impl Dispatch {
         let table = SystemProcessTable::snapshot();
         match peer.role {
             PeerRole::Server => {
-                match self.registry().register(&self.db, &peer, &table) {
+                // The registry guard is taken and released on its own line, deliberately:
+                // handing the queue to the new session runs the delivery of OPEN-05, which
+                // reads that same registry for the session's process chain. A guard held
+                // across the `match` — which is what a lock taken in the scrutinee does —
+                // would deadlock the channel task on the first request ever delivered.
+                let registered = self.registry().register(&self.db, &peer, &table);
+                match registered {
                     Ok(session_ref) => {
                         // OPEN-04a: a request queued with no session goes to the first one
                         // that registers. A queue that cannot be read is a log line and not

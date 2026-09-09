@@ -100,8 +100,17 @@ export function revealedValue(key: string): string[] | null {
   return revealed[key] ?? null;
 }
 
-/** Re-reads the tab strip, keeping the selection when it still exists. */
-export async function refreshTabs(): Promise<void> {
+/**
+ * Re-reads the tab strip, keeping the selection when it still exists.
+ *
+ * `raiseOnArrival` is the MULTI-03 half, and the request sheet is the one caller that turns
+ * it off (OPEN-05): the tab it creates does not *arrive* while the user is looking elsewhere
+ * — they typed it in this very window a moment ago — and the app has just brought their
+ * terminal to the front for them to paste into. Asking for the front here would take the
+ * focus straight back off the terminal, which is measurably what happened before this
+ * argument existed.
+ */
+export async function refreshTabs(raiseOnArrival = true): Promise<void> {
   const next = await bridge().listHandoffs();
   const arriving = next.filter((tab) => !tabs.some((known) => known.id === tab.id));
   const first = !loaded;
@@ -122,7 +131,7 @@ export async function refreshTabs(): Promise<void> {
     // not a handoff arriving: restoring the tabs must not raise the window at every launch.
     // What the window does on a launch is decided with the rest of the startup sequence.
     // TASK: T-042 — the startup sequence decides whether a restored tab shows the window.
-    if (!first && arrived.uiState !== 'final') {
+    if (!first && raiseOnArrival && arrived.uiState !== 'final') {
       await bridge().showWindow();
     }
   }

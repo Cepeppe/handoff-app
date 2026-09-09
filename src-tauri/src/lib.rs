@@ -105,12 +105,20 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             ui_bridge::show_main_window(app);
         }))
-        // The two plugins the commands of §7.6 need. Neither is granted to the webview:
-        // `capabilities/main.json` lists no clipboard and no opener permission, because the
-        // frontend never calls them — it calls `copy_value`, `open_url` and
-        // `open_secret_file`, which decide what may be copied and what may be opened.
+        // The plugins the commands of §7.6 and §7.7 need. None of them is granted to the
+        // webview: `capabilities/main.json` lists no clipboard, opener, notification or
+        // shortcut permission, because the frontend never calls them — it calls
+        // `copy_value`, `open_url`, `open_secret_file`, `create_request` and `set_shortcut`,
+        // and this side decides what may be copied, opened, said and registered.
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        // OPEN-05: the notification that carries a request when its terminal could not be
+        // brought forward (FM-21).
+        .plugin(tauri_plugin_notification::init())
+        // OPEN-03: the combination that opens the request sheet from anywhere. The plugin
+        // registers nothing by itself; `ui_bridge::shortcut` does that from `setup()`, once
+        // the settings connection can say whether the user chose another one.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(ui)
         .manage(ui_bridge::CoreState(core))
         .invoke_handler(tauri::generate_handler![
@@ -126,6 +134,12 @@ pub fn run() {
             ui_bridge::commands::open_url,
             ui_bridge::commands::open_secret_file,
             ui_bridge::commands::scan_typed_text,
+            ui_bridge::commands::sessions,
+            ui_bridge::commands::create_request,
+            ui_bridge::commands::open_requests,
+            ui_bridge::commands::shortcut_status,
+            ui_bridge::commands::set_shortcut,
+            ui_bridge::commands::dismiss_shortcut_question,
             ui_bridge::commands::session_picker,
             ui_bridge::commands::answer_session_picker,
             ui_bridge::commands::window_settings,
@@ -233,11 +247,21 @@ fn state_of_the_app(
         .ok()?;
     let registry = std::sync::Arc::new(std::sync::Mutex::new(registry));
 
+    // The delivery of OPEN-05 — clipboard, terminal focus, notification — and the queue it
+    // observes. Two objects rather than one because they own each other: the queue announces
+    // what is ready and the delivery records what it copied, so the delivery is built first,
+    // handed to the queue as its observer, and given the queue back (weakly) afterwards.
+    let delivery = ui_bridge::RequestDelivery::new(
+        notifier.handle(),
+        std::sync::Arc::clone(&registry),
+        Box::new(requests::PlatformFocus),
+    );
     // The queue of §7.7, shared by the store (which links a request inside the transition
     // that answers it) and the dispatch (which hands it to sessions and reads it for every
     // hook). No session is connected yet, so every assignment left in the table names a
     // session of the previous run (FM-34, `requests::queue::requeue_on_start`).
-    let queue = std::sync::Arc::new(requests::Queue::new(Box::new(requests::NoRequestObserver)));
+    let queue = std::sync::Arc::new(requests::Queue::new(Box::new(delivery.clone())));
+    delivery.attach_queue(&queue);
     if let Err(error) = queue.requeue_on_start(&registry_db) {
         tracing::error!(error = %error, "the queued requests of the previous run could not be re-queued");
     }
@@ -255,6 +279,8 @@ fn state_of_the_app(
     let core = ui_bridge::Core {
         store: store.clone(),
         registry: std::sync::Arc::clone(&registry),
+        queue: std::sync::Arc::clone(&queue),
+        delivery,
     };
     Some((
         channel::Dispatch::new(registry_db, registry, store, handle.clone(), queue),

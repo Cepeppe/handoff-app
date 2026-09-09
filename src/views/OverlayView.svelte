@@ -19,7 +19,7 @@
 
   import { bridge } from '../bridge';
   import { t } from '../i18n';
-  import type { ActionName, HandoffView } from '../model';
+  import type { ActionName, HandoffView, RequestChoice } from '../model';
   import ActionBar from '../overlay/ActionBar.svelte';
   import History from '../overlay/History.svelte';
   import QuestionPending from '../overlay/QuestionPending.svelte';
@@ -45,6 +45,15 @@
 
   /** The sheet on screen, when one is open (RESP-02: Ask and Note are distinct). */
   let sheet = $state<ActionName | null>(null);
+
+  /**
+   * The requests the **Change** control of FM-20 is offering, while it is open.
+   *
+   * `null` means the control has not been pressed. It is read on demand rather than carried
+   * in the view: a mis-link is rare (§12.4 calls it an accepted case) and the queue is the
+   * core's, so asking when the user asks keeps one source of truth.
+   */
+  let relinking = $state<RequestChoice[] | null>(null);
 
   const view = $derived(currentView());
   const tabs = $derived(allTabs());
@@ -73,6 +82,15 @@
     await runOn(current.tab.id, action, payload);
   }
 
+  /** Opens the FM-20 list, or closes it when it is already open. */
+  async function offerRelink(id: string): Promise<void> {
+    if (relinking !== null) {
+      relinking = null;
+      return;
+    }
+    relinking = await bridge().openRequests(id);
+  }
+
   /**
    * One action on a named handoff.
    *
@@ -82,6 +100,7 @@
    */
   async function runOn(id: string, action: ActionName, payload?: string): Promise<void> {
     sheet = null;
+    relinking = null;
     try {
       await bridge().act(id, action, payload);
     } catch {
@@ -165,11 +184,47 @@
         })}
       </p>
     {/if}
+    <!--
+      The request this tab answers, and the one-click correction of FM-20. A spec that quoted
+      no `request_id` was linked to the session's oldest open request (OPEN-08), which two
+      open requests can get the wrong way round (§12.4); **Change** lists the others and
+      relinking is a single action the store applies for both sides at once.
+    -->
     {#if view.requestText !== null && view.uiState !== 'waitingForSpec'}
       <p class="request-text">
         {view.linkedRequest === null ? t('overlay.request') : t('overlay.linkedRequest')}:
         {view.requestText}
+        <button
+          type="button"
+          class="button button-quiet"
+          onclick={() => void offerRelink(view.tab.id)}
+        >
+          {t('overlay.changeRequest')}
+        </button>
       </p>
+    {/if}
+
+    {#if relinking !== null}
+      <section class="relink" role="group" aria-label={t('overlay.chooseRequest')}>
+        <p class="relink-title">{t('overlay.chooseRequest')}</p>
+        {#if relinking.length === 0}
+          <p class="relink-empty">{t('overlay.noOtherRequest')}</p>
+        {:else}
+          {#each relinking as choice (choice.id)}
+            <button
+              type="button"
+              class="button"
+              aria-current={choice.id === view.linkedRequest?.id ? 'true' : undefined}
+              onclick={() => void runOn(view.tab.id, 'relink', choice.id)}
+            >
+              {choice.text}
+            </button>
+          {/each}
+        {/if}
+        <button type="button" class="button button-quiet" onclick={() => (relinking = null)}>
+          {t('sheet.cancel')}
+        </button>
+      </section>
     {/if}
 
     {#if view.uiState === 'waitingForSpec'}

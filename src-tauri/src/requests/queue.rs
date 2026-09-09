@@ -26,8 +26,6 @@
 //! [`Queue::requeue_on_start`] does the same thing for all of them when the app comes back:
 //! an open request is assigned only to a session that is connected *now*, and a
 //! `session_ref` from a previous run names nothing.
-// TASK: T-038 — the request sheet calls `create`, and `ui_bridge` implements
-// `RequestObserver` over the clipboard, the terminal focus and the notification.
 
 use crate::ids;
 use crate::log::user_requests::{self, DeliveredVia};
@@ -58,9 +56,14 @@ pub struct RequestReadyForSession {
 /// clipboard and bringing that session's terminal to the front (OPEN-05, FM-21). It returns
 /// nothing: a clipboard that refuses must not undo a queued request, and the hook still
 /// delivers it at the end of the turn (OPEN-06).
+///
+/// `db` is the caller's connection, for the same reason every method of [`Queue`] takes one:
+/// recording that the clipboard carried an entry is a write about the announcement that has
+/// just been made, and it belongs on the connection that made it rather than on a fourth one
+/// opened for the purpose. No caller holds a transaction open across this call.
 pub trait RequestObserver: Send + Sync {
     /// `ready` is waiting for a session that is connected now.
-    fn request_ready(&self, ready: &RequestReadyForSession);
+    fn request_ready(&self, db: &Db, ready: &RequestReadyForSession);
 }
 
 /// The observer of a queue with no window behind it: every test that is not about the
@@ -69,7 +72,7 @@ pub trait RequestObserver: Send + Sync {
 pub struct NoRequestObserver;
 
 impl RequestObserver for NoRequestObserver {
-    fn request_ready(&self, _ready: &RequestReadyForSession) {}
+    fn request_ready(&self, _db: &Db, _ready: &RequestReadyForSession) {}
 }
 
 /// What a `handoff.open` found in the queue (OPEN-08, DD-13).
@@ -185,10 +188,13 @@ impl Queue {
             "a resume request was queued"
         );
         if let Some(session_ref) = session {
-            self.observer.request_ready(&RequestReadyForSession {
-                session_ref: session_ref.to_owned(),
-                request,
-            });
+            self.observer.request_ready(
+                db,
+                &RequestReadyForSession {
+                    session_ref: session_ref.to_owned(),
+                    request,
+                },
+            );
         }
         Ok(id)
     }
@@ -245,6 +251,26 @@ impl Queue {
         user_requests::link(db, request_id, handoff_id)
     }
 
+    /// The user abandoned the tab a request had opened, so the request is over (OPEN-04).
+    ///
+    /// It is closed the way a resume is closed (`close_resumes_about`): the entry points at
+    /// the handoff that answers it, which here is the handoff it *became* — a user-opened
+    /// request and its tab share one id (DD-13). From then on it is out of
+    /// `oldest_open_for_session`, out of the hook's items, and out of `list_unassigned_open`.
+    ///
+    /// Returns whether the queue held that request at all; an agent-opened handoff has none.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::log::StoreError::Persistence`] when the update fails.
+    pub fn abandoned(&self, db: &Db, request_id: &str) -> Result<bool> {
+        let closed = user_requests::link(db, request_id, request_id)?;
+        if closed {
+            tracing::info!(request_id, "a queued request was abandoned by the user");
+        }
+        Ok(closed)
+    }
+
     /// An agent's call attached to `handoff_id`, so the resume requests about it are
     /// answered (FM-31).
     ///
@@ -272,10 +298,13 @@ impl Queue {
                 continue;
             }
             request.session_ref = Some(session_ref.to_owned());
-            self.observer.request_ready(&RequestReadyForSession {
-                session_ref: session_ref.to_owned(),
-                request,
-            });
+            self.observer.request_ready(
+                db,
+                &RequestReadyForSession {
+                    session_ref: session_ref.to_owned(),
+                    request,
+                },
+            );
             handed += 1;
         }
         if handed > 0 {
@@ -392,6 +421,12 @@ impl crate::store::Requests for std::sync::Arc<Queue> {
             tracing::error!(error = %error, handoff_id, "a resume request could not be closed");
         }
     }
+
+    fn abandoned(&self, db: &Db, request_id: &str) {
+        if let Err(error) = Queue::abandoned(self, db, request_id) {
+            tracing::error!(error = %error, request_id, "an abandoned request could not be closed");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -409,7 +444,7 @@ mod tests {
     }
 
     impl RequestObserver for std::sync::Arc<Recording> {
-        fn request_ready(&self, ready: &RequestReadyForSession) {
+        fn request_ready(&self, _db: &Db, ready: &RequestReadyForSession) {
             self.ready
                 .lock()
                 .expect("the recorder is not poisoned")
@@ -463,6 +498,63 @@ mod tests {
             Some(mine.as_str())
         );
         assert!(matches!(link, OpenLink::Adopted(_)));
+    }
+
+    #[test]
+    fn a_request_the_user_gave_up_on_is_out_of_the_queue() {
+        // OPEN-04: pressing Abandon on a tab that never got its spec must stop the hook
+        // asking for one (OPEN-06) and stop the next handoff being linked to it (OPEN-08).
+        let db = db_with_two_sessions();
+        let (queue, _) = queue();
+        let given_up = queue
+            .create(
+                &db,
+                "first",
+                Some("ses_00000001"),
+                &at("2026-09-08T11:00:00Z"),
+            )
+            .expect("a request");
+        let kept = queue
+            .create(
+                &db,
+                "second",
+                Some("ses_00000001"),
+                &at("2026-09-08T11:01:00Z"),
+            )
+            .expect("another request");
+        // The tab `Store::open_request` writes beside the entry: the entry is closed by
+        // pointing at the handoff it became, so that handoff has to exist (DD-13).
+        handoffs::upsert(&db, &handoff(&given_up)).expect("the tab");
+
+        assert!(queue.abandoned(&db, &given_up).expect("the queue holds it"));
+
+        let open = queue
+            .open_for_session(&db, "ses_00000001")
+            .expect("the open ones");
+        assert_eq!(
+            open.iter()
+                .map(|entry| entry.id.clone())
+                .collect::<Vec<_>>(),
+            vec![kept.clone()]
+        );
+        // And the oldest open one is now the second, not the abandoned first.
+        let link = queue
+            .link_on_open(&db, Some("ses_00000001"), None)
+            .expect("a link");
+        assert_eq!(
+            link.request().map(|request| request.id.as_str()),
+            Some(kept.as_str())
+        );
+    }
+
+    #[test]
+    fn abandoning_a_handoff_the_queue_never_held_changes_nothing() {
+        // Every agent-opened handoff takes this path when the user abandons it.
+        let db = db_with_two_sessions();
+        let (queue, _) = queue();
+        assert!(!queue
+            .abandoned(&db, "hf_0000000001")
+            .expect("no such entry"));
     }
 
     #[test]

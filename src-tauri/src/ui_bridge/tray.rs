@@ -206,8 +206,8 @@ pub fn set_badge(app: &AppHandle, count: usize) {
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         ID_SHOW => super::show_main_window(app),
-        ID_NEW_REQUEST => super::show_view(app, "request"),
-        ID_SETTINGS => super::show_view(app, "settings"),
+        ID_NEW_REQUEST => super::show_view(app, super::VIEW_REQUEST),
+        ID_SETTINGS => super::show_view(app, super::VIEW_SETTINGS),
         ID_QUIT => app.exit(0),
         other => tracing::warn!(menu_id = other, "unknown tray menu entry"),
     }

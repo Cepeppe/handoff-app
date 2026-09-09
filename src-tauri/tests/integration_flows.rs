@@ -351,8 +351,17 @@ const THE_FIXTURES_EMPTIED_COUNTERS: [&str; 2] = ["notes", "skipped_steps"];
 async fn f01_a_session_registers_pings_both_ways_and_is_told_the_app_is_leaving() {
     // The fixture's own ping interval is 30 s (§6.3); shortened here so the app's half of
     // the exchange happens inside a test rather than inside a coffee break.
+    //
+    // It is the *silence* budget, and the listener restarts it on every line it reads — so
+    // it is also the time this test leaves the fake to read the `hello` answer and send its
+    // own ping. At 150 ms that margin was too thin: a scheduling stall on a loaded machine
+    // (the whole suite runs six test binaries at once) let the app's own ping go out first,
+    // and the replay, which compares the transcript message for message, failed on the order.
+    // Nothing about the protocol forbids that order — a real peer silent for 30 s is pinged
+    // exactly so — which is why the budget is what had to move. `PATIENCE` is 5 s, so a
+    // second still leaves the expectation below four seconds of room.
     let app = App::start_in(temp_dir(), |config| {
-        config.ping_interval = Duration::from_millis(150);
+        config.ping_interval = Duration::from_secs(1);
     })
     .await;
     let golden = Golden::load("f01-register");

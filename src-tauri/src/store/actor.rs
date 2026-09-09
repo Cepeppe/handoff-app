@@ -449,6 +449,47 @@ impl Store {
             .collect()
     }
 
+    // ------------------------------------------------------------------- user actions
+
+    /// The user typed a request: the tab of OPEN-04, waiting for a spec that has not been
+    /// asked for yet (§7.7, DD-13).
+    ///
+    /// `id` is the queue entry's, because the handoff *becomes* it: one tab keeps one id
+    /// from "waiting for spec" to its final state, which is what lets an agent quote
+    /// `request_id` and have [`Store::open`] adopt this very row. The queue entry is written
+    /// by `requests::Queue::create` before this is called, so an id that reaches here is
+    /// already in the queue; nothing is linked yet, because nothing has answered it.
+    ///
+    /// An id the store already knows is refused rather than overwritten: the only way to
+    /// reach that is a caller that minted the same id twice, and a live handoff is not
+    /// something a new request may replace.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NotActive`] when a handoff of that id already exists,
+    /// [`Refusal::Persistence`] when the write fails.
+    pub fn open_request(
+        &mut self,
+        id: &str,
+        request_text: &str,
+        opener: Option<&Opener>,
+        now: &Timestamp,
+    ) -> Result<()> {
+        if let Some(known) = self.handoffs.get(id) {
+            return Err(Refusal::NotActive { state: known.state });
+        }
+        let draft = Handoff::awaiting_spec(id.to_owned(), request_text.to_owned(), opener, now);
+        let mut journal = Journal::default();
+        journal.event(
+            &draft,
+            now,
+            EventKind::State,
+            None,
+            Some(json!({"state": HandoffState::AwaitingSpec.as_str()})),
+        );
+        self.commit(draft, journal)
+    }
+
     // ------------------------------------------------------------------ agent actions
 
     /// `handoff.open`: a new handoff, or the spec a user request was waiting for (DD-13,
@@ -1043,6 +1084,12 @@ impl Store {
         if draft.is_final() {
             return Err(Refusal::NotActive { state: draft.state });
         }
+        // The user gave up on a tab that never got its spec, so the request behind it is
+        // over too (§7.7). Without this the queue would keep it open: the Stop hook would go
+        // on asking the agent for a spec at every end of turn (OPEN-06), and the session's
+        // next handoff would be linked to it (OPEN-08) — both of them the opposite of what
+        // pressing Abandon said. Every other state's request was answered long ago.
+        let gave_up_on_the_request = draft.state == HandoffState::AwaitingSpec;
         let mut journal = Journal::default();
         journal.event(
             &draft,
@@ -1062,7 +1109,14 @@ impl Store {
             now,
             &mut journal,
         )?;
-        self.commit(draft, journal)
+        self.commit(draft, journal)?;
+        // After the commit, like every other note the queue takes about a transition: a
+        // request row that cannot be closed is a log line, never a reason to leave the
+        // handoff open (PRIN-10, FM-28).
+        if gave_up_on_the_request {
+            self.requests.abandoned(&self.db, handoff_id);
+        }
+        Ok(())
     }
 
     /// "Done" on the last step: the agent verifies, or the user's word is the result
@@ -1885,6 +1939,19 @@ pub enum Command {
         /// Where the acknowledgement goes.
         reply_to: oneshot::Sender<Result<()>>,
     },
+    /// The user typed a request in the sheet of §7.7: open the tab that waits for its spec.
+    OpenRequest {
+        /// The queue entry's id, which the handoff takes over (DD-13).
+        id: String,
+        /// What the user typed (OPEN-04).
+        request_text: String,
+        /// The session it was addressed to, when one was selected (OPEN-04a).
+        opener: Option<Box<Opener>>,
+        /// When.
+        at: Timestamp,
+        /// Where the answer goes.
+        reply_to: oneshot::Sender<Result<()>>,
+    },
     /// One of the actions a person takes in the overlay.
     User {
         /// Which one.
@@ -2002,6 +2069,28 @@ impl StoreHandle {
     pub async fn open(&self, params: OpenParams, at: Timestamp) -> Result<OpenAccepted> {
         self.ask(
             |reply_to| Command::Open(Box::new(params), at, reply_to),
+            || Err(Refusal::NotFound),
+        )
+        .await
+    }
+
+    /// The tab a user's request opens, waiting for the spec an agent has not sent yet
+    /// (OPEN-04).
+    pub async fn open_request(
+        &self,
+        id: String,
+        request_text: String,
+        opener: Option<Opener>,
+        at: Timestamp,
+    ) -> Result<()> {
+        self.ask(
+            |reply_to| Command::OpenRequest {
+                id,
+                request_text,
+                opener: opener.map(Box::new),
+                at,
+                reply_to,
+            },
             || Err(Refusal::NotFound),
         )
         .await
@@ -2235,6 +2324,16 @@ fn apply(store: &mut Store, command: Command) {
         Command::Open(params, at, reply_to) => {
             let _ = reply_to.send(store.open(*params, &at));
         }
+        Command::OpenRequest {
+            id,
+            request_text,
+            opener,
+            at,
+            reply_to,
+        } => {
+            let result = store.open_request(&id, &request_text, opener.as_deref(), &at);
+            let _ = reply_to.send(result);
+        }
         Command::Continue {
             handoff_id,
             call,
@@ -2360,7 +2459,7 @@ mod tests {
     use crate::format::spec::SpecValue;
     use crate::log::sessions;
     use crate::log::testing::{at, session};
-    use crate::store::runbook_sink::testing::{CountingResumes, RecordingSink};
+    use crate::store::runbook_sink::testing::{CountingRequests, RecordingSink};
 
     const OPENER: &str = "ses_00000001";
     const OTHER: &str = "ses_00000002";
@@ -2387,9 +2486,9 @@ mod tests {
         .expect("an empty store")
     }
 
-    fn watched() -> (Store, Arc<RecordingSink>, Arc<CountingResumes>) {
+    fn watched() -> (Store, Arc<RecordingSink>, Arc<CountingRequests>) {
         let sink = Arc::new(RecordingSink::default());
-        let resumes = Arc::new(CountingResumes::default());
+        let resumes = Arc::new(CountingRequests::default());
         let store = Store::load(
             database(),
             Box::new(Arc::clone(&sink)),
@@ -2500,6 +2599,159 @@ mod tests {
             store.take_deliveries().is_empty(),
             "an open answers nothing"
         );
+    }
+
+    #[test]
+    fn a_user_request_opens_a_tab_that_is_waiting_for_a_spec() {
+        // OPEN-04: the tab appears the moment the user presses Enter, before any agent has
+        // been asked anything.
+        let mut store = store();
+        let opened = at("2026-09-08T10:00:00Z");
+        store
+            .open_request(
+                "hf_9p2r4k7m3t",
+                "I'm about to create the API key on Stripe",
+                Some(&opener(OPENER)),
+                &opened,
+            )
+            .expect("the request opens a tab");
+
+        let snapshot = store
+            .snapshot("hf_9p2r4k7m3t", &at("2026-09-08T10:00:01Z"))
+            .expect("the tab is there");
+        assert_eq!(snapshot.state, HandoffState::AwaitingSpec);
+        assert_eq!(
+            snapshot.request_text.as_deref(),
+            Some("I'm about to create the API key on Stripe")
+        );
+        assert_eq!(snapshot.session_ref.as_deref(), Some(OPENER));
+        assert_eq!(snapshot.created_at, opened);
+        // Nothing a spec would have filled: no goal, no steps, nothing to walk.
+        assert_eq!(snapshot.goal, None);
+        assert_eq!(snapshot.step_total, 0);
+        assert!(snapshot.steps.is_empty());
+        assert!(!snapshot.call_attached);
+    }
+
+    #[test]
+    fn a_request_with_no_session_still_opens_its_tab() {
+        // OPEN-04a: the sheet opens with nothing registered, and the request waits for the
+        // first session that does.
+        let mut store = store();
+        store
+            .open_request(
+                "hf_9p2r4k7m3t",
+                "book the domain",
+                None,
+                &at("2026-09-08T10:00:00Z"),
+            )
+            .expect("the request opens a tab");
+        let snapshot = store
+            .snapshot("hf_9p2r4k7m3t", &at("2026-09-08T10:00:01Z"))
+            .expect("the tab is there");
+        assert_eq!(snapshot.session_ref, None);
+        assert_eq!(snapshot.opener_label, None);
+    }
+
+    #[test]
+    fn a_request_never_replaces_a_handoff_that_already_exists() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, false));
+        let refused = store
+            .open_request(&id, "something else", None, &at("2026-09-08T12:00:00Z"))
+            .expect_err("a live handoff is not overwritten");
+        assert!(matches!(refused, Refusal::NotActive { .. }), "{refused:?}");
+        assert_eq!(
+            store
+                .snapshot(&id, &at("2026-09-08T12:00:01Z"))
+                .expect("still there")
+                .goal,
+            Some("Register the webhook".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_spec_fills_the_tab_the_user_opened_and_keeps_its_instant() {
+        // DD-13, §7.7: one tab from "waiting for spec" to the final state, with the instant
+        // the *user* opened it and the words they typed.
+        let mut store = store();
+        let request_id = "hf_9p2r4k7m3t";
+        let opened = at("2026-09-08T10:00:00Z");
+        store
+            .open_request(
+                request_id,
+                "create the API key on Stripe",
+                Some(&opener(OPENER)),
+                &opened,
+            )
+            .expect("the request opens a tab");
+
+        let accepted = store
+            .open(
+                OpenParams {
+                    spec: spec(2, false),
+                    secret_treated: Vec::new(),
+                    request_id: Some(request_id.to_owned()),
+                    opener: opener(OPENER),
+                    call: call(1, "call_00000001", OPENER),
+                },
+                &at("2026-09-08T10:04:00Z"),
+            )
+            .expect("the spec is accepted");
+
+        assert_eq!(accepted.handoff_id, request_id);
+        let snapshot = store
+            .snapshot(request_id, &at("2026-09-08T10:04:01Z"))
+            .expect("the same tab");
+        assert_eq!(snapshot.state, HandoffState::Active);
+        assert_eq!(
+            snapshot.created_at, opened,
+            "the tab keeps the user's instant"
+        );
+        assert_eq!(
+            snapshot.request_text.as_deref(),
+            Some("create the API key on Stripe")
+        );
+        assert_eq!(snapshot.step_total, 2);
+    }
+
+    #[test]
+    fn giving_up_on_a_tab_that_never_got_its_spec_closes_the_request() {
+        // Without this the Stop hook would go on asking for a spec at every end of turn
+        // (OPEN-06) and the session's next handoff would be linked to it (OPEN-08).
+        let (mut store, _sink, requests) = watched();
+        store
+            .open_request(
+                "hf_9p2r4k7m3t",
+                "create the API key",
+                Some(&opener(OPENER)),
+                &at("2026-09-08T10:00:00Z"),
+            )
+            .expect("the request opens a tab");
+        store
+            .abandon("hf_9p2r4k7m3t", None, &at("2026-09-08T10:02:00Z"))
+            .expect("abandon");
+
+        assert_eq!(
+            *requests.abandoned.lock().expect("not poisoned"),
+            vec!["hf_9p2r4k7m3t".to_owned()]
+        );
+    }
+
+    #[test]
+    fn giving_up_on_a_handoff_that_has_a_spec_touches_no_request() {
+        // Its request, if it had one, was answered when the spec arrived; closing it here
+        // would close an entry that is already closed.
+        let (mut store, _sink, requests) = watched();
+        let id = open_with(&mut store, spec(2, false));
+        store
+            .abandon(
+                &id,
+                Some("not today".to_owned()),
+                &at("2026-09-08T11:30:00Z"),
+            )
+            .expect("abandon");
+        assert!(requests.abandoned.lock().expect("not poisoned").is_empty());
     }
 
     #[test]

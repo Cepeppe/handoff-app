@@ -397,6 +397,52 @@ impl Handoff {
         }
     }
 
+    /// The tab a user's request opens, before any agent has answered it (OPEN-04, DD-13).
+    ///
+    /// Everything a spec would fill is empty and stays empty until `handoff.open` arrives
+    /// with this id: no spec, **no rounds**, no steps to walk. §8.4 gives the row its own
+    /// banner and no step view, which is what makes an empty round list a state rather than
+    /// a gap — `current_round` answers `None` and every projection built on it is empty.
+    ///
+    /// `opener` is the session the request was addressed to, and it is optional: OPEN-04a
+    /// opens the sheet with no session registered at all, and the tab still has to exist.
+    /// The label then falls back to the id (`ui_bridge::view`), until the spec arrives with
+    /// the session that produced it.
+    #[must_use]
+    pub fn awaiting_spec(
+        id: String,
+        request_text: String,
+        opener: Option<&Opener>,
+        at: &Timestamp,
+    ) -> Self {
+        Self {
+            id,
+            created_at: at.clone(),
+            closed_at: None,
+            session_ref: opener.map(|opener| opener.session_ref.clone()),
+            agent_id: opener.and_then(|opener| opener.agent_id.clone()),
+            client_name: opener.and_then(|opener| opener.client_name.clone()),
+            project_dir: opener.and_then(|opener| opener.project_dir.clone()),
+            opener_label: opener.map(|opener| opener.label.clone()),
+            request_text: Some(request_text),
+            linked_request_id: None,
+            lang: None,
+            spec: None,
+            secret_treated: Vec::new(),
+            rounds: Vec::new(),
+            cursor: Cursor::default(),
+            deferral_count: 0,
+            pending_question: None,
+            undelivered: VecDeque::new(),
+            attached_call: None,
+            state: HandoffState::AwaitingSpec,
+            final_outcome: None,
+            delivered_at: None,
+            verifying_since: None,
+            resumed_from: None,
+        }
+    }
+
     /// The round the cursor is in.
     ///
     /// A handoff always has at least one round from the moment a spec arrives, and the
@@ -578,6 +624,45 @@ mod tests {
             &opener(),
             &at("2026-09-08T11:00:00Z"),
         )
+    }
+
+    #[test]
+    fn a_tab_waiting_for_its_spec_has_no_round_to_walk() {
+        // OPEN-04: the tab exists before any agent has said anything. Every projection is
+        // built from the current round, and there is none, so all of them must be empty
+        // rather than wrong.
+        let waiting = Handoff::awaiting_spec(
+            "hf_0000000001".to_owned(),
+            "create the API key on Stripe".to_owned(),
+            Some(&opener()),
+            &at("2026-09-08T10:00:00Z"),
+        );
+        assert_eq!(waiting.state, HandoffState::AwaitingSpec);
+        assert!(waiting.spec.is_none());
+        assert!(waiting.rounds.is_empty());
+        assert_eq!(waiting.current_round(), None);
+        assert_eq!(waiting.current_step(), None);
+        assert_eq!(waiting.step_count(), 0);
+        assert_eq!(
+            waiting.request_text.as_deref(),
+            Some("create the API key on Stripe")
+        );
+        assert_eq!(waiting.session_ref.as_deref(), Some("ses_00000001"));
+        assert!(!waiting.is_final());
+    }
+
+    #[test]
+    fn a_tab_waiting_for_its_spec_with_no_session_carries_none() {
+        // OPEN-04a: the sheet opens with nothing registered.
+        let waiting = Handoff::awaiting_spec(
+            "hf_0000000001".to_owned(),
+            "book the domain".to_owned(),
+            None,
+            &at("2026-09-08T10:00:00Z"),
+        );
+        assert_eq!(waiting.session_ref, None);
+        assert_eq!(waiting.opener_label, None);
+        assert_eq!(waiting.project_dir, None);
     }
 
     #[test]

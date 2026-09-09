@@ -7,12 +7,15 @@
 //!
 //! - [`queue`] is the queue itself: what is waiting, for whom, and what answers it.
 //! - [`text`] is the sentence that reaches the agent, in the two languages of APP-02.
-// TASK: T-038 — the request sheet, the global shortcut, the clipboard and the terminal
-// focus, over the seams `queue` declares.
+//! - [`focus`] is the best-effort half of OPEN-05: bringing the session's terminal window to
+//!   the front so the user only has to paste. It is a trait for the same reason the
+//!   observer is one — the platform call belongs to `ui_bridge`, not to the queue.
 
+pub mod focus;
 pub mod queue;
 pub mod text;
 
+pub use focus::{NoTerminalFocus, PlatformFocus, TerminalFocus};
 pub use queue::{
     NoRequestObserver, OpenLink, Queue, RequestObserver, RequestReadyForSession, UserRequest,
 };

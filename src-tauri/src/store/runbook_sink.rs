@@ -9,8 +9,9 @@
 //!   refresh a runbook (RUN-01, §7.12); the other three are told anyway, because "this run
 //!   failed and no correction followed" is also a fact the writer acts on (RUN-09).
 //! - [`Requests`] is the queue of §7.7: which request a `handoff.open` answers (OPEN-08),
-//!   which one the user relinked it to (FM-20), and the request that asks an agent to come
-//!   back to a handoff the user picked up in the overlay (RESP-07, FM-31). The overlay can
+//!   which one the user relinked it to (FM-20), the one they gave up on (OPEN-04), and the
+//!   request that asks an agent to come back to a handoff the user picked up in the overlay
+//!   (RESP-07, FM-31). The overlay can
 //!   resume a parked handoff at any time; the agent that opened it may be in the middle of
 //!   something else or gone entirely, so the request is queued and delivered by the
 //!   clipboard fast path or by the Stop hook.
@@ -69,6 +70,14 @@ pub trait Requests: Send {
     /// A call attached to `handoff_id`: an agent came back, so a resume request about it has
     /// been answered (FM-31).
     fn resumed(&self, db: &Db, handoff_id: &str);
+
+    /// The user abandoned a tab that was still waiting for its spec, so the request it grew
+    /// from is over: nothing should ask an agent for that spec again (§7.7, OPEN-06).
+    ///
+    /// `request_id` is the handoff's own id, which for a user-opened request is the queue
+    /// entry's id as well (DD-13). A handoff with no request behind it — every agent-opened
+    /// one — simply finds nothing to close.
+    fn abandoned(&self, db: &Db, request_id: &str);
 }
 
 /// The queue of a store with no user-request queue behind it.
@@ -90,6 +99,8 @@ impl Requests for NoRequests {
     fn request_resume(&self, _db: &Db, _handoff_id: &str, _session_ref: Option<&str>) {}
 
     fn resumed(&self, _db: &Db, _handoff_id: &str) {}
+
+    fn abandoned(&self, _db: &Db, _request_id: &str) {}
 }
 
 #[cfg(test)]
@@ -114,13 +125,16 @@ pub(crate) mod testing {
         }
     }
 
-    /// A queue that only counts.
+    /// A queue that only remembers what it was told.
     #[derive(Debug, Default)]
-    pub(crate) struct CountingResumes {
+    pub(crate) struct CountingRequests {
+        /// How many resume requests were queued (FM-31).
         pub(crate) requested: AtomicUsize,
+        /// The ids of the requests the user gave up on (OPEN-04).
+        pub(crate) abandoned: Mutex<Vec<String>>,
     }
 
-    impl Requests for Arc<CountingResumes> {
+    impl Requests for Arc<CountingRequests> {
         fn link_on_open(
             &self,
             _db: &Db,
@@ -137,5 +151,12 @@ pub(crate) mod testing {
         }
 
         fn resumed(&self, _db: &Db, _handoff_id: &str) {}
+
+        fn abandoned(&self, _db: &Db, request_id: &str) {
+            self.abandoned
+                .lock()
+                .expect("the recording queue is not poisoned")
+                .push(request_id.to_owned());
+        }
     }
 }

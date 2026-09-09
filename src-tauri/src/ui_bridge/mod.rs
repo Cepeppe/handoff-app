@@ -22,9 +22,16 @@
 //! T-037 added the last of it: [`window`] is where the panel is and how it behaves — the
 //! per-monitor position of WIN-02, the focus change WIN-03 collapses on — and the tray
 //! finally has the badge of WIN-05.
+//!
+//! T-038 added the two halves of a user-opened request that only Tauri can do: [`shortcut`]
+//! is the combination of OPEN-03 that opens the sheet from anywhere, and [`requests`] is
+//! what happens when something in the queue can be put in front of an agent — the clipboard,
+//! the terminal's window, the notification (OPEN-05).
 
 pub mod commands;
 pub mod events;
+pub mod requests;
+pub mod shortcut;
 mod tray;
 pub mod view;
 pub mod window;
@@ -38,6 +45,7 @@ use crate::log::Db;
 
 pub use commands::{Core, CoreState};
 pub use events::{Notice, NoticeKind, Notifier};
+pub use requests::RequestDelivery;
 
 /// The label of the overlay window, as `tauri.conf.json` declares it.
 pub const MAIN_WINDOW: &str = "main";
@@ -48,6 +56,16 @@ pub const MAIN_WINDOW: &str = "main";
 /// switch the view by calling into it; they emit this instead. The same literal is in
 /// `src/bridge.ts` and a test below reads that file to keep the two spellings together.
 pub const EVENT_SHOW_VIEW: &str = "ui://show-view";
+
+/// The request sheet, as `src/views.ts` names it (§7.7, OPEN-03).
+///
+/// Two things ask for it — the tray's `New request` and the global shortcut — so the name
+/// is a constant rather than a literal in each of them; a test in [`shortcut`] reads
+/// `src/views.ts` to prove the frontend still knows it.
+pub const VIEW_REQUEST: &str = "request";
+
+/// The settings page, as `src/views.ts` names it.
+pub const VIEW_SETTINGS: &str = "settings";
 
 /// The window gained or lost the focus. Payload: `true` when it has it (WIN-03).
 ///
@@ -104,6 +122,7 @@ pub struct Ui {
     tray: Mutex<Option<tray::Handles>>,
     notifier: Notifier,
     geometry: window::Geometry,
+    shortcut: shortcut::State,
     db: Mutex<Option<Db>>,
 }
 
@@ -144,6 +163,11 @@ impl Ui {
     /// Where the panel is, per monitor (WIN-02).
     pub fn geometry(&self) -> &window::Geometry {
         &self.geometry
+    }
+
+    /// The global shortcut in force, and whether the system accepted it (OPEN-03, FM-18).
+    pub fn shortcut(&self) -> &shortcut::State {
+        &self.shortcut
     }
 
     /// Runs `read` against the window's connection, or answers `None` when there is none.
@@ -202,6 +226,10 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     state.notifier.attach(app.clone());
     let handles = tray::install(app, state.language())?;
     *state.tray.lock().expect("the tray mutex is poisoned") = Some(handles);
+
+    // OPEN-03. After the tray, deliberately: when the combination is taken, `New request`
+    // in the menu is the path the user is left with (FM-18), and it exists by now.
+    shortcut::install(app);
 
     // §7.16 keeps the window hidden until there is something to show, and from here on the
     // tray is what brings it back. A development build still shows it once: onboarding is

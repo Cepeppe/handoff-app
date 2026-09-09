@@ -1156,6 +1156,35 @@ mod tests {
     }
 
     #[test]
+    fn the_tab_a_user_request_opens_shows_their_words_and_offers_only_abandon() {
+        // Exactly what `Store::open_request` produces (OPEN-04): no spec, no round, no step
+        // to walk. What the user can do about it is give up on it, and copy the sentence
+        // again — which is the view's own button and not an `act`.
+        let mut it = snapshot();
+        it.state = HandoffState::AwaitingSpec;
+        it.step_total = 0;
+        it.steps = Vec::new();
+        it.call_attached = false;
+        it.goal = None;
+        it.location = None;
+        it.values = IndexMap::new();
+        it.secrets = None;
+        it.request_text = Some("create the API key on Stripe".to_owned());
+
+        let view = view(&it);
+        assert_eq!(view.ui_state, UiState::WaitingForSpec);
+        assert_eq!(
+            view.request_text.as_deref(),
+            Some("create the API key on Stripe")
+        );
+        assert!(view.step.is_none(), "there is no step until a spec arrives");
+        assert!(view.goal.is_none());
+        assert!(view.actions.abandon);
+        assert!(!view.actions.done && !view.actions.ask && !view.actions.skip);
+        assert!(!view.actions.defer && !view.actions.resume);
+    }
+
+    #[test]
     fn a_handoff_with_no_opening_session_is_still_a_tab() {
         let mut it = snapshot();
         it.opener_label = None;

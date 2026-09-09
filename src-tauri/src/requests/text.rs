@@ -80,6 +80,41 @@ mod tests {
     }
 
     #[test]
+    fn the_italian_sentence_is_pinned_as_well() {
+        // The clipboard renders in the user's language (OPEN-05), so the Italian sentence is
+        // as much a thing an agent reads as the English one; only the design prints the
+        // English. Pinned here so a translation cannot drift away from the shape the agent
+        // has to act on — the quoted words, the tool name and `request_id=`.
+        assert_eq!(
+            render_request_text(Language::It, ID, WHAT),
+            concat!(
+                "[Handoff hf_7k3m9p2q4r] L'utente ha aperto una richiesta: ",
+                "\"I'm about to create the API key on Stripe\". ",
+                "Produci la spec e chiama handoff_to_user con request_id=hf_7k3m9p2q4r."
+            )
+        );
+    }
+
+    #[test]
+    fn the_resume_sentence_is_pinned_in_both_languages() {
+        // FM-31: what an agent reads when the user picked a handoff up in the overlay.
+        assert_eq!(
+            render_resume_text(Language::En, ID),
+            concat!(
+                "[Handoff hf_7k3m9p2q4r] The user resumed this handoff in the overlay. ",
+                "Call handoff_to_user with resume=hf_7k3m9p2q4r to pick it up."
+            )
+        );
+        assert_eq!(
+            render_resume_text(Language::It, ID),
+            concat!(
+                "[Handoff hf_7k3m9p2q4r] L'utente ha ripreso questo handoff dal pannello. ",
+                "Chiama handoff_to_user con resume=hf_7k3m9p2q4r per riprenderlo."
+            )
+        );
+    }
+
+    #[test]
     fn the_id_and_the_tool_name_are_the_same_in_both_languages() {
         for language in [Language::En, Language::It] {
             for rendered in [
