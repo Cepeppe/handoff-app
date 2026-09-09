@@ -9,13 +9,14 @@
 import { vi } from 'vitest';
 
 import { noopBridge, type Bridge, type Unlisten } from '../bridge';
-import type { HandoffView, Notice, TabView } from '../model';
+import type { CaptureOutcome, HandoffView, Notice, TabView } from '../model';
 
 /** The handlers a fake bridge collected, so a test can fire an event by hand. */
 export interface FakeEvents {
   handoffChanged?: (id: string) => void;
   sessionsChanged?: () => void;
   notice?: (notice: Notice) => void;
+  captureReady?: (outcome: CaptureOutcome) => void;
 }
 
 /** A bridge whose every method is a spy, with `overrides` applied on top. */
@@ -42,6 +43,15 @@ export function fakeBridge(overrides: Partial<Bridge> = {}): Bridge {
     openUrl: vi.fn(base.openUrl),
     openSecretFile: vi.fn(base.openSecretFile),
     scanTypedText: vi.fn(base.scanTypedText),
+    captureSettings: vi.fn(base.captureSettings),
+    captureFullScreen: vi.fn(base.captureFullScreen),
+    startRegionCapture: vi.fn(base.startRegionCapture),
+    selectionSetup: vi.fn(base.selectionSetup),
+    regionCaptured: vi.fn(base.regionCaptured),
+    cancelRegionCapture: vi.fn(base.cancelRegionCapture),
+    capturePreview: vi.fn(base.capturePreview),
+    discardCapture: vi.fn(base.discardCapture),
+    onCaptureReady: vi.fn(base.onCaptureReady),
     sessionPicker: vi.fn(base.sessionPicker),
     answerSessionPicker: vi.fn(base.answerSessionPicker),
     sessions: vi.fn(base.sessions),
@@ -99,6 +109,10 @@ export function servingBridge(
     }),
     onNotice: vi.fn(async (handler: (notice: Notice) => void): Promise<Unlisten> => {
       events.notice = handler;
+      return () => {};
+    }),
+    onCaptureReady: vi.fn(async (handler: (outcome: CaptureOutcome) => void): Promise<Unlisten> => {
+      events.captureReady = handler;
       return () => {};
     }),
   });

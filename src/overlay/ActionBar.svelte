@@ -10,9 +10,8 @@
   the store refuses an action a state does not offer, and §7.4 calls a button that produces
   that refusal a defect of the view.
 
-  Screenshot is drawn and disabled: the capture pipeline is T-046 to T-049, and a button that
-  disappears and reappears between versions is harder to learn than one that says why it
-  cannot be pressed yet.
+  Screenshot is a component of its own, because pressing it opens the two choices of CAP-01
+  rather than doing anything, and the collapsed bar offers exactly the same popover.
 
   Done keeps its label on the last step and changes what it sends: GUIDE-01 gives the user
   one button to advance with, and RESP-09 makes the last press the end of the round rather
@@ -22,6 +21,7 @@
 <script lang="ts">
   import { t } from '../i18n';
   import type { ActionName, ActionsView } from '../model';
+  import ScreenshotButton from './ScreenshotButton.svelte';
 
   const {
     actions,
@@ -54,14 +54,9 @@
   {#if actions.skip}
     <button type="button" class="button" onclick={() => onact('skip')}>{t('action.skip')}</button>
   {/if}
-  <button
-    type="button"
-    class="button"
-    disabled={!actions.screenshot}
-    title={actions.screenshot ? undefined : t('action.screenshotSoon')}
-  >
-    {t('action.screenshot')}
-  </button>
+  {#if actions.screenshot}
+    <ScreenshotButton />
+  {/if}
   {#if actions.defer}
     <button type="button" class="button" onclick={() => onact('defer')}>{t('action.defer')}</button>
   {/if}

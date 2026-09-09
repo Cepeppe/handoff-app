@@ -25,6 +25,8 @@ import type { Language } from './i18n';
 import type {
   ActionName,
   AgentStatus,
+  CaptureOutcome,
+  CaptureSettings,
   ConsentView,
   CrashNotice,
   GeneralSettings,
@@ -39,6 +41,8 @@ import type {
   RunbookEntryView,
   ScanReport,
   Scope,
+  Selection,
+  SelectionSetup,
   SessionChoice,
   ShortcutStatus,
   TabView,
@@ -71,6 +75,14 @@ export const EVENT_SESSIONS_CHANGED = 'sessions_changed';
 
 /** One sentence for the user, already in their language. */
 export const EVENT_NOTICE = 'notice';
+
+/**
+ * A capture is ready to be previewed, or could not be taken (§7.8, FM-17).
+ *
+ * Spelled in `ui_bridge/capture.rs` as `EVENT_CAPTURE_READY`; a Rust test reads this file to
+ * keep the two together.
+ */
+export const EVENT_CAPTURE_READY = 'ui://capture-ready';
 
 /** Stops delivering an event to the handler that returned it. */
 export type Unlisten = () => void;
@@ -163,6 +175,33 @@ export interface Bridge {
 
   /** Runs the certain detector over typed text, before it can be sent (§7.10). */
   scanTypedText(text: string): Promise<Redacted>;
+
+  /** The choice the two-option popover highlights, from the last capture (CAP-01). */
+  captureSettings(): Promise<CaptureSettings>;
+
+  /** Captures the monitor the cursor is on (CAP-02). The outcome arrives as an event. */
+  captureFullScreen(): Promise<void>;
+
+  /** Opens one transparent selection overlay per monitor (CAP-02, DD-29). */
+  startRegionCapture(): Promise<void>;
+
+  /** What the selection overlay this window is covers. Only a selection overlay may ask. */
+  selectionSetup(): Promise<SelectionSetup>;
+
+  /** The drag is over: close the overlays and crop what it framed. */
+  regionCaptured(selection: Selection): Promise<void>;
+
+  /** Esc, or a drag with no area: no capture, and the panel comes back. */
+  cancelRegionCapture(): Promise<void>;
+
+  /** The PNG of the capture waiting to be shown. Raw bytes, never base64. */
+  capturePreview(): Promise<ArrayBuffer>;
+
+  /** Drops the pixels the preview was showing (PRIN-04). */
+  discardCapture(): Promise<void>;
+
+  /** A capture ended, one way or another (§7.8, FM-17). */
+  onCaptureReady(handler: (outcome: CaptureOutcome) => void): Promise<Unlisten>;
 
   /**
    * The "which session is this?" question, when a Stop hook left one (FM-22, SRV-18).
@@ -317,6 +356,23 @@ export function inTauri(): boolean {
 }
 
 /** The real bridge: `invoke` and `listen` against the running application. */
+/**
+ * A raw IPC answer as bytes.
+ *
+ * Tauri delivers a `tauri::ipc::Response` as an `ArrayBuffer`; a runtime that has not
+ * negotiated that — a webview older than the one we ship, a mock — sends the same bytes as
+ * an array of numbers. Both are accepted, because the alternative to accepting the second
+ * is an image that silently does not appear.
+ */
+function bufferOf(answer: ArrayBuffer | number[]): ArrayBuffer {
+  if (answer instanceof ArrayBuffer) {
+    return answer;
+  }
+  const bytes = new Uint8Array(answer.length);
+  bytes.set(answer);
+  return bytes.buffer;
+}
+
 export function tauriBridge(): Bridge {
   return {
     async resizeToContent(height) {
@@ -384,6 +440,36 @@ export function tauriBridge(): Bridge {
     },
     async scanTypedText(text) {
       return invoke<Redacted>('scan_typed_text', { text });
+    },
+    async captureSettings() {
+      return invoke<CaptureSettings>('capture_settings');
+    },
+    async captureFullScreen() {
+      await invoke('capture_full_screen');
+    },
+    async startRegionCapture() {
+      await invoke('start_region_capture');
+    },
+    async selectionSetup() {
+      return invoke<SelectionSetup>('selection_setup');
+    },
+    async regionCaptured(selection) {
+      await invoke('region_captured', { selection });
+    },
+    async cancelRegionCapture() {
+      await invoke('cancel_region_capture');
+    },
+    async capturePreview() {
+      // The Rust side answers with a raw IPC response, which arrives here as an
+      // `ArrayBuffer`: a few megabytes of PNG as a JSON array of numbers would be an order
+      // of magnitude larger and would be parsed twice.
+      return bufferOf(await invoke<ArrayBuffer | number[]>('capture_preview'));
+    },
+    async discardCapture() {
+      await invoke('discard_capture');
+    },
+    async onCaptureReady(handler) {
+      return listen<CaptureOutcome>(EVENT_CAPTURE_READY, (event) => handler(event.payload));
     },
     async sessionPicker() {
       return invoke<SessionChoice[]>('session_picker');
@@ -533,6 +619,27 @@ export function noopBridge(): Bridge {
       // shows it unchanged.
       return { text, kinds: [] };
     },
+    async captureSettings() {
+      // Nothing was ever captured here, so neither choice is the last one and the popover
+      // highlights nothing (CAP-01).
+      return { lastChoice: null };
+    },
+    async captureFullScreen() {},
+    async startRegionCapture() {},
+    async selectionSetup() {
+      // A browser is one screen at its own scale, which is the honest answer for a preview
+      // of the selection overlay opened outside Tauri.
+      return { monitor: 1, scaleFactor: 1 };
+    },
+    async regionCaptured() {},
+    async cancelRegionCapture() {},
+    async capturePreview() {
+      // Answering with an empty image would be a claim this side cannot make; the preview
+      // shows its failure instead.
+      throw new Error('no capture');
+    },
+    async discardCapture() {},
+    onCaptureReady: unlisten,
     async sessionPicker() {
       return [];
     },

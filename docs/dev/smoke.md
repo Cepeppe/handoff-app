@@ -321,6 +321,72 @@ printf 'x' > src-tauri/target/debug/handoff-mcp.9.9.9.old.exe
 The log says `INFO handoff_app_lib: superseded server binaries were deleted count=1`, the
 file is gone, and `handoff-mcp.exe` beside it is untouched.
 
+## A live handoff without an agent
+
+The three runs above need Claude Code, which is the point of a smoke run. A walk through
+something the *user* does — the capture flow of §7.8, an action sheet, a banner — needs a
+guided handoff on screen and nothing else, and starting an agent for that is minutes of
+tokens for a tab. Any process that speaks the channel can open one: it is `hello` with the
+token, then `handoff.open` with a spec.
+
+```js
+// open-handoff.mjs <pipe name from the app log>
+import net from 'node:net';
+import fs from 'node:fs';
+const token = fs.readFileSync(process.env.TEMP + '/baton-t042/home/channel.token', 'utf8').trim();
+const socket = net.connect({ path: process.argv[2] });
+let buffer = '', nextId = 1;
+const pending = new Map();
+// The framing of §6.1, built rather than written: a line feed in a code fence of this file
+// is one backslash away from being a real newline, and three tasks have lost one that way.
+const NDJSON = String.fromCharCode(10);
+const send = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++;
+  pending.set(id, { resolve, reject });
+  socket.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + NDJSON);
+});
+socket.on('data', (chunk) => {
+  buffer += chunk;
+  for (let at; (at = buffer.indexOf(NDJSON)) !== -1; ) {
+    const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    if (m.method === 'ping') socket.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: {} }) + NDJSON);
+    else if (m.id !== undefined && !m.method) { pending.get(m.id)?.resolve(m.result); pending.delete(m.id); }
+  }
+});
+socket.on('connect', async () => {
+  await send('hello', {
+    protocol_version: 1, token, role: 'server', server_version: '0.2.0',
+    identity: { pid: process.pid, ppid: 1, ancestors: [{ pid: 1, name: 'pwsh' }], cwd: '.', project_dir: '.' },
+    agent_id: 'claude-code', client: { name: 'claude-code', version: '2.1.266' },
+    capability_row: { agent_id: 'claude-code', display_name: 'Claude Code', support: 'full',
+                      images_in_results: true, stop_hook: true, tool_timeout_ms: 1800000 },
+  });
+  console.log(await send('handoff.open', {
+    call_id: 'call_2q7m8r1t',
+    spec: { spec_version: 1, goal: 'Read the numbers on the screen', where: 'The terminal',
+            why_human: 'Only a person can look at the screen.', values: {},
+            steps: [{ text: 'Look at the screen.' }, { text: 'Confirm when you are done.' }], lang: 'en' },
+    secret_treated: [], request_id: null,
+  }));
+});
+```
+
+Keep the process alive: it answers the app's pings, and the handoff has a call attached for
+as long as it is connected — which is what makes the tab *Guiding* rather than "the agent
+will pick it up at its next resume".
+
+Three things the channel schema refuses, each of which closes the connection with
+`the channel peer sent a message the schema refuses` and nothing else:
+
+- a `call_id` that is not `call_` plus **eight** characters of `[0-9a-hjkmnp-tv-z]`;
+- a spec without `values` — it is required even when it is empty (§4.2);
+- any field the spec schema does not name: it is closed (`additionalProperties: false`).
+
+The pipe name is in the app's own log (`the channel is listening endpoint=\\.\pipe\handoff-…`);
+deriving it again is a second implementation of §5.8 and a way to be wrong.
+
 ## Cleaning up
 
 ```powershell
@@ -367,3 +433,9 @@ Each of these cost a run the first time.
   commands photograph two different things. Use `click2.ps1` and `expand-shot.ps1`.
 - **A window position is remembered per monitor** (WIN-02), so the panel does not always
   come back where you last saw it. Take a full screenshot before the first click of a walk.
+- **Pace a synthetic drag over the selection overlay** (§7.8). A burst of `SetCursorPos`
+  calls 50 ms apart produced one crop that did not match the rectangle asked for, and a
+  paced one — 200 ms between the press, the moves and the release — was exact every time.
+  The overlay draws the size in the pixels the image will have, from the same numbers the
+  crop is made of, so photograph the rectangle **before** releasing and read the label: it
+  is the only place the drag can be checked while it is still cancellable.

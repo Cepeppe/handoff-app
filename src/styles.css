@@ -1073,3 +1073,150 @@ body {
   display: flex;
   gap: 4px;
 }
+
+/*
+  The Screenshot button and its two choices (CAP-01).
+
+  The popover is positioned against the button rather than the window, so it opens where
+  the finger already is in both the action bar and the collapsed bar. `aria-current` marks
+  the last choice: highlighted, never fired.
+*/
+.screenshot {
+  position: relative;
+  display: inline-flex;
+}
+
+.screenshot-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 50%));
+}
+
+.screenshot-choice {
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.screenshot-choice:hover,
+.screenshot-choice:focus-visible {
+  background: var(--surface);
+}
+
+.screenshot-choice[aria-current='true'] {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/*
+  The region-selection overlay (§7.8, DD-29).
+
+  One of these covers each monitor for the length of a drag. The window is transparent, so
+  the body must be as well — every other window this bundle serves is the opaque panel.
+*/
+body.selection-window {
+  background: transparent;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.selection {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.selection-dim,
+.selection-rect {
+  --selection-dim: rgb(0 0 0 / 35%);
+}
+
+.selection-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--selection-dim);
+}
+
+.selection-hint {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  margin: 0;
+  padding: 6px 12px;
+  color: #ffffff;
+  background: rgb(0 0 0 / 55%);
+  border-radius: 6px;
+  transform: translateX(-50%);
+}
+
+/*
+  The framed rectangle is a hole rather than four panes: the spread shadow dims everything
+  around it in one element, so there is no seam and no arithmetic to get wrong.
+*/
+.selection-rect {
+  position: absolute;
+  outline: 1px solid #ffffff;
+  box-shadow: 0 0 0 100vmax var(--selection-dim);
+}
+
+.selection-size {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  padding: 2px 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  white-space: nowrap;
+  background: rgb(0 0 0 / 65%);
+  border-radius: 4px;
+}
+
+/*
+  The preview of PREV-01. The image is drawn at the panel's width whatever the capture's
+  size; the number of pixels it really has is said in words underneath.
+*/
+.preview-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.preview-size,
+.preview-note,
+.preview-empty {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.preview-problem {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  color: var(--warning);
+  background: var(--warning-surface);
+  border-radius: 4px;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: var(--space);
+}

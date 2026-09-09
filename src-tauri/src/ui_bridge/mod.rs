@@ -37,7 +37,12 @@
 //! T-045 added the last two settings pages the design names: [`log`] is the record of §7.11
 //! with its deletion and its export (LOG-04), and [`runbooks`] is the folder of §7.12 with
 //! the update proposals of RUN-09.
+//!
+//! T-046 added [`capture`]: the two-choice popover of CAP-01, the panel hiding itself for
+//! the length of a shot (CAP-03) and the transparent selection overlays of DD-29 — one
+//! window per monitor, alive only for the drag.
 
+pub mod capture;
 pub mod commands;
 pub mod crash;
 pub mod events;
@@ -152,6 +157,7 @@ pub struct Ui {
     shortcut: shortcut::State,
     db: Mutex<Option<Db>>,
     wide: AtomicBool,
+    capture: capture::State,
 }
 
 impl Ui {
@@ -213,6 +219,11 @@ impl Ui {
     /// The global shortcut in force, and whether the system accepted it (OPEN-03, FM-18).
     pub fn shortcut(&self) -> &shortcut::State {
         &self.shortcut
+    }
+
+    /// The capture waiting for the preview, and whether a selection is on screen (§7.8).
+    pub fn capture(&self) -> &capture::State {
+        &self.capture
     }
 
     /// Runs `read` against the window's connection, or answers `None` when there is none.
@@ -310,7 +321,15 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 ///   written, because a drag has certainly finished by then.
 /// - **Moved** is remembered in memory, per monitor, and written later (`window::Geometry`
 ///   says why not here).
+///
+/// It is registered for **every** window, and the three rules are the panel's alone: a
+/// selection overlay of §7.8 must be closable, must not be hidden instead of destroyed, and
+/// has no remembered position of its own. So the handler answers for the main window and
+/// leaves anything else to Tauri's defaults.
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
+    if window.label() != MAIN_WINDOW {
+        return;
+    }
     let app = window.app_handle();
     let ui = app.state::<Ui>();
     match event {

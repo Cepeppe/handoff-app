@@ -33,7 +33,7 @@ const ACTIONS: ActionsView = {
   skip: true,
   defer: true,
   abandon: true,
-  screenshot: false,
+  screenshot: true,
   resume: false,
   closeOrphan: false,
 };

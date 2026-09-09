@@ -20,11 +20,11 @@ path = "src/main.rs"
 [features]
 default = []
 # The e2e automation channel of DD-33 (a second token-protected socket that plays the
-# user). Empty here: it is built with T-043, once there is a UI to drive. Release builds
-# never enable it, and CI asserts the symbols are absent.
-e2e = []
+# user). Release builds never enable it, and CI asserts the symbols are absent. It pulls
+# `fake-capture` in with it: a harness with nobody at the keyboard cannot drag a rectangle
+# across the screen, so every e2e capture comes from a fixture (§7.8).
+e2e = ["fake-capture"]
 # A capture backend that returns a fixture image instead of touching the screen (§7.8).
-# Empty here; filled by T-046.
 fake-capture = []
 # The v2 extension point of §12.2: writing secrets into `.env`-style files. Off in every
 # v1 build, and the module it gates is empty on purpose.
@@ -43,6 +43,12 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 # document order (§5.5), which a sorted or hashed map would lose. It is already in the tree
 # as the map `serde_json/preserve_order` uses.
 indexmap = { version = "2.14", features = ["serde"] }
+# The RGBA buffer every capture is, and the PNG the preview draws (§7.8, CAP-05). Only the
+# PNG codec: `default-features` would bring AVIF, TIFF, WebP and a dozen others, none of
+# which this application ever reads or writes, and `rayon` with them. The version is pinned
+# to the one `xcap` resolves, because `RgbaImage` crosses the boundary between them and two
+# copies of `image` in the tree would be two incompatible types with the same name.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 # Draft 2020-12 validation of the vendored schemas. `default-features = false` is
 # load-bearing: the defaults enable `resolve-http`, which pulls `reqwest` — banned outright
 # by `deny.toml` and by `clippy.toml` while the app makes zero network connections (§7.13).
@@ -86,6 +92,12 @@ trash = { version = "5.2.4", default-features = false, features = [
 # NFKC, the first step of both normalisations of the matching rule (§4.5.3). The server
 # gets it from `String.prototype.normalize`; this is the same algorithm.
 unicode-normalization = { version = "0.1.25", default-features = false }
+# The screen capture of §7.8 (A-25): the monitor list with its geometry and scale factors,
+# and the pixels of one monitor. Default features only — the `image` feature would turn
+# `image`'s own defaults back on (it is spelled `image/default`), and `wgc` swaps the GDI
+# path for Windows.Graphics.Capture, which draws the yellow "recording" border around every
+# monitor it touches.
+xcap = { version = "0.9.8", default-features = false }
 
 [dev-dependencies]
 # The property suite of the store (§11.2, T-033): random sequences of user and agent actions

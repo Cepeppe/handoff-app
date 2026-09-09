@@ -168,10 +168,52 @@ export interface ActionsView {
   skip: boolean;
   defer: boolean;
   abandon: boolean;
-  /** False until the capture pipeline exists; the button is drawn disabled (T-049). */
+  /** Offered on a handoff being guided: the capture ends in the preview (§7.8). */
   screenshot: boolean;
   resume: boolean;
   closeOrphan: boolean;
+}
+
+/** Which of the two the Screenshot button offers (CAP-01). */
+export type CaptureChoice = 'fullScreen' | 'region';
+
+/** What the two-choice popover needs to draw itself: the choice to highlight. */
+export interface CaptureSettings {
+  /** `null` on a machine that has never taken a screenshot. */
+  lastChoice: CaptureChoice | null;
+}
+
+/**
+ * How a press of the Screenshot button ended (§7.8, FM-17).
+ *
+ * It arrives as an event rather than as the answer to the command, because a region
+ * selection is finished by a window that is destroyed while the capture is being taken.
+ */
+export type CaptureOutcome =
+  | { status: 'ready'; width: number; height: number; monitor: number }
+  | { status: 'denied' }
+  | { status: 'failed'; message: string };
+
+/** What one selection overlay knows about itself (DD-29). */
+export interface SelectionSetup {
+  /** The monitor this window covers, which travels back with the drag. */
+  monitor: number;
+  /** Physical pixels per CSS pixel, for the size label. */
+  scaleFactor: number;
+}
+
+/** A rectangle in the CSS pixels of the overlay it was dragged on. */
+export interface LogicalRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** What the user dragged, and on which monitor's overlay (CAP-02). */
+export interface Selection {
+  monitor: number;
+  rect: LogicalRect;
 }
 
 /** The request a handoff answers, when the link is not the id itself (OPEN-08, FM-20). */

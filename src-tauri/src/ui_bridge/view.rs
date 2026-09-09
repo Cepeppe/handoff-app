@@ -862,8 +862,11 @@ fn actions_of(snapshot: &HandoffSnapshot) -> ActionsView {
             HandoffState::Active | HandoffState::Deferred
         ),
         abandon: !is_final,
-        // TASK: T-049 — the preview sends the screenshot, and this becomes `active`.
-        screenshot: false,
+        // The capture itself is T-046 and the send path is T-049, so the button opens the
+        // two-choice popover and ends in the preview; what the preview cannot do yet is
+        // send. It is offered on the same states as Ask and Note, because a screenshot is
+        // an interrupting action on a handoff being guided (§7.4) and on nothing else.
+        screenshot: active,
         resume: matches!(
             snapshot.state,
             HandoffState::Deferred | HandoffState::Parked
@@ -1307,12 +1310,19 @@ mod tests {
         let actions = view(&it).actions;
         assert!(actions.done && actions.ask && actions.note && actions.skip);
         assert!(actions.defer && actions.abandon);
-        assert!(!actions.screenshot, "the capture pipeline is not built yet");
+        assert!(
+            actions.screenshot,
+            "a screenshot interrupts a handoff being guided, like Ask"
+        );
         assert!(!actions.resume && !actions.close_orphan);
 
         it.state = HandoffState::Deferred;
         let actions = view(&it).actions;
         assert!(!actions.done && !actions.ask && !actions.note && !actions.skip);
+        assert!(
+            !actions.screenshot,
+            "there is nobody to send a screenshot to while it is deferred"
+        );
         assert!(actions.defer, "a deferred handoff may be deferred again");
         assert!(actions.abandon && actions.resume);
 

@@ -81,6 +81,17 @@ const REGISTRY: &[Timer] = &[
                      (§6.2). A bound on one read, not a wake-up.",
     },
     Timer {
+        file: "src/ui_bridge/capture.rs",
+        call: "tokio::time::sleep",
+        count: 2,
+        armed_when: "a capture is being taken and the overlay has just been asked to hide \
+                     itself (CAP-03). `hide()` returns as soon as the request is posted, so \
+                     the shot has to wait for the frame that actually removes the window — \
+                     once for a full-screen capture, once after the selection overlays are \
+                     destroyed. Both are armed by a press of the Screenshot button and both \
+                     are one wait of 160 ms; nothing arms either at rest.",
+    },
+    Timer {
         file: "src/e2e/server.rs",
         call: "tokio::time::sleep",
         count: 1,

@@ -17,6 +17,7 @@
 <script lang="ts">
   import { t } from '../i18n';
   import type { ActionName, HandoffView } from '../model';
+  import ScreenshotButton from './ScreenshotButton.svelte';
   import { expand } from './collapse.svelte';
 
   const {
@@ -62,13 +63,8 @@
     {#if view.actions.ask}
       <button type="button" class="button" onclick={() => act('ask')}>{t('action.ask')}</button>
     {/if}
-    <button
-      type="button"
-      class="button"
-      disabled={!view.actions.screenshot}
-      title={view.actions.screenshot ? undefined : t('action.screenshotSoon')}
-    >
-      {t('action.screenshot')}
-    </button>
+    {#if view.actions.screenshot}
+      <ScreenshotButton onchoose={() => expand()} />
+    {/if}
   </div>
 </div>

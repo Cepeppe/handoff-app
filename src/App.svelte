@@ -27,6 +27,7 @@
   import { onMount } from 'svelte';
 
   import { bridge } from './bridge';
+  import { captureFinished } from './capture.svelte';
   import { t } from './i18n';
   import type { ActionName } from './model';
   import CollapsedBar from './overlay/CollapsedBar.svelte';
@@ -166,6 +167,13 @@
 
     // §7.2: the scan and the path check, once per launch.
     void checkAtLaunch();
+
+    // §7.8: a capture ended. It arrives as an event and not as the answer to the command,
+    // because a region selection is finished by an overlay window that is destroyed while
+    // the pixels are being taken.
+    void bridge()
+      .onCaptureReady((outcome) => void captureFinished(outcome))
+      .then((unlisten) => stopping.push(unlisten));
 
     // WIN-03: clicking elsewhere collapses the panel, clicking back on it expands it. The
     // Rust side is where Tauri reports the focus, so the fact arrives as an event.

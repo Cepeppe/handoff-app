@@ -26,7 +26,7 @@ const ACTIONS: ActionsView = {
   skip: true,
   defer: true,
   abandon: true,
-  screenshot: false,
+  screenshot: true,
   resume: false,
   closeOrphan: false,
 };
@@ -291,11 +291,17 @@ describe('the overlay', () => {
     await waitFor(() => expect(bridge.act).toHaveBeenCalledWith(ID, 'defer', ''));
   });
 
-  it('draws Screenshot disabled, with a tooltip that says why', async () => {
-    await open();
-    const button = screen.getByRole('button', { name: 'Screenshot' });
-    expect(button.hasAttribute('disabled')).toBe(true);
-    expect(button.getAttribute('title')).toBe('Screenshots are not built yet.');
+  it('offers Screenshot, and pressing it asks which capture rather than taking one', async () => {
+    // CAP-01: the button never starts a capture by itself. The choices appear and the
+    // user picks; the popover test in `capture.test.ts` covers the highlight.
+    const bridge = await open();
+
+    screen.getByRole('button', { name: 'Screenshot' }).click();
+    await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
+    expect(screen.getByRole('menuitem', { name: 'Full screen' })).toBeDefined();
+    expect(screen.getByRole('menuitem', { name: 'Select region' })).toBeDefined();
+    expect(bridge.captureFullScreen).not.toHaveBeenCalled();
+    expect(bridge.startRegionCapture).not.toHaveBeenCalled();
   });
 
   it('draws only the buttons the state offers (§8.4)', async () => {

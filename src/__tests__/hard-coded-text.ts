@@ -81,6 +81,7 @@ export const SYMBOL_ATTRIBUTES: ReadonlySet<string> = new Set([
   'open',
   'aria-current',
   'aria-expanded',
+  'aria-haspopup',
   'aria-hidden',
   'aria-live',
   'aria-atomic',
