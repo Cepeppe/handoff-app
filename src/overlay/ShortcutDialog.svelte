@@ -8,15 +8,15 @@
   launch is a dialog people learn to close without reading. `New request` in the tray menu
   works throughout.
 
-  The recorder is the input: the user presses the combination and the modifiers and the key
-  are read from the keyboard event, in the accelerator syntax the plugin parses
-  (`Control+Alt+H`). A modifier on its own is not a combination, so it is shown and not
-  accepted until a real key arrives. Whether the new one is free is the system's answer, not
-  ours: `setShortcut` rejects with the reason and the dialog stays open.
+  The recording itself is `ShortcutRecorder`, shared with the **Change** control of the
+  General settings page: what this screen adds is the explanation, and a second button that
+  puts the question away for good rather than merely closing a control.
 -->
 <script lang="ts">
   import { bridge } from '../bridge';
   import { t } from '../i18n';
+
+  import ShortcutRecorder from './ShortcutRecorder.svelte';
 
   const {
     accelerator,
@@ -28,72 +28,6 @@
     ondone: () => void;
   } = $props();
 
-  let recorded = $state<string | null>(null);
-  let problem = $state<string | null>(null);
-
-  /** The keys that are only ever part of a combination. */
-  const MODIFIER_KEYS: ReadonlySet<string> = new Set([
-    'Control',
-    'Alt',
-    'Shift',
-    'Meta',
-    'AltGraph',
-    'Dead',
-  ]);
-
-  /**
-   * The accelerator a key press describes, or `null` while only modifiers are down.
-   *
-   * `event.code` rather than `event.key`: the plugin's syntax names physical keys (`KeyH`,
-   * `Digit1`, `F5`), and `key` would give `˙` for the very combination OPEN-03 defaults to
-   * on a Mac.
-   */
-  function acceleratorOf(event: KeyboardEvent): string | null {
-    if (MODIFIER_KEYS.has(event.key)) {
-      return null;
-    }
-    const parts: string[] = [];
-    if (event.ctrlKey) {
-      parts.push('Control');
-    }
-    if (event.altKey) {
-      parts.push('Alt');
-    }
-    if (event.shiftKey) {
-      parts.push('Shift');
-    }
-    if (event.metaKey) {
-      parts.push('Super');
-    }
-    if (parts.length === 0) {
-      // A bare key is not a global shortcut: it would swallow that key everywhere.
-      return null;
-    }
-    parts.push(event.code);
-    return parts.join('+');
-  }
-
-  function record(event: KeyboardEvent): void {
-    event.preventDefault();
-    const combination = acceleratorOf(event);
-    if (combination !== null) {
-      recorded = combination;
-      problem = null;
-    }
-  }
-
-  async function save(): Promise<void> {
-    if (recorded === null) {
-      return;
-    }
-    try {
-      await bridge().setShortcut(recorded);
-      ondone();
-    } catch {
-      problem = t('shortcut.failed');
-    }
-  }
-
   async function dismiss(): Promise<void> {
     await bridge().dismissShortcutQuestion();
     ondone();
@@ -104,25 +38,9 @@
   <h2>{t('shortcut.title')}</h2>
   <p class="shortcut-explain">{t('shortcut.explain', { accelerator })}</p>
 
-  <button type="button" class="shortcut-recorder" onkeydown={record}>
-    {recorded ?? t('shortcut.record')}
-  </button>
-
-  {#if problem !== null}
-    <p class="shortcut-problem" role="alert">{problem}</p>
-  {/if}
-
-  <div class="shortcut-actions" role="group" aria-label={t('overlay.actions')}>
-    <button
-      type="button"
-      class="button"
-      disabled={recorded === null}
-      onclick={() => void save()}
-    >
-      {t('shortcut.save')}
-    </button>
-    <button type="button" class="button button-quiet" onclick={() => void dismiss()}>
-      {t('shortcut.dismiss')}
-    </button>
-  </div>
+  <ShortcutRecorder
+    onsaved={ondone}
+    oncancel={() => void dismiss()}
+    cancelLabel={t('shortcut.dismiss')}
+  />
 </section>

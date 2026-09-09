@@ -26,6 +26,7 @@ import type {
   ActionName,
   AgentStatus,
   ConsentView,
+  GeneralSettings,
   HandoffView,
   Notice,
   OnboardingView,
@@ -83,6 +84,28 @@ export interface Bridge {
    */
   setUiLanguage(language: Language): Promise<void>;
 
+  /**
+   * Widens the panel while the settings page is open and narrows it back (§7.6).
+   *
+   * The width is the core's, like the height: only this side knows what the monitor can
+   * show, and WIN-02 fixes the panel's own width for every other view.
+   */
+  setWideLayout(wide: boolean): Promise<void>;
+
+  /** Settings -> General: the language, the login entry, the launch it came from (§7.16). */
+  generalSettings(): Promise<GeneralSettings>;
+
+  /**
+   * Stores the language the user chose, `null` for **System** (APP-02).
+   *
+   * It does not switch the language: the caller resolves what to run in and reports it
+   * through {@link setUiLanguage}, so the window and the tray come from one decision.
+   */
+  setLanguageSetting(language: Language | null): Promise<void>;
+
+  /** Puts Baton in the operating system's login items, or takes it out (APP-01). */
+  setAutostart(enabled: boolean): Promise<void>;
+
   /** Runs `handler` whenever the tray menu asks for a view (Show, New request, Settings). */
   onShowView(handler: (view: ViewName) => void): Promise<Unlisten>;
 
@@ -92,7 +115,7 @@ export interface Bridge {
   /** What the window needs to know about its own behaviour (§7.16, R-10). */
   windowSettings(): Promise<WindowSettings>;
 
-  /** Switches the R-10 fallback collapse on or off. The checkbox for it is T-041. */
+  /** Switches the R-10 fallback collapse on or off (§7.16, the General settings page). */
   setCollapseFallback(enabled: boolean): Promise<void>;
 
   /** The tab strip, oldest handoff first (§7.6, MULTI-01). */
@@ -247,6 +270,18 @@ export function tauriBridge(): Bridge {
     async setUiLanguage(language) {
       await invoke('set_ui_language', { language });
     },
+    async setWideLayout(wide) {
+      await invoke('set_wide_layout', { wide });
+    },
+    async generalSettings() {
+      return invoke<GeneralSettings>('general_settings');
+    },
+    async setLanguageSetting(language) {
+      await invoke('set_language', { language });
+    },
+    async setAutostart(enabled) {
+      await invoke('set_autostart', { enabled });
+    },
     async onShowView(handler) {
       return listen<string>(EVENT_SHOW_VIEW, (event) => {
         // An unknown name is dropped rather than switching the window to nothing: the
@@ -370,6 +405,14 @@ export function noopBridge(): Bridge {
   return {
     async resizeToContent() {},
     async setUiLanguage() {},
+    async setWideLayout() {},
+    async generalSettings() {
+      // Outside the webview there is no settings table and no login items: the language
+      // then comes from the system alone, which is the second step of the §7.16 rule.
+      return { language: null, autostart: false, startedHidden: false };
+    },
+    async setLanguageSetting() {},
+    async setAutostart() {},
     onShowView: unlisten,
     onWindowFocus: unlisten,
     async windowSettings() {

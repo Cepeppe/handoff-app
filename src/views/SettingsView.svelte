@@ -5,21 +5,40 @@
   sections rather than a single page: §7.6 names six, they arrive with the tasks that own
   them, and a container that already lists them keeps each of those to one entry here.
 
-  Agents is the one that exists (T-040). General is T-041, Log is T-045, Runbooks T-044,
+  General (T-041) and Agents (T-040) are the two that exist. Log is T-045, Runbooks T-044,
   Network T-051 and Updates T-078; none of them is drawn as an empty placeholder, because a
   section that says nothing is a section the user has to learn to skip.
+
+  **The panel is wider here and narrower everywhere else** (§7.6: "settings that need more
+  room open the window in a wider layout temporarily"). It is asked for on mount and given
+  back on destroy, so leaving the page by any route — the tab strip, the tray, a handoff
+  arriving — restores the fixed width of WIN-02 without anyone having to remember to.
 -->
 <script lang="ts">
+  import { onDestroy, onMount } from 'svelte';
+
+  import { bridge } from '../bridge';
   import { t } from '../i18n';
   import AgentsSettings from '../settings/AgentsSettings.svelte';
+  import GeneralSettings from '../settings/GeneralSettings.svelte';
 
-  // TASK: T-041 — General joins this list, and the window widens while settings are open.
-  const SECTIONS = [{ name: 'agents', titleKey: 'install.agents', view: AgentsSettings }] as const;
+  const SECTIONS = [
+    { name: 'general', titleKey: 'settings.general', view: GeneralSettings },
+    { name: 'agents', titleKey: 'install.agents', view: AgentsSettings },
+  ] as const;
 
-  let current = $state<(typeof SECTIONS)[number]['name']>('agents');
+  let current = $state<(typeof SECTIONS)[number]['name']>('general');
   const Current = $derived(
-    SECTIONS.find((section) => section.name === current)?.view ?? AgentsSettings,
+    SECTIONS.find((section) => section.name === current)?.view ?? GeneralSettings,
   );
+
+  onMount(() => {
+    void bridge().setWideLayout(true);
+  });
+
+  onDestroy(() => {
+    void bridge().setWideLayout(false);
+  });
 </script>
 
 <section class="view" data-view="settings">

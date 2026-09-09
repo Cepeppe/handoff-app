@@ -30,9 +30,13 @@
 //!
 //! T-040 added [`install`]: onboarding, the consent screen, the Agents settings page and the
 //! two launch checks of §7.2 — the scan of INST-05 and the moved-bundle check of FM-23.
+//!
+//! T-041 added [`general`]: the language, the login entry of APP-01 and the `--hidden` launch
+//! that goes with it, plus the wider layout the settings page opens the panel in (§7.6).
 
 pub mod commands;
 pub mod events;
+pub mod general;
 pub mod install;
 pub mod requests;
 pub mod shortcut;
@@ -40,6 +44,7 @@ mod tray;
 pub mod view;
 pub mod window;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter as _, LogicalSize, Manager as _, Window, WindowEvent};
@@ -81,6 +86,17 @@ pub const EVENT_WINDOW_FOCUS: &str = "ui://window-focus";
 
 /// The fixed width of the panel (WIN-02, §7.6). `tauri.conf.json` declares the same value.
 pub const WINDOW_WIDTH: f64 = 360.0;
+
+/// The width the panel takes while the settings page is open (§7.6).
+///
+/// "Settings that need more room open the window in a wider layout temporarily": the
+/// consent diffs, the configuration paths and the agent rows are lines the user has to
+/// *read*, and at 360 px they wrap into columns of three words. The number is this design's
+/// to choose — §7.6 fixes only the panel's own width — and it is the smallest one that
+/// shows a hook command without wrapping on this machine. It is not remembered anywhere:
+/// leaving the settings page puts the panel back at [`WINDOW_WIDTH`], which is the width
+/// every other view is laid out for.
+pub const SETTINGS_WINDOW_WIDTH: f64 = 520.0;
 
 /// The tab moved on and the button the user pressed is no longer offered (§7.4).
 pub const NOTICE_ACTION_REFUSED: &str = "notice.actionRefused";
@@ -128,6 +144,7 @@ pub struct Ui {
     geometry: window::Geometry,
     shortcut: shortcut::State,
     db: Mutex<Option<Db>>,
+    wide: AtomicBool,
 }
 
 impl Ui {
@@ -167,6 +184,23 @@ impl Ui {
     /// Where the panel is, per monitor (WIN-02).
     pub fn geometry(&self) -> &window::Geometry {
         &self.geometry
+    }
+
+    /// The width the panel should have right now (§7.6).
+    ///
+    /// One of two values, never a remembered one: the fixed width of WIN-02, or the wider
+    /// layout while the settings page is open.
+    pub fn window_width(&self) -> f64 {
+        if self.wide.load(Ordering::Relaxed) {
+            SETTINGS_WINDOW_WIDTH
+        } else {
+            WINDOW_WIDTH
+        }
+    }
+
+    /// Opens or closes the wider layout. The next resize is what the user sees.
+    pub fn set_wide(&self, wide: bool) {
+        self.wide.store(wide, Ordering::Relaxed);
     }
 
     /// The global shortcut in force, and whether the system accepted it (OPEN-03, FM-18).
@@ -234,6 +268,10 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // OPEN-03. After the tray, deliberately: when the combination is taken, `New request`
     // in the menu is the path the user is left with (FM-18), and it exists by now.
     shortcut::install(app);
+
+    // APP-01: the login entry the user answered for in onboarding, put back in the state
+    // they asked for. Nothing is written for a machine that has not been asked yet.
+    general::sync_autostart(app);
 
     // §7.16 keeps the window hidden until there is something to show, and the tray is what
     // brings it back. The two things that open it by themselves are decided by the window
@@ -329,14 +367,47 @@ fn show_view(app: &AppHandle, view: &str) {
     }
 }
 
-/// Gives the window the height the content measured, keeping the fixed width (WIN-02).
+/// Gives the window the height the content measured, keeping the width in force (WIN-02).
 #[tauri::command]
 pub fn resize_to_content(window: Window, height: f64) -> Result<(), String> {
+    let width = window.app_handle().state::<Ui>().window_width();
     let limit = monitor_height(&window);
     let clamped = clamp_height(height, limit);
     window
-        .set_size(LogicalSize::new(WINDOW_WIDTH, clamped))
+        .set_size(LogicalSize::new(width, clamped))
         .map_err(|error| error.to_string())
+}
+
+/// Widens the panel for the settings page, and narrows it back when the page closes (§7.6).
+///
+/// The height is kept as it is: the frontend remeasures its content a moment later and
+/// [`resize_to_content`] applies the new one, so doing it here as well would be one visible
+/// jump more than necessary.
+///
+/// # Errors
+///
+/// The window manager's message when it refuses the size.
+#[tauri::command]
+pub fn set_wide_layout(window: Window, wide: bool) -> Result<(), String> {
+    let ui = window.app_handle().state::<Ui>();
+    ui.set_wide(wide);
+    let width = ui.window_width();
+    window
+        .set_size(LogicalSize::new(width, current_logical_height(&window)))
+        .map_err(|error| error.to_string())
+}
+
+/// How tall the window is now, in the logical units [`LogicalSize`] takes.
+fn current_logical_height(window: &Window) -> f64 {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    window
+        .outer_size()
+        .map_or(MIN_WINDOW_HEIGHT, |size| f64::from(size.height) / scale)
 }
 
 /// Records the language the frontend resolved and relabels the tray menu (APP-02, §7.16).
@@ -406,6 +477,19 @@ mod tests {
         // configuration creates and the size every resize keeps. They must agree, or the
         // panel would jump the first time the content is measured.
         assert_eq!(main_window_config()["width"].as_f64(), Some(WINDOW_WIDTH));
+    }
+
+    #[test]
+    fn the_settings_layout_is_wider_than_the_panel_and_the_panel_is_the_default() {
+        // §7.6: the wider layout is temporary, so a fresh `Ui` is at the fixed width of
+        // WIN-02 and going back to it is what closing the settings page does.
+        let ui = Ui::default();
+        assert_eq!(ui.window_width(), WINDOW_WIDTH);
+        ui.set_wide(true);
+        assert_eq!(ui.window_width(), SETTINGS_WINDOW_WIDTH);
+        ui.set_wide(false);
+        assert_eq!(ui.window_width(), WINDOW_WIDTH);
+        const { assert!(SETTINGS_WINDOW_WIDTH > WINDOW_WIDTH) };
     }
 
     #[test]

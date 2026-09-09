@@ -14,6 +14,7 @@
  *   does not have, and §7.4 calls that a defect of the view: a component that draws a
  *   button `actions` says nothing about is that defect.
  */
+import type { Language } from './i18n';
 
 /** The row of §8.4 a tab is on. */
 export type UiState =
@@ -273,6 +274,21 @@ export interface WindowSettings {
   collapseFallback: boolean;
   /** How long after the last interaction it fires, in milliseconds. */
   collapseFallbackMs: number;
+}
+
+/**
+ * Settings -> General, as `ui_bridge::general` answers it (§7.16, APP-01, APP-02).
+ *
+ * `language` is `null` for **System**: the absence of a setting, not a third language, so a
+ * machine that changes its system language follows it afterwards. `autostart` is the login
+ * entry that is actually in place and not the answer once given, because the user can also
+ * remove it from the system's own screens.
+ */
+export interface GeneralSettings {
+  language: Language | null;
+  autostart: boolean;
+  /** Whether this launch came from the login entry, and must leave the panel in the tray. */
+  startedHidden: boolean;
 }
 
 /**

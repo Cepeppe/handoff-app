@@ -24,6 +24,10 @@ export function fakeBridge(overrides: Partial<Bridge> = {}): Bridge {
   const spied: Bridge = {
     resizeToContent: vi.fn(base.resizeToContent),
     setUiLanguage: vi.fn(base.setUiLanguage),
+    setWideLayout: vi.fn(base.setWideLayout),
+    generalSettings: vi.fn(base.generalSettings),
+    setLanguageSetting: vi.fn(base.setLanguageSetting),
+    setAutostart: vi.fn(base.setAutostart),
     onShowView: vi.fn(base.onShowView),
     onWindowFocus: vi.fn(base.onWindowFocus),
     windowSettings: vi.fn(base.windowSettings),

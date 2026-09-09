@@ -123,17 +123,32 @@
    *   why; the Agents page names both paths and repairs them in one press.
    * - **A newly found agent gets one discreet notice** (INST-05), and only that: it is news,
    *   not a problem, and the window is not taken away from whatever it was showing.
+   *
+   * **A launch from the login entry opens nothing** (APP-01, `--hidden`). Baton "stays in the
+   * background doing nothing until an agent asks for a handoff", and a panel that appears
+   * while somebody is logging in is the opposite of that promise. The view is still switched,
+   * so the first thing they see when they open Baton from the tray is what wanted them.
    */
   async function checkAtLaunch(): Promise<void> {
+    const startedHidden = await bridge()
+      .generalSettings()
+      .then((settings) => settings.startedHidden)
+      .catch(() => false);
+    const raise = async (): Promise<void> => {
+      if (!startedHidden) {
+        await bridge().showWindow();
+      }
+    };
+
     if ((await bridge().onboarding()).needed) {
-      await bridge().showWindow();
+      await raise();
       showView('onboarding');
       return;
     }
 
     const report = await bridge().scanAgents();
     if (report.moved.length > 0) {
-      await bridge().showWindow();
+      await raise();
       showView('settings');
       return;
     }

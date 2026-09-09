@@ -123,11 +123,20 @@ pub fn run() {
         // registers nothing by itself; `ui_bridge::shortcut` does that from `setup()`, once
         // the settings connection can say whether the user chose another one.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // APP-01: the login entry. The plugin writes nothing by itself either — it is
+        // `ui_bridge::general` that decides, from the answer onboarding stored — and the
+        // entry it writes carries `--hidden`, so a launch at login leaves the panel in the
+        // tray "doing nothing until an agent asks for a handoff".
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![ui_bridge::general::HIDDEN_ARG]),
+        ))
         .manage(ui)
         .manage(ui_bridge::CoreState(core))
         .invoke_handler(tauri::generate_handler![
             ui_bridge::resize_to_content,
             ui_bridge::set_ui_language,
+            ui_bridge::set_wide_layout,
             ui_bridge::commands::list_handoffs,
             ui_bridge::commands::get_handoff_view,
             ui_bridge::commands::act,
@@ -158,7 +167,10 @@ pub fn run() {
             ui_bridge::install::uninstall_agent,
             ui_bridge::install::repair_token,
             ui_bridge::install::pick_project_folder,
-            ui_bridge::install::open_screen_recording_settings
+            ui_bridge::install::open_screen_recording_settings,
+            ui_bridge::general::general_settings,
+            ui_bridge::general::set_language,
+            ui_bridge::general::set_autostart
         ])
         // WIN-02, WIN-03, WIN-04: the close button hides the window to the tray, the focus
         // change is what the panel collapses on, and a move is remembered per monitor.

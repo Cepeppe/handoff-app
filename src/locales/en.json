@@ -176,5 +176,18 @@
   "install.removed": "Baton was removed from {agent}.",
   "install.failed": "That did not work: {reason}",
   "install.newAgent": "Baton found {agent}. Register it in Settings → Agents.",
-  "install.moved": "Baton has moved. Repair the registration so your agents can find it again."
+  "install.moved": "Baton has moved. Repair the registration so your agents can find it again.",
+  "settings.general": "General",
+  "settings.language": "Language",
+  "settings.languageSystem": "System",
+  "settings.languageEn": "English",
+  "settings.languageIt": "Italiano",
+  "settings.startup": "Startup",
+  "settings.shortcut": "Shortcut",
+  "settings.shortcutInForce": "In force: {accelerator}",
+  "settings.shortcutRefused": "Another application holds it, so Baton did not take it.",
+  "settings.shortcutChange": "Change",
+  "settings.panel": "Panel",
+  "settings.collapseFallback": "Also shrink the panel a few seconds after the last click",
+  "settings.collapseFallbackText": "The panel shrinks to one line as soon as you click elsewhere. Switch this on if it stays open when it should not."
 }

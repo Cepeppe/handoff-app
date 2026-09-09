@@ -18,11 +18,9 @@
 //!
 //! # What is not here
 //!
-//! The autostart *wiring* (T-041): onboarding asks the question of APP-01 and stores the
-//! answer, and the plugin is switched on by the General settings page. The macOS
-//! screen-recording *permission call* (T-059): onboarding explains it and opens the settings
-//! pane, which is what CAP-04 asks for — the prompt itself needs a restart and must never
-//! appear mid-handoff (FM-17).
+//! The macOS screen-recording *permission call* (T-059): onboarding explains it and opens
+//! the settings pane, which is what CAP-04 asks for — the prompt itself needs a restart and
+//! must never appear mid-handoff (FM-17).
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
@@ -40,8 +38,10 @@ pub const ONBOARDED_KEY: &str = "onboarded";
 
 /// The setting holding the answer to the autostart checkbox of APP-01.
 ///
-/// Written by onboarding, read by the General settings page and by the autostart wiring of
-/// T-041. On by default, which is what the pre-checked box means.
+/// Written by onboarding and by the General settings page, read at every launch by
+/// [`super::general::sync_autostart`]. On by default, which is what the pre-checked box
+/// means; until the box is answered there is no row and nothing is written to the user's
+/// login items.
 pub const AUTOSTART_KEY: &str = "autostart";
 
 /// Welcome (§7.6).
@@ -184,10 +184,16 @@ pub fn onboarding(app: AppHandle) -> OnboardingView {
     }
 }
 
-/// Onboarding is over: remember it, and remember the autostart answer (APP-01).
+/// Onboarding is over: remember it, and act on the autostart answer (APP-01).
 ///
 /// The agents found now are recorded as known, so the agent the user has just been shown does
 /// not come back as a discovery at the next launch (INST-05).
+///
+/// The login entry is written here and not at the next launch, because the checkbox is the
+/// moment the user answered: a machine that is never restarted would otherwise never get the
+/// entry it was promised. A platform that refuses to write it is a warning and not a refusal
+/// of the whole step — the answer is stored either way, the General settings page shows what
+/// is actually in place, and onboarding is not the screen on which to argue about it.
 ///
 /// # Errors
 ///
@@ -197,6 +203,10 @@ pub fn finish_onboarding(app: AppHandle, autostart: bool) -> Result<(), String> 
     let known = install::scan(&Scope::User)
         .map(|statuses| scan::record_known(&statuses, &[]))
         .unwrap_or_default();
+
+    if let Err(error) = super::general::apply_autostart(&app, autostart) {
+        tracing::warn!(error, autostart, "the login entry could not be written");
+    }
 
     let written = app.state::<super::Ui>().with_db(|db| {
         settings::set(db, AUTOSTART_KEY, &autostart)?;
