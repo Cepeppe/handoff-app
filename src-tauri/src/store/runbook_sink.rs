@@ -48,6 +48,19 @@ pub trait RunbookSink: Send {
         handoff: &Handoff,
         final_state: FinalState,
     ) -> Option<RunbookProposal>;
+
+    /// The user accepted a proposal: rewrite the file it names (RUN-09, §7.12 row 3).
+    ///
+    /// The one method of this trait that reports its failure, and it has to: the store
+    /// clears the question only when the file was written, so a proposal the disk refused
+    /// is still on screen and still answerable. The message is the writer's own, for the
+    /// window to show.
+    ///
+    /// # Errors
+    ///
+    /// Whatever stopped the write: the document did not validate, the certain detector
+    /// matched it, or the file could not be replaced. Nothing is written in the first two.
+    fn accept(&self, proposal: &RunbookProposal) -> std::result::Result<(), String>;
 }
 
 /// The sink of a store nobody is writing runbooks for: every test that is not about
@@ -63,6 +76,13 @@ impl RunbookSink for NoRunbookSink {
         _final_state: FinalState,
     ) -> Option<RunbookProposal> {
         None
+    }
+
+    fn accept(&self, _proposal: &RunbookProposal) -> std::result::Result<(), String> {
+        // A store with no writer behind it makes no proposals either, so this is only
+        // reachable from a `state_json` written by a run that had one. Saying so beats
+        // reporting a success nobody performed.
+        Err("this store writes no runbooks".to_owned())
     }
 }
 
@@ -123,7 +143,7 @@ impl Requests for NoRequests {
 
 #[cfg(test)]
 pub(crate) mod testing {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -132,6 +152,10 @@ pub(crate) mod testing {
     #[derive(Debug, Default)]
     pub(crate) struct RecordingSink {
         pub(crate) finalised: Mutex<Vec<(String, FinalState)>>,
+        /// The runbook ids of the proposals the user accepted.
+        pub(crate) accepted: Mutex<Vec<String>>,
+        /// Whether [`RunbookSink::accept`] should report a failed write.
+        pub(crate) refuses: AtomicBool,
     }
 
     impl RunbookSink for Arc<RecordingSink> {
@@ -146,6 +170,17 @@ pub(crate) mod testing {
                 .expect("the recording sink is not poisoned")
                 .push((handoff.id.clone(), final_state));
             None
+        }
+
+        fn accept(&self, proposal: &RunbookProposal) -> std::result::Result<(), String> {
+            self.accepted
+                .lock()
+                .expect("the recording sink is not poisoned")
+                .push(proposal.runbook_id.clone());
+            if self.refuses.load(Ordering::Relaxed) {
+                return Err("the disk refused it".to_owned());
+            }
+            Ok(())
         }
     }
 

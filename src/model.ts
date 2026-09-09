@@ -210,6 +210,13 @@ export interface HandoffView {
   history: HistoryRoundView[];
   verify: string | null;
   verifyResult: VerifyResultView | null;
+  /**
+   * Why a `not_verified` handoff is not verified, when no report says it (VER-06).
+   *
+   * A catalogue key, `null` whenever the tab has something better to show: any other state,
+   * and a `not_verified` the agent reported itself, where `verifyResult` carries its detail.
+   */
+  notVerifiedReason: string | null;
   actions: ActionsView;
   requestText: string | null;
   linkedRequest: LinkedRequestView | null;
@@ -412,4 +419,136 @@ export interface ConsentView {
   digest: string;
   /** Whether there is nothing to do: a repair with nothing to repair. */
   alreadyInOrder: boolean;
+}
+
+/**
+ * One entry of Settings → Log (§7.11: date, agent · project, goal, final state, rounds).
+ *
+ * The page lists **closed** handoffs: what is not final is a tab in the overlay, where the
+ * user acts on it. `stateKey` is a catalogue key like every other label the core produces.
+ */
+export interface LogEntryView {
+  id: string;
+  createdAt: string;
+  closedAt: string | null;
+  agent: string | null;
+  project: string | null;
+  goal: string | null;
+  stateKey: string;
+  rounds: number;
+  /** Whether an agent ever collected the outcome (SRV-23). */
+  delivered: boolean;
+}
+
+/** One declared value of a stored spec: already masked where the detector matched. */
+export interface LogValueView {
+  name: string;
+  items: string[];
+}
+
+/** One entry of a stored spec's `secrets` (SEC-02). Names only, never a value. */
+export interface LogSecretView {
+  name: string;
+  file: string;
+}
+
+/** One step of a stored spec. */
+export interface LogStepView {
+  index: number;
+  text: string;
+  warning: string | null;
+}
+
+/**
+ * A spec as the log holds it (§7.11): values replaced by `[treated as secret: <kind>]`
+ * wherever the certain detector matched at ingress (LOG-02, DET-04).
+ */
+export interface LogSpecView {
+  goal: string;
+  location: string;
+  whyHuman: string;
+  url: string | null;
+  values: LogValueView[];
+  secrets: LogSecretView[];
+  steps: LogStepView[];
+  verify: string | null;
+}
+
+/** One round of a log entry, with what the agent declared about it (VER-05, VER-10). */
+export interface LogRoundView {
+  no: number;
+  startedAt: string;
+  endedAt: string | null;
+  steps: string[];
+  verifyOk: boolean | null;
+  verifyDetail: string | null;
+  verifyReportedAt: string | null;
+  verifyLate: boolean;
+}
+
+/** One thing that left the machine (LOG-03). Never pixels: a hash and its geometry. */
+export interface LogSendView {
+  at: string;
+  kind: string;
+  text: string | null;
+  imageSha256: string | null;
+  imageW: number | null;
+  imageH: number | null;
+  redactionBoxes: number;
+  ocrEngine: string | null;
+}
+
+/** One location the certain detector masked, and the family it belongs to (§4.7.5). */
+export interface LogSecretTreatedView {
+  location: string;
+  kind: string;
+}
+
+/** One whole entry of the Log page (§7.11). */
+export interface LogDetailView {
+  entry: LogEntryView;
+  requestText: string | null;
+  lang: string | null;
+  spec: LogSpecView | null;
+  /** The status of the outcome the agent was given (§4.3), by its wire name. */
+  outcomeStatus: string | null;
+  outcomeInstruction: string | null;
+  outcomeUserText: string | null;
+  secretTreated: LogSecretTreatedView[];
+  rounds: LogRoundView[];
+  sends: LogSendView[];
+}
+
+/**
+ * One row of Settings → Runbooks (§7.12).
+ *
+ * Two things that look like defects and are not (`DEVIATIONS.md`, T-044): a step text may
+ * carry `[treated as secret: <kind>]` where the ingress detector matched outside a declared
+ * value, and `lastRunFailedAt` is never unmarked, so it can sit beside a newer
+ * `lastVerifiedAt` — a run that failed and was then corrected.
+ */
+export interface RunbookEntryView {
+  id: string;
+  /** The file's own name (DD-17); it is what **Delete** names. */
+  fileName: string;
+  location: string;
+  goal: string;
+  trust: 'verified' | 'confirmed_by_user';
+  lastVerifiedAt: string;
+  lastRunFailedAt: string | null;
+  runs: number;
+  steps: number;
+}
+
+/**
+ * One runbook rewrite waiting for an answer, as the Runbooks page lists it (RUN-09).
+ *
+ * The same question the tab that produced it asks; the answer names the **handoff**, because
+ * that is where §7.12 keeps the proposed document until it is decided.
+ */
+export interface PendingRunbookProposalView {
+  handoffId: string;
+  runbookId: string;
+  fileName: string;
+  goal: string;
 }

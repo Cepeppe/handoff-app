@@ -33,13 +33,19 @@
 //!
 //! T-041 added [`general`]: the language, the login entry of APP-01 and the `--hidden` launch
 //! that goes with it, plus the wider layout the settings page opens the panel in (§7.6).
+//!
+//! T-045 added the last two settings pages the design names: [`log`] is the record of §7.11
+//! with its deletion and its export (LOG-04), and [`runbooks`] is the folder of §7.12 with
+//! the update proposals of RUN-09.
 
 pub mod commands;
 pub mod crash;
 pub mod events;
 pub mod general;
 pub mod install;
+pub mod log;
 pub mod requests;
+pub mod runbooks;
 pub mod shortcut;
 mod tray;
 pub mod view;
@@ -213,6 +219,17 @@ impl Ui {
     pub fn with_db<T>(&self, read: impl FnOnce(&Db) -> T) -> Option<T> {
         let guard = self.db.lock().expect("the settings mutex is poisoned");
         guard.as_ref().map(read)
+    }
+
+    /// The same, for the one operation that needs the connection mutably.
+    ///
+    /// `log::maintenance::delete_all` opens a transaction of its own, which rusqlite will
+    /// only hand out through `&mut Connection`. It is reachable from here at all because a
+    /// listener that failed to bind leaves the app with no store to route the deletion
+    /// through (`ui_bridge::log` says which path is taken when).
+    pub fn with_db_mut<T>(&self, write: impl FnOnce(&mut Db) -> T) -> Option<T> {
+        let mut guard = self.db.lock().expect("the settings mutex is poisoned");
+        guard.as_mut().map(write)
     }
 
     /// Writes the panel's position, if it moved since the last write.
@@ -460,6 +477,9 @@ mod tests {
     /// The frontend half of the bridge, read as text so the two sides can be compared.
     const BRIDGE_TS: &str = include_str!("../../../src/bridge.ts");
 
+    /// The startup file, for the one list of commands the application registers.
+    const LIB_RS: &str = include_str!("../lib.rs");
+
     fn main_window_config() -> serde_json::Value {
         let config: serde_json::Value =
             serde_json::from_str(TAURI_CONF).expect("tauri.conf.json is valid JSON");
@@ -507,6 +527,47 @@ mod tests {
             assert!(
                 BRIDGE_TS.contains(event),
                 "src/bridge.ts does not mention {event}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_command_the_window_invokes_is_one_the_application_registers() {
+        // The gap nothing else can see. `invoke('delete_log_entrie')` compiles, type-checks,
+        // passes every component test against a fake bridge, and fails only in a running
+        // window with "command not found" — the frontend names a command by a string and
+        // `generate_handler!` registers it by a path, and no compiler joins the two.
+        //
+        // Both sides are read as text here: the names inside `invoke(...)` in `bridge.ts`,
+        // and the last segment of every path in the `invoke_handler` list of `lib.rs`.
+        let invoked = regex::Regex::new(r"invoke(?:::<[^>]*>|<[^>]*>)?\(\s*'([a-z0-9_]+)'")
+            .expect("a valid pattern");
+        let called: Vec<&str> = invoked
+            .captures_iter(BRIDGE_TS)
+            .map(|found| found.get(1).expect("the name group").as_str())
+            .collect();
+        assert!(
+            called.len() > 20,
+            "the scan found almost nothing, so it is the scan that is broken: {called:?}"
+        );
+
+        let list = LIB_RS
+            .split_once("generate_handler![")
+            .expect("lib.rs registers commands")
+            .1
+            .split_once(']')
+            .expect("the list is closed")
+            .0;
+        let registered: Vec<&str> = list
+            .split(',')
+            .filter_map(|entry| entry.trim().rsplit("::").next())
+            .filter(|name| !name.is_empty())
+            .collect();
+
+        for name in called {
+            assert!(
+                registered.contains(&name),
+                "src/bridge.ts invokes `{name}`, which lib.rs does not register"
             );
         }
     }

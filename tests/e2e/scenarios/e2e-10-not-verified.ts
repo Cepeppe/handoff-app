@@ -10,6 +10,15 @@
  * can wait for, so the harness injects twenty seconds through the automation channel's one
  * e2e-only setting (`e2e.verifying_timeout_ms`). It is not persisted: it lives in the store
  * actor for this process and dies with it.
+ *
+ * **Which of VER-06's two roads the run takes is not fixed, and §11.5's row assumes the
+ * wrong one** (`DEVIATIONS.md`, T-045). The agent is told not to report and then finishes
+ * its turn, so its session ends — and §8.3 closes an unreported verification at the
+ * disconnect, before the injected window can run out. Measured here: `not_verified` at
+ * about 9 s of a 20 s window, by the disconnect. Both roads are VER-06 and both are what
+ * this scenario is about, so it asserts the state, the fact that the tab **says which**, and
+ * that it happened nowhere near the thirty minutes of §4.1; `facts.not_verified_reason`
+ * records the road that was taken.
  */
 import { callsTo, startAgent, statuses } from '../agent.ts';
 import { sleep } from '../automation.ts';
@@ -72,6 +81,7 @@ export const notVerifiedScenario: Scenario = {
     );
     facts['window_measured_ms'] = Date.now() - startedWaiting;
     const finalView = handoffOf(timedOut, id);
+    facts['not_verified_reason'] = finalView?.notVerifiedReason ?? undefined;
 
     // The agent may still be in the middle of its turn; give it its budget rather than
     // killing it, so the hook has fired and the transcript is complete.
@@ -117,7 +127,7 @@ export const notVerifiedScenario: Scenario = {
       ),
       check(
         'E2E-10',
-        'it timed out on the injected window and not on the thirty minutes of §4.1',
+        'it closed inside the injected window and not on the thirty minutes of §4.1',
         'protocol',
         typeof facts['window_measured_ms'] === 'number' && facts['window_measured_ms'] < 90_000,
         `measured ${String(facts['window_measured_ms'])} ms`,
@@ -128,6 +138,14 @@ export const notVerifiedScenario: Scenario = {
         'protocol',
         finalView?.closedAt != null,
         `view: ${JSON.stringify({ state: finalView?.state, closedAt: finalView?.closedAt })}`,
+      ),
+      check(
+        'E2E-10',
+        'the tab says *why* it is not verified, and it is one of VER-06’s two roads (§8.4)',
+        'protocol',
+        finalView?.notVerifiedReason === 'overlay.notVerifiedTimeout' ||
+          finalView?.notVerifiedReason === 'overlay.notVerifiedSessionGone',
+        `notVerifiedReason: ${JSON.stringify(finalView?.notVerifiedReason)}`,
       ),
       check(
         'E2E-10',

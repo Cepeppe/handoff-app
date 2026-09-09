@@ -966,3 +966,110 @@ body {
   display: flex;
   gap: 4px;
 }
+
+/*
+  The Log and Runbooks pages (§7.11, §7.12). Both are lists of records read at the settings
+  width, so they share the row: a title line, muted metadata under it, and the buttons last.
+  Nothing here is interactive beyond those buttons — the log is something to read.
+*/
+.log-list {
+  margin: 0 0 var(--space);
+  padding: 0;
+  list-style: none;
+}
+
+.log-entry {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.log-goal {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.log-meta {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.log-file {
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+}
+
+.log-actions {
+  display: flex;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.log-whole {
+  margin-top: var(--space);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.log-detail {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.log-detail h3 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.log-detail h4 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+
+.log-text {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.log-plain {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.log-key {
+  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+}
+
+/*
+  The runbook rewrite of RUN-09, on the handoff that produced it. It is a suggestion and not
+  a failure, so it takes the raised surface of a card rather than the warning one.
+*/
+.runbook-proposal {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.runbook-proposal p {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.runbook-proposal-actions {
+  display: flex;
+  gap: 4px;
+}

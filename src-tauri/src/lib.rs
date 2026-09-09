@@ -211,7 +211,17 @@ pub fn run() {
             ui_bridge::install::open_screen_recording_settings,
             ui_bridge::general::general_settings,
             ui_bridge::general::set_language,
-            ui_bridge::general::set_autostart
+            ui_bridge::general::set_autostart,
+            ui_bridge::log::log_entries,
+            ui_bridge::log::log_detail,
+            ui_bridge::log::delete_log_entry,
+            ui_bridge::log::delete_log,
+            ui_bridge::log::export_log,
+            ui_bridge::runbooks::runbooks,
+            ui_bridge::runbooks::runbook_proposals,
+            ui_bridge::runbooks::open_runbooks_folder,
+            ui_bridge::runbooks::delete_runbook,
+            ui_bridge::runbooks::resolve_runbook_proposal
         ])
         // WIN-02, WIN-03, WIN-04: the close button hides the window to the tray, the focus
         // change is what the panel collapses on, and a move is remembered per monitor.

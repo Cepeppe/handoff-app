@@ -38,12 +38,15 @@ use handoff_app_lib::channel::token::Token;
 use handoff_app_lib::channel::{Dispatch, Endpoint};
 use handoff_app_lib::format::outcome::ScreenshotMode;
 use handoff_app_lib::ids;
+use handoff_app_lib::log::test_support::dump_all_text;
 use handoff_app_lib::log::{Db, HandoffState, Timestamp};
 use handoff_app_lib::requests::{NoRequestObserver, Queue, UserRequest};
 use handoff_app_lib::sessions::{NoObserver, Registry};
 use handoff_app_lib::store::{
-    self, HandoffSnapshot, NoRunbookSink, ScreenshotPayload, Store, StoreHandle, UserAction,
+    self, Exchanges, HandoffSnapshot, NoRunbookSink, ScreenshotPayload, Store, StoreHandle,
+    UserAction,
 };
+use handoff_app_lib::ui_bridge;
 
 use fake_server::golden::{Golden, GoldenLine, Replay};
 use fake_server::{FakeServer, PATIENCE};
@@ -213,6 +216,35 @@ impl App {
 
     async fn stop(&self) {
         self.handle.shutdown("the test ended").await;
+        self.log_invariants_hold();
+    }
+
+    /// The "Log invariants" row of §11.2, after every flow.
+    ///
+    /// *No table row contains a value the certain detector matched, or any fixture secret.*
+    /// It runs here rather than in the one flow that seemed relevant, because LOG-02 is a
+    /// property of the log and not of a flow: a column a later task adds is covered by every
+    /// test of this file the day it exists. [`dump_all_text`] reads the tables and the
+    /// columns from the file itself, so nothing has to be kept in step with the migrations.
+    ///
+    /// [`FIXTURE_SECRETS`] is what the flows plant. Most of them plant nothing — the
+    /// vendored channel fixtures carry an ordinary spec — and for those this is a cheap
+    /// no-op that guards the day one of them changes;
+    /// [`a_planted_secret_reaches_no_column_of_the_log`] is the flow that makes it bite.
+    ///
+    /// What is deliberately not asserted is that `sends.text_as_sent` and
+    /// `events.payload_json` are masked: LOG-03 wants those to be what actually left, and
+    /// `tests/log_invariants.rs` says the same from the other side.
+    fn log_invariants_hold(&self) {
+        let db = self.db();
+        let dump = dump_all_text(&db).expect("the database can be dumped");
+        for secret in FIXTURE_SECRETS {
+            assert!(
+                !dump.contains(secret),
+                "LOG-02: a planted secret reached the database
+{dump}"
+            );
+        }
     }
 }
 
@@ -338,6 +370,19 @@ async fn walk_the_four_steps(app: &App, id: &str, note: &str) {
 /// The keys a comparison ignores because their value belongs to the app and not to the flow.
 const THE_APPS_OWN: [&str; 2] = ["app_version", "token"];
 
+/// The certain secrets the flows of this file plant, and which no row of the log may hold.
+///
+/// Every one of them matches `stripe_secret_key` (§4.6: `[sr]k_(?:live|test)_[0-9A-Za-z]{16,}`)
+/// and none of them occurs anywhere else, so a failure names the field it came from instead
+/// of saying that a secret was found. [`App::log_invariants_hold`] looks for them after
+/// every flow.
+const FIXTURE_SECRETS: [&str; 4] = [
+    "sk_live_FLOWSENTINELVALUE01",
+    "sk_live_FLOWSENTINELITEM002",
+    "sk_live_FLOWSENTINELSTEP003",
+    "sk_live_FLOWSENTINELVERIFY4",
+];
+
 /// The keys three fixtures contradict themselves on: `notes` and `skipped_steps` are per
 /// round (§4.3 "current round", §7.4), and a fixture that reports them full in one message
 /// and empty in the next — for the same round — describes no implementation.
@@ -405,6 +450,7 @@ async fn a_peer_with_the_wrong_token_is_refused_exactly_as_the_fixture_says() {
 
     replay.assert_finished();
     replay.assert_transcript(&fake, &[]);
+    app.stop().await;
 }
 
 #[tokio::test]
@@ -421,6 +467,7 @@ async fn a_peer_speaking_another_protocol_version_is_told_which_one_this_app_spe
 
     replay.assert_finished();
     replay.assert_transcript(&fake, &[]);
+    app.stop().await;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -608,6 +655,26 @@ async fn f08_a_failed_report_is_corrected_by_replacement_steps_in_a_new_round() 
     // VER-09: round 2 restarts the counter, two steps this time.
     let tab = app.tab(&id).await;
     assert_eq!((tab.round, tab.step_index, tab.step_total), (2, 1, 2));
+
+    // §7.6, in the words F-08 prints: the step counter of a correction round is
+    // "Correction · 1 of 2" — the *step* counter with its correction wording, which is the
+    // cell the table puts it in, next to "Step 2 of 4" — and the round that failed is in the
+    // collapsed history with the report that failed it (VER-09).
+    let view = ui_bridge::view::build(&tab, &Exchanges::default(), &|_| true, &Timestamp::now());
+    let counter = view.step.as_ref().expect("a step").counter.clone();
+    assert_eq!(counter.key, "counter.correction");
+    assert_eq!((counter.index, counter.total, counter.round), (1, 2, 2));
+    let [first] = view.history.as_slice() else {
+        panic!("one closed round, {:?}", view.history);
+    };
+    assert_eq!(first.no, 1);
+    assert!(!first.correction, "the first round is not a correction");
+    assert!(first.failed, "VER-08: its report came back negative");
+    assert_eq!(
+        first.verify.as_ref().and_then(|report| report.ok),
+        Some(false)
+    );
+
     app.user(&id, UserAction::Confirm).await;
     app.user(&id, UserAction::Done).await;
     replay.expect_next(&mut fake).await; // handoff.event awaiting_verification, round 2
@@ -917,6 +984,83 @@ async fn hook_decision(app: &App) -> Value {
     let answer = hook.expect("the hook decision").await;
     hook.expect_closed().await;
     answer["result"].clone()
+}
+
+#[tokio::test]
+async fn a_planted_secret_reaches_no_column_of_the_log() {
+    // The "Log invariants" row of §11.2, with something to find. Every other flow of this
+    // file runs the same check over an ordinary spec and passes trivially; this one opens a
+    // handoff carrying a certain secret in each of the fields the ingress scan of §5.5
+    // covers — a value, an item of a list value, a step's text, the `verify` — walks it to a
+    // final state, and lets `App::stop` prove that none of them is anywhere in the database.
+    //
+    // The masking is the log's own (LOG-02, T-030): `handoffs::upsert` runs the pattern file
+    // and sweeps the same literals out of `state_json`, and `rounds::upsert` does the same
+    // for the steps and the verification detail (T-043 found that one with the e2e suite).
+    // Nothing about this test tells it what to mask.
+    let app = App::start().await;
+    let mut fake = app.session().await;
+
+    fake.send(json!({
+        "jsonrpc": "2.0", "id": 2, "method": "handoff.open",
+        "params": {
+            "call_id": "call_2q7m8r1t",
+            "spec": {
+                "spec_version": 1,
+                "goal": "Rotate the signing key",
+                "where": "Dashboard, then Developers",
+                "why_human": "only a person can read the key",
+                "values": {
+                    "api_key": FIXTURE_SECRETS[0],
+                    "backups": ["an ordinary item", FIXTURE_SECRETS[1]]
+                },
+                "steps": [
+                    { "text": format!("paste {} into .env", FIXTURE_SECRETS[2]),
+                      "values": ["api_key"] }
+                ],
+                "verify": format!("call the API with {}", FIXTURE_SECRETS[3]),
+                "lang": "en"
+            },
+            "secret_treated": [],
+            "request_id": null
+        }
+    }))
+    .await;
+    let id = opened(&fake.expect("the handoff id").await);
+
+    // A round with a note and a confirmation, so `rounds`, `events` and the state all hold
+    // something that came from the spec, and then a report, which is what writes
+    // `rounds.verify_detail`.
+    app.user(
+        &id,
+        UserAction::Note("the key was where it said".to_owned()),
+    )
+    .await;
+    app.user(&id, UserAction::Done).await;
+    fake.expect("the awaiting_verification event").await;
+    fake.send(json!({
+        "jsonrpc": "2.0", "id": 3, "method": "handoff.verify",
+        "params": { "handoff_id": id, "verify": {
+            "ok": true,
+            "detail": format!("the call with {} succeeded", FIXTURE_SECRETS[3])
+        } }
+    }))
+    .await;
+    fake.expect("the verified outcome").await;
+
+    // The masking has to have happened rather than the fields having been dropped: an empty
+    // log would satisfy `log_invariants_hold` on its own.
+    let dump = dump_all_text(&app.db()).expect("a dump");
+    assert!(
+        dump.contains("[treated as secret: api_key]"),
+        "the mask of §5.9 is what a reader must see instead:\n{dump}"
+    );
+    assert!(
+        dump.contains("an ordinary item"),
+        "an ordinary item of the same list is stored as it is:\n{dump}"
+    );
+
+    app.stop().await;
 }
 
 // ---------------------------------------------------------------------------------------

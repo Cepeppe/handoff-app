@@ -6,12 +6,12 @@
  * because that is the whole contract between the two sides. What the core then does is the
  * view model's tests and the store's.
  */
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setBridge } from '../bridge';
-import { DEFAULT_LANGUAGE, setLanguage } from '../i18n';
+import { DEFAULT_LANGUAGE, setLanguage, t } from '../i18n';
 import type { ActionsView, HandoffView, TabView, UiState } from '../model';
 import { REVEAL_MS, resetOverlay } from '../overlay/state.svelte';
 import OverlayView from '../views/OverlayView.svelte';
@@ -96,6 +96,7 @@ function view(overrides: Partial<HandoffView> = {}): HandoffView {
     actions: ACTIONS,
     requestText: null,
     linkedRequest: null,
+    notVerifiedReason: null,
     runbookProposal: null,
     resumedFrom: null,
     callAttached: true,
@@ -850,3 +851,190 @@ async function type(text: string): Promise<void> {
   await tick();
   await tick();
 }
+
+describe('the runbook rewrite of RUN-09 (§7.12 row 3)', () => {
+  it('asks on the handoff that produced it, naming the file', async () => {
+    await open(
+      view({
+        runbookProposal: {
+          runbookId: 'rb_0123456789',
+          fileName: 'stripe__webhook__rb_0123456789.json',
+          goal: 'Register the webhook',
+        },
+      }),
+    );
+
+    await screen.findByText(
+      t('overlay.runbookProposal', { name: 'stripe__webhook__rb_0123456789.json' }),
+    );
+  });
+
+  it('rewrites the file on Accept and keeps both on Decline', async () => {
+    const resolveRunbookProposal = vi.fn(async () => {});
+    const handoff = view({
+      runbookProposal: {
+        runbookId: 'rb_0123456789',
+        fileName: 'stripe__webhook__rb_0123456789.json',
+        goal: 'Register the webhook',
+      },
+    });
+    setBridge(
+      fakeBridge({
+        listHandoffs: vi.fn(async () => [handoff.tab]),
+        getHandoffView: vi.fn(async () => handoff),
+        resolveRunbookProposal,
+      }),
+    );
+    render(OverlayView);
+
+    fireEvent.click(await screen.findByText(t('overlay.runbookAccept')));
+    await waitFor(() => expect(resolveRunbookProposal).toHaveBeenCalledWith(ID, true));
+
+    fireEvent.click(screen.getByText(t('overlay.runbookDecline')));
+    await waitFor(() => expect(resolveRunbookProposal).toHaveBeenLastCalledWith(ID, false));
+  });
+
+  it('is drawn on no handoff that has none', async () => {
+    await open();
+    expect(screen.queryByText(t('overlay.runbookAccept'))).toBeNull();
+  });
+});
+
+describe('why a handoff is not verified (VER-06, §8.4)', () => {
+  it('says that the window ran out when nothing was reported', async () => {
+    await open(
+      view({
+        state: 'not_verified',
+        uiState: 'final',
+        tab: tab({ state: 'not_verified', uiState: 'final' }),
+        step: null,
+        verifyResult: null,
+        notVerifiedReason: 'overlay.notVerifiedTimeout',
+        banner: { key: 'state.notVerified', arg: null },
+      }),
+    );
+
+    await screen.findByText(t('overlay.notVerifiedTimeout'));
+  });
+
+  it('says that the session ended instead, when that is what happened', async () => {
+    await open(
+      view({
+        state: 'not_verified',
+        uiState: 'final',
+        tab: tab({ state: 'not_verified', uiState: 'final' }),
+        step: null,
+        verifyResult: null,
+        notVerifiedReason: 'overlay.notVerifiedSessionGone',
+        banner: { key: 'state.notVerified', arg: null },
+      }),
+    );
+
+    await screen.findByText(t('overlay.notVerifiedSessionGone'));
+  });
+
+  it('marks a report that arrived after the handoff was closed as late (DD-16, FM-26)', async () => {
+    // "Verified" and "verified three days later" are different facts, and the badge is the
+    // only place the second one is said.
+    await open(
+      view({
+        state: 'verified',
+        uiState: 'final',
+        tab: tab({ state: 'verified', uiState: 'final' }),
+        step: null,
+        notVerifiedReason: null,
+        verifyResult: {
+          ok: true,
+          detail: 'the webhook fired',
+          reportedAt: '2026-09-12T10:00:00.000Z',
+          late: true,
+        },
+        banner: { key: 'state.verified', arg: null },
+      }),
+    );
+
+    await screen.findByText(t('overlay.late'));
+    expect(screen.getByText(t('overlay.declaredByAgent'))).toBeTruthy();
+  });
+
+  it("shows the agent's own detail instead when it reported one (VER-05)", async () => {
+    // The third road to `not_verified`: `ok: null` with a detail. The core sends no reason
+    // of its own there, and the label says the words are the agent's.
+    await open(
+      view({
+        state: 'not_verified',
+        uiState: 'final',
+        tab: tab({ state: 'not_verified', uiState: 'final' }),
+        step: null,
+        notVerifiedReason: null,
+        verifyResult: {
+          ok: null,
+          detail: 'no test event could be sent',
+          reportedAt: '2026-09-09T10:00:00.000Z',
+          late: false,
+        },
+        banner: { key: 'state.notVerified', arg: null },
+      }),
+    );
+
+    await screen.findByText('no test event could be sent');
+    expect(screen.getByText(t('overlay.verifyUnknown'))).toBeTruthy();
+    expect(screen.getByText(t('overlay.declaredByAgent'))).toBeTruthy();
+    expect(screen.queryByText(t('overlay.notVerifiedTimeout'))).toBeNull();
+  });
+});
+
+describe('a correction round, as F-08 walks it (VER-08, VER-09)', () => {
+  it('counts the steps of the correction and keeps the first round collapsed', async () => {
+    // F-08: the report fails, the agent sends replacement steps, and round 2 opens as
+    // "Correction · 1 of 2" with the history collapsed. The counter is the *step* counter of
+    // §7.6 with its correction wording, and the round that failed is in the history with its
+    // own marker.
+    await open(
+      view({
+        step: {
+          counter: { key: 'counter.correction', index: 1, total: 2, round: 2 },
+          text: 'Delete the endpoint and add it again.',
+          warning: null,
+          url: null,
+          values: [],
+          confirmed: false,
+          skipped: false,
+          notes: [],
+          questions: [],
+          replies: [],
+          last: false,
+        },
+        history: [
+          {
+            no: 1,
+            steps: ['Open the dashboard and add the endpoint.'],
+            confirmed: [1],
+            skipped: [],
+            notes: [],
+            questions: [],
+            replies: [],
+            verify: {
+              ok: false,
+              detail: 'test event rejected: invalid signature',
+              reportedAt: '2026-09-09T09:30:00.000Z',
+              late: false,
+            },
+            correction: false,
+            failed: true,
+          },
+        ],
+      }),
+    );
+
+    await screen.findByText(t('counter.correction', { index: 1, total: 2 }));
+
+    // "Collapsed" is the word §7.6 uses and `<details>` is what it means: the round is in
+    // the document and closed until the user asks for it.
+    const history = document.querySelector('details.history');
+    expect(history).toBeTruthy();
+    expect((history as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByText(t('overlay.verificationFailed'))).toBeTruthy();
+    expect(screen.getByText('test event rejected: invalid signature')).toBeTruthy();
+  });
+});

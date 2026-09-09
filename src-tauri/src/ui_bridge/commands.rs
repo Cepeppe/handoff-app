@@ -49,7 +49,7 @@ pub struct Core {
 
 impl Core {
     /// The registry, for one synchronous read. Never held across an `await`.
-    fn registry(&self) -> MutexGuard<'_, Registry> {
+    pub(super) fn registry(&self) -> MutexGuard<'_, Registry> {
         self.registry
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -97,7 +97,9 @@ impl Core {
 pub struct CoreState(pub Option<Core>);
 
 impl CoreState {
-    fn get(&self) -> Option<&Core> {
+    /// The core, when the channel came up. `pub(super)` because the settings pages of
+    /// [`super::log`] and [`super::runbooks`] have commands of their own that need it.
+    pub(super) fn get(&self) -> Option<&Core> {
         self.0.as_ref()
     }
 }

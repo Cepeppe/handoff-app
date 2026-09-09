@@ -547,6 +547,18 @@ impl Registry {
         self.sessions.values().filter(|session| session.connected)
     }
 
+    /// Every session of this run as the rows the log holds.
+    ///
+    /// The one caller is "delete everything" (LOG-04): §7.11 truncates `sessions` with the
+    /// rest, and a run that is still going needs the rows its live handoffs reference back
+    /// (`store::Store::delete_log`). It answers with the whole set and not only the
+    /// connected ones, because a handoff opened by a session that has since gone still
+    /// names it, and the column is a foreign key.
+    #[must_use]
+    pub fn rows(&self) -> Vec<SessionRow> {
+        self.sessions.values().map(row_of).collect()
+    }
+
     /// The `{ agent, project }` an outcome carries when a call resumes a handoff another
     /// session opened (TOOL-08, §4.3).
     #[must_use]
@@ -629,7 +641,13 @@ fn first_non_empty<'a>(candidates: &[Option<&'a str>]) -> Option<&'a str> {
 /// code is compiled for Windows: the app and its peers are always on the same machine, but
 /// the tests of this rule run on the macOS leg of CI as well and must not change meaning
 /// with the target.
-fn base_name(path: &str) -> &str {
+/// The last segment of a path, which is how a project folder is shown (OPEN-02).
+///
+/// `pub` for the Log page of §7.11, which labels a row from `handoffs.project_dir` and has
+/// no session to ask: two spellings of "the project folder's name" would be two answers to
+/// a question the tab strip already answers.
+#[must_use]
+pub fn base_name(path: &str) -> &str {
     let trimmed = path.trim_end_matches(['/', '\\']);
     match trimmed.rfind(['/', '\\']) {
         Some(cut) => &trimmed[cut + 1..],

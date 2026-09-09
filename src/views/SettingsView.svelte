@@ -5,10 +5,9 @@
   sections rather than a single page: §7.6 names six, they arrive with the tasks that own
   them, and a container that already lists them keeps each of those to one entry here.
 
-  General (T-041) and Agents (T-040) are the two that exist. Log and Runbooks are both T-045
-  (T-044 writes the runbook files; this page lists them), Network is T-051 and Updates T-078;
-  none of them is drawn as an empty placeholder, because a section that says nothing is a
-  section the user has to learn to skip.
+  General (T-041), Agents (T-040), Log and Runbooks (T-045) are the four that exist. Network
+  is T-051 and Updates T-078; neither is drawn as an empty placeholder, because a section
+  that says nothing is a section the user has to learn to skip.
 
   **The panel is wider here and narrower everywhere else** (§7.6: "settings that need more
   room open the window in a wider layout temporarily"). It is asked for on mount and given
@@ -22,10 +21,14 @@
   import { t } from '../i18n';
   import AgentsSettings from '../settings/AgentsSettings.svelte';
   import GeneralSettings from '../settings/GeneralSettings.svelte';
+  import LogSettings from '../settings/LogSettings.svelte';
+  import RunbooksSettings from '../settings/RunbooksSettings.svelte';
 
   const SECTIONS = [
     { name: 'general', titleKey: 'settings.general', view: GeneralSettings },
     { name: 'agents', titleKey: 'install.agents', view: AgentsSettings },
+    { name: 'log', titleKey: 'settings.log', view: LogSettings },
+    { name: 'runbooks', titleKey: 'settings.runbooks', view: RunbooksSettings },
   ] as const;
 
   let current = $state<(typeof SECTIONS)[number]['name']>('general');

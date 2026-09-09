@@ -395,6 +395,20 @@ impl RunbookSink for RunbookWriter {
             }
         }
     }
+
+    fn accept(&self, proposal: &RunbookProposal) -> Result<(), String> {
+        // Named rather than `self.accept(...)`: the inherent method and this one differ
+        // only in what they answer, and the call would silently pick either.
+        Self::accept(self, proposal)
+            .map(|path| {
+                tracing::info!(
+                    runbook_id = %proposal.runbook_id,
+                    file = %path.display(),
+                    "a runbook update proposal was accepted"
+                );
+            })
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// Whether the ingress detector matched anything inside the value `name` (DET-04, §4.5.2).

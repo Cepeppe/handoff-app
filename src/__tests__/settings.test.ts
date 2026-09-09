@@ -272,7 +272,7 @@ describe('the settings window (§7.6)', () => {
     await screen.findByText(t('settings.startup'));
     const nav = screen.getByRole('navigation', { name: t('view.settings') });
     expect([...nav.querySelectorAll('button')].map((button) => button.textContent?.trim())).toEqual(
-      [t('settings.general'), t('install.agents')],
+      [t('settings.general'), t('install.agents'), t('settings.log'), t('settings.runbooks')],
     );
   });
 });

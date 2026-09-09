@@ -248,6 +248,35 @@ pub struct ScreenshotPayload {
     pub comment: Option<String>,
 }
 
+/// Why a handoff ended `not_verified`, when no report says it (VER-06, DD-16, §8.4).
+///
+/// Three roads lead to `not_verified` and only one of them leaves a record a person can
+/// read. The agent may report `ok: null` — then there is a [`VerifyReport`] with its own
+/// detail, and the tab shows that. The other two produce no report at all, and until this
+/// existed the tab said "Not verified" and stopped: the user could not tell a verification
+/// nobody ever came back for from one whose session died a second after the work was done.
+///
+/// [`VerifyReport`]: crate::format::outcome::VerifyReport
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotVerifiedReason {
+    /// The window of VER-06 ran out with nothing reported.
+    Timeout,
+    /// The session that owed the report disconnected first (§8.3).
+    SessionGone,
+}
+
+impl NotVerifiedReason {
+    /// The catalogue key of the sentence the tab shows (`src/locales/*.json`).
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Timeout => "overlay.notVerifiedTimeout",
+            Self::SessionGone => "overlay.notVerifiedSessionGone",
+        }
+    }
+}
+
 /// One of the five states a handoff ends in (VER-01, §8.1).
 ///
 /// Not a second vocabulary for [`HandoffState`] but a refinement of it: the runbook writer
@@ -365,6 +394,13 @@ pub struct Handoff {
     /// written before the writer existed has no such key.
     #[serde(default)]
     pub runbook_proposal: Option<crate::runbooks::RunbookProposal>,
+    /// Why it ended `not_verified` with no report to show (VER-06, §8.4).
+    ///
+    /// `None` on every other state, and on a `not_verified` an agent reported itself: there
+    /// the report is the answer. `default` because a row written before this existed has no
+    /// such key, and a restored handoff then simply says no more than it used to.
+    #[serde(default)]
+    pub not_verified_reason: Option<NotVerifiedReason>,
 }
 
 impl Handoff {
@@ -404,6 +440,7 @@ impl Handoff {
             verifying_since: None,
             resumed_from: None,
             runbook_proposal: None,
+            not_verified_reason: None,
         }
     }
 
@@ -451,6 +488,7 @@ impl Handoff {
             verifying_since: None,
             resumed_from: None,
             runbook_proposal: None,
+            not_verified_reason: None,
         }
     }
 

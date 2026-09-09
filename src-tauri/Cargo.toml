@@ -74,6 +74,15 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
+# The OS trash, for **Delete** on the Runbooks page (§7.12). A runbook is a recipe the user
+# spent a handoff producing, so it is moved rather than removed — and the platform's own
+# trash is the one place they already know how to look for it. Its default features are the
+# Windows COM apartment (kept: `IFileOperation` needs one) and `chrono`, which is only used
+# by the Linux implementation of listing and restoring; neither platform of §1.5 reaches it,
+# and this crate builds `chrono` without its clock on purpose.
+trash = { version = "5.2.4", default-features = false, features = [
+  "coinit_apartmentthreaded",
+] }
 # NFKC, the first step of both normalisations of the matching rule (§4.5.3). The server
 # gets it from `String.prototype.normalize`; this is the same algorithm.
 unicode-normalization = { version = "0.1.25", default-features = false }

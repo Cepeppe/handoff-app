@@ -43,8 +43,8 @@ pub use actor::{
     Question, Reply, ResumeSnapshot, RoundSummary, Store, StoreHandle, UserAction, VerifyAccepted,
 };
 pub use handoff::{
-    AttachedCall, Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued,
-    Round, ScreenshotPayload,
+    AttachedCall, Call, Cursor, FinalState, Handoff, NotVerifiedReason, Opener, PendingKind,
+    PendingQuestion, Queued, Round, ScreenshotPayload,
 };
 pub use runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
 pub use watch::{HandoffsObserver, NoWatchers};

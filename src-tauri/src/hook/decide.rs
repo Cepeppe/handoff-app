@@ -359,6 +359,7 @@ mod tests {
             final_outcome: None,
             orphan: false,
             runbook_proposal: None,
+            not_verified_reason: None,
             created_at: at("2026-09-08T11:00:00Z"),
             closed_at: None,
         }

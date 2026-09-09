@@ -16,6 +16,8 @@
 //! `sends.text_as_sent` and `events.payload_json` are deliberately **not** treated this way
 //! (`tests/log_invariants.rs` says why): LOG-03 wants those to be what actually left.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, Row};
 
 use super::db::Db;
@@ -108,6 +110,32 @@ pub fn list_for_handoff(db: &Db, handoff_id: &str) -> Result<Vec<RoundRow>> {
         .collect::<rusqlite::Result<Vec<RoundRow>>>()
         .map_err(|error| StoreError::of("reading the rounds", error))?;
     Ok(rows)
+}
+
+/// How many rounds each handoff has, by id (VER-10, the Log page of §7.11).
+///
+/// One query for a whole list rather than one per row: the page shows the count beside
+/// every entry, and a `list_for_handoff` per entry would read every round of the log to
+/// count them.
+///
+/// # Errors
+///
+/// [`StoreError::Persistence`] when the rows cannot be read.
+pub fn counts(db: &Db) -> Result<BTreeMap<String, u32>> {
+    let mut statement = db
+        .conn()
+        .prepare("SELECT handoff_id, COUNT(*) FROM rounds GROUP BY handoff_id")
+        .map_err(|error| StoreError::of("counting the rounds", error))?;
+    let counts = statement
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            Ok((id, u32::try_from(count).unwrap_or(u32::MAX)))
+        })
+        .map_err(|error| StoreError::of("counting the rounds", error))?
+        .collect::<rusqlite::Result<BTreeMap<String, u32>>>()
+        .map_err(|error| StoreError::of("counting the rounds", error))?;
+    Ok(counts)
 }
 
 fn read_row(row: &Row<'_>) -> rusqlite::Result<RoundRow> {

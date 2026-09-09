@@ -42,13 +42,16 @@ use crate::log::events::{EventKind, EventRow};
 use crate::log::handoffs::HandoffRow;
 use crate::log::rounds::RoundRow;
 use crate::log::sends::{SendKind, SendRow};
+use crate::log::sessions::SessionRow;
 use crate::log::transitions::{commit as commit_transition, Transition};
-use crate::log::{handoffs, user_requests, Db, HandoffState, StoreError, Timestamp};
+use crate::log::{
+    handoffs, maintenance, sessions, user_requests, Db, HandoffState, StoreError, Timestamp,
+};
 use crate::requests::queue::OpenLink;
 
 use super::handoff::{
-    Call, Cursor, FinalState, Handoff, Opener, PendingKind, PendingQuestion, Queued, Round,
-    ScreenshotPayload, VERIFYING_TIMEOUT_MS,
+    Call, Cursor, FinalState, Handoff, NotVerifiedReason, Opener, PendingKind, PendingQuestion,
+    Queued, Round, ScreenshotPayload, VERIFYING_TIMEOUT_MS,
 };
 use super::outcome::{already_delivered, build};
 use super::runbook_sink::{NoRequests, NoRunbookSink, Requests, RunbookSink};
@@ -279,6 +282,11 @@ pub struct HandoffSnapshot {
     /// (§7.12 row 3, RUN-09). The summary and not the document: a snapshot is cloned on
     /// every repaint and on every Stop hook, and the document stays in the store.
     pub runbook_proposal: Option<crate::runbooks::RunbookProposalSummary>,
+    /// Why it ended `not_verified` with nothing reported (VER-06, §8.4).
+    ///
+    /// `None` whenever the tab has something better to show: any other state, and a
+    /// `not_verified` the agent reported itself, where `verify_report` carries the detail.
+    pub not_verified_reason: Option<NotVerifiedReason>,
     /// When it opened.
     pub created_at: Timestamp,
     /// When it closed.
@@ -838,6 +846,9 @@ impl Store {
         };
 
         let mut journal = Journal::default();
+        // The report is the answer: a reason invented here would be a second sentence about
+        // the same fact, and a late `ok: true` has to clear the one a timeout left behind.
+        draft.not_verified_reason = None;
         if let Some(round) = draft.current_round_mut() {
             round.verify = Some(report.clone());
             if round.ended_at.is_none() {
@@ -1335,6 +1346,7 @@ impl Store {
             return Ok(());
         }
         let mut journal = Journal::default();
+        draft.not_verified_reason = Some(NotVerifiedReason::Timeout);
         self.finalise(
             &mut draft,
             OutcomeStatus::NotVerified,
@@ -1437,6 +1449,12 @@ impl Store {
         draft.closed_at = Some(now.clone());
         draft.verifying_since = None;
         draft.pending_question = None;
+        // Only a `not_verified` has a reason of this kind; anything else that ends the
+        // handoff — a late `ok: true`, an abandon — must not keep the sentence a previous
+        // timeout wrote.
+        if status != OutcomeStatus::NotVerified {
+            draft.not_verified_reason = None;
+        }
         if let Some(round) = draft.current_round_mut() {
             if round.ended_at.is_none() {
                 round.ended_at = Some(now.clone());
@@ -1493,6 +1511,7 @@ impl Store {
         // VER-06: the session that owed the report is gone, so the honest answer is "not
         // verified" until one arrives late (DD-16).
         if draft.state == HandoffState::AwaitingVerification {
+            draft.not_verified_reason = Some(NotVerifiedReason::SessionGone);
             self.finalise(
                 &mut draft,
                 OutcomeStatus::NotVerified,
@@ -1534,6 +1553,132 @@ impl Store {
                 "the runbook update proposal could not be persisted"
             );
         }
+    }
+
+    /// The user answered the runbook rewrite of §7.12 row 3 (RUN-09).
+    ///
+    /// **Accept** rewrites the file through the sink — one atomic write, schema-checked and
+    /// detector-checked like every other — and only a write that succeeded clears the
+    /// question: a proposal lost to a full disk would be a suggestion the user answered and
+    /// never got. **Decline** keeps both, which is what §7.12 means by "the user decides":
+    /// the file on disk stays as it is and the new sequence was already written as a
+    /// runbook of its own, so declining costs nothing.
+    ///
+    /// Answering a handoff that has no proposal is not an error — two windows, or a click on
+    /// a stale view, reach here after the first answer — it simply does nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NotFound`] for an unknown handoff, and [`Refusal::Persistence`] when the
+    /// file could not be written or the cleared row could not be stored.
+    pub fn resolve_runbook_proposal(&mut self, handoff_id: &str, accept: bool) -> Result<bool> {
+        let Some(handoff) = self.handoffs.get(handoff_id) else {
+            return Err(Refusal::NotFound);
+        };
+        let Some(proposal) = handoff.runbook_proposal.clone() else {
+            return Ok(false);
+        };
+        if accept {
+            // The writer's own message, in the shape a failed write has here: it is what the
+            // window shows, and the question stays on screen because nothing was cleared.
+            self.runbooks.accept(&proposal).map_err(|error| {
+                Refusal::Persistence(StoreError::of(
+                    "accepting a runbook proposal",
+                    std::io::Error::other(error),
+                ))
+            })?;
+        }
+        let handoff = self.handoffs.get_mut(handoff_id).ok_or(Refusal::NotFound)?;
+        handoff.runbook_proposal = None;
+        let row = row_of(self.handoffs.get(handoff_id).ok_or(Refusal::NotFound)?)?;
+        handoffs::upsert(&self.db, &row)?;
+        self.watchers.handoff_changed(handoff_id);
+        Ok(true)
+    }
+
+    /// Deletes one entry of the Log page (LOG-04).
+    ///
+    /// The page lists closed handoffs (`log::handoffs::list_final`), so what is deleted here
+    /// is a record and never work in flight; a caller that names a handoff which is not
+    /// final is refused, because forgetting one would leave a tab whose next transition
+    /// writes the row back and an agent waiting on a handoff nobody knows.
+    ///
+    /// The row goes with its rounds, events and sends through the cascade (§7.11), and the
+    /// handoff leaves the store's memory as well: it is the same fact, and a strip that
+    /// still listed it would be listing a row that no longer exists.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NotActive`] for a handoff that has not finished, [`Refusal::Persistence`]
+    /// when the deletion fails.
+    pub fn delete_log_entry(&mut self, handoff_id: &str) -> Result<bool> {
+        if let Some(handoff) = self.handoffs.get(handoff_id) {
+            if !handoff.state.is_final() {
+                return Err(Refusal::NotActive {
+                    state: handoff.state,
+                });
+            }
+        }
+        let deleted = handoffs::delete_handoff(&self.db, handoff_id)?;
+        self.handoffs.remove(handoff_id);
+        self.watchers.handoff_changed(handoff_id);
+        Ok(deleted)
+    }
+
+    /// Empties the log (LOG-04), and leaves what is still in flight where it was.
+    ///
+    /// §7.11 truncates every table but `settings`, and that is what happens first. What
+    /// follows is the part the section does not describe and the app cannot do without:
+    /// **the rows a run that is still going needs are written back.** The `sessions` the
+    /// caller collected from the registry go first, because `handoffs.session_ref`
+    /// references them, and then every handoff that is not final, with the rounds of its
+    /// cursor. Everything final was the record the user asked to delete and is gone from
+    /// memory too.
+    ///
+    /// Without it the deletion would leave the app unable to write: a live handoff's next
+    /// transition would `upsert` a row whose `session_ref` names a session that no longer
+    /// exists, the foreign key would refuse it and every transition of that session would
+    /// come back as FM-28 for the rest of the run.
+    ///
+    /// A session that registers between the caller's read and this write is not re-written,
+    /// and its first handoff meets the same refusal until it reconnects. It is one instant
+    /// of a destructive action the user asked for by name, and the alternative is holding
+    /// the registry lock across the actor's channel.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Persistence`] when the deletion or any of the writes fails.
+    pub fn delete_log(&mut self, live_sessions: &[SessionRow]) -> Result<()> {
+        maintenance::delete_all(&mut self.db)?;
+        for session in live_sessions {
+            sessions::register(&self.db, session)?;
+        }
+        let forgotten: Vec<String> = self
+            .handoffs
+            .iter()
+            .filter(|(_, handoff)| handoff.is_final())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &forgotten {
+            self.handoffs.remove(id);
+        }
+        let live: Vec<Handoff> = self.handoffs.values().cloned().collect();
+        for handoff in &live {
+            let row = row_of(handoff)?;
+            let rounds: Vec<RoundRow> = handoff
+                .rounds
+                .iter()
+                .map(|round| round_row(&handoff.id, round))
+                .collect::<Result<Vec<_>>>()?;
+            commit_transition(&self.db, &Transition::of(&row).with_rounds(&rounds))?;
+        }
+        for id in forgotten {
+            self.watchers.handoff_changed(&id);
+        }
+        for handoff in live {
+            self.watchers.handoff_changed(&handoff.id);
+        }
+        Ok(())
     }
 
     /// Persists a transition and, only then, puts the handoff back (FM-28).
@@ -1932,6 +2077,7 @@ fn snapshot_of(handoff: &Handoff, now: &Timestamp) -> HandoffSnapshot {
             .runbook_proposal
             .as_ref()
             .map(crate::runbooks::RunbookProposal::summary),
+        not_verified_reason: handoff.not_verified_reason,
         created_at: handoff.created_at.clone(),
         closed_at: handoff.closed_at.clone(),
     }
@@ -2095,6 +2241,30 @@ pub enum Command {
         key: String,
         /// One entry for a single value, one per item for an array.
         reply_to: oneshot::Sender<Vec<String>>,
+    },
+    /// The user answered a runbook rewrite (§7.12 row 3, RUN-09).
+    ResolveRunbookProposal {
+        /// Which handoff carries the proposal.
+        handoff_id: String,
+        /// `true` rewrites the file, `false` keeps both.
+        accept: bool,
+        /// Whether there was a proposal to answer.
+        reply_to: oneshot::Sender<Result<bool>>,
+    },
+    /// Delete one entry of the Log page (LOG-04).
+    DeleteLogEntry {
+        /// Which handoff.
+        handoff_id: String,
+        /// Whether there was a row to delete.
+        reply_to: oneshot::Sender<Result<bool>>,
+    },
+    /// Delete everything the log holds (LOG-04).
+    DeleteLog {
+        /// The sessions the registry still has, so the rows a live handoff references
+        /// survive the truncation (`Store::delete_log` says why).
+        live_sessions: Vec<SessionRow>,
+        /// Where the answer goes.
+        reply_to: oneshot::Sender<Result<()>>,
     },
 }
 
@@ -2375,6 +2545,43 @@ impl StoreHandle {
         )
         .await
     }
+
+    /// The user accepted or declined a runbook rewrite (RUN-09).
+    pub async fn resolve_runbook_proposal(&self, handoff_id: String, accept: bool) -> Result<bool> {
+        self.ask(
+            |reply_to| Command::ResolveRunbookProposal {
+                handoff_id,
+                accept,
+                reply_to,
+            },
+            || Err(Refusal::NotFound),
+        )
+        .await
+    }
+
+    /// Deletes one entry of the Log page (LOG-04).
+    pub async fn delete_log_entry(&self, handoff_id: String) -> Result<bool> {
+        self.ask(
+            |reply_to| Command::DeleteLogEntry {
+                handoff_id,
+                reply_to,
+            },
+            || Err(Refusal::NotFound),
+        )
+        .await
+    }
+
+    /// Empties the log, keeping what is still in flight (LOG-04).
+    pub async fn delete_log(&self, live_sessions: Vec<SessionRow>) -> Result<()> {
+        self.ask(
+            |reply_to| Command::DeleteLog {
+                live_sessions,
+                reply_to,
+            },
+            || Err(Refusal::NotFound),
+        )
+        .await
+    }
 }
 
 /// Starts the store's task and returns the handle and the stream of outcomes to send.
@@ -2551,6 +2758,25 @@ fn apply(store: &mut Store, command: Command) {
             reply_to,
         } => {
             let _ = reply_to.send(store.value(&handoff_id, &key));
+        }
+        Command::ResolveRunbookProposal {
+            handoff_id,
+            accept,
+            reply_to,
+        } => {
+            let _ = reply_to.send(store.resolve_runbook_proposal(&handoff_id, accept));
+        }
+        Command::DeleteLogEntry {
+            handoff_id,
+            reply_to,
+        } => {
+            let _ = reply_to.send(store.delete_log_entry(&handoff_id));
+        }
+        Command::DeleteLog {
+            live_sessions,
+            reply_to,
+        } => {
+            let _ = reply_to.send(store.delete_log(&live_sessions));
         }
     }
 }
@@ -4204,5 +4430,305 @@ mod tests {
             Some(HandoffState::NotVerified),
             "VER-06: the window ran out while the app was down"
         );
+    }
+
+    // ----------------------------------------------------------------- T-045: the reason
+
+    #[test]
+    fn a_verification_window_that_ran_out_says_so() {
+        // VER-06 and §8.4: "Not verified" on its own tells the user nothing about which of
+        // the three roads was taken.
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, true));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store
+            .verifying_timeout(&id, &at("2026-09-08T12:30:00Z"))
+            .expect("the window ran out");
+        let snapshot = store
+            .snapshot(&id, &at("2026-09-08T12:30:00Z"))
+            .expect("a tab");
+        assert_eq!(snapshot.state, HandoffState::NotVerified);
+        assert_eq!(
+            snapshot.not_verified_reason,
+            Some(NotVerifiedReason::Timeout)
+        );
+        assert!(snapshot.verify_report.is_none());
+    }
+
+    #[test]
+    fn a_session_that_left_before_reporting_says_so_instead() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, true));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store
+            .session_disconnected(OPENER, &at("2026-09-08T11:31:00Z"))
+            .expect("the session left");
+        let snapshot = store
+            .snapshot(&id, &at("2026-09-08T11:31:00Z"))
+            .expect("a tab");
+        assert_eq!(
+            snapshot.not_verified_reason,
+            Some(NotVerifiedReason::SessionGone)
+        );
+    }
+
+    #[test]
+    fn a_report_is_the_answer_and_a_late_one_takes_the_reason_away() {
+        // DD-16: the report arrives after the timeout closed the handoff. What the tab shows
+        // from then on is the agent's own words, so the sentence about the timeout goes.
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, true));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store
+            .verifying_timeout(&id, &at("2026-09-08T12:30:00Z"))
+            .expect("the window ran out");
+        store
+            .verify(
+                &id,
+                Some(true),
+                Some("the webhook fired".to_owned()),
+                &at("2026-09-08T13:00:00Z"),
+            )
+            .expect("a late report is accepted");
+        let snapshot = store
+            .snapshot(&id, &at("2026-09-08T13:00:00Z"))
+            .expect("a tab");
+        assert_eq!(snapshot.state, HandoffState::Verified);
+        assert_eq!(snapshot.not_verified_reason, None);
+        assert!(snapshot.verify_report.expect("a report").late);
+    }
+
+    #[test]
+    fn an_agent_that_could_not_check_leaves_its_own_detail_and_no_reason_of_ours() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, true));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store
+            .verify(
+                &id,
+                None,
+                Some("no test event could be sent".to_owned()),
+                &at("2026-09-08T11:40:00Z"),
+            )
+            .expect("a report");
+        let snapshot = store
+            .snapshot(&id, &at("2026-09-08T11:40:00Z"))
+            .expect("a tab");
+        assert_eq!(snapshot.state, HandoffState::NotVerified);
+        assert_eq!(snapshot.not_verified_reason, None);
+        assert_eq!(
+            snapshot.verify_report.expect("a report").detail.as_deref(),
+            Some("no test event could be sent")
+        );
+    }
+
+    // ------------------------------------------------------- T-045: the runbook proposal
+
+    /// A proposal in the shape the writer hands over (§7.12 row 3).
+    fn proposal(dir: &std::path::Path) -> crate::runbooks::RunbookProposal {
+        crate::runbooks::RunbookProposal {
+            runbook_id: "rb_0123456789".to_owned(),
+            path: dir
+                .join("dashboard__webhook__rb_0123456789.json")
+                .display()
+                .to_string(),
+            goal: "Register the webhook".to_owned(),
+            runbook: serde_json::from_value(serde_json::json!({
+                "runbook_version": 1,
+                "id": "rb_0123456789",
+                "where": "Dashboard",
+                "goal": "Register the webhook",
+                "why_human": "only a person can log in",
+                "url": null,
+                "lang": "en",
+                "values": {},
+                "secrets": {},
+                "steps": [{
+                    "text": "open the dashboard",
+                    "url": null,
+                    "values": [],
+                    "warning": null,
+                    "annotations": []
+                }],
+                "verify": null,
+                "trust": "verified",
+                "last_verified_at": "2026-09-09T10:00:00.000Z",
+                "last_run_failed_at": null,
+                "runs": 2,
+                "created_at": "2026-09-09T09:00:00.000Z",
+                "updated_at": "2026-09-09T10:00:00.000Z",
+                "origin": {"app": "handoff-app", "app_version": "0.1.0"}
+            }))
+            .expect("a runbook"),
+        }
+    }
+
+    /// A finished handoff carrying an undecided proposal.
+    fn with_proposal(store: &mut Store, dir: &std::path::Path) -> String {
+        let id = open_with(store, spec(1, false));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store.remember_proposal(&id, proposal(dir));
+        id
+    }
+
+    #[test]
+    fn accepting_a_proposal_writes_the_file_and_clears_the_question() {
+        let dir = crate::log::testing::tempdir();
+        let (mut store, sink, _requests) = watched();
+        let id = with_proposal(&mut store, &dir);
+        assert!(store
+            .snapshot(&id, &at("2026-09-08T11:30:00Z"))
+            .expect("a tab")
+            .runbook_proposal
+            .is_some());
+
+        assert!(store
+            .resolve_runbook_proposal(&id, true)
+            .expect("the answer is taken"));
+        assert_eq!(
+            sink.accepted.lock().expect("not poisoned").as_slice(),
+            ["rb_0123456789".to_owned()]
+        );
+        assert!(store
+            .snapshot(&id, &at("2026-09-08T11:30:00Z"))
+            .expect("a tab")
+            .runbook_proposal
+            .is_none());
+        crate::log::testing::clean(&dir);
+    }
+
+    #[test]
+    fn declining_keeps_both_and_never_touches_the_file() {
+        let dir = crate::log::testing::tempdir();
+        let (mut store, sink, _requests) = watched();
+        let id = with_proposal(&mut store, &dir);
+
+        assert!(store
+            .resolve_runbook_proposal(&id, false)
+            .expect("the answer is taken"));
+        assert!(sink.accepted.lock().expect("not poisoned").is_empty());
+        assert!(store
+            .snapshot(&id, &at("2026-09-08T11:30:00Z"))
+            .expect("a tab")
+            .runbook_proposal
+            .is_none());
+        crate::log::testing::clean(&dir);
+    }
+
+    #[test]
+    fn a_write_the_disk_refused_leaves_the_question_on_screen() {
+        // The proposal is the user's one click: clearing it over a failed write would be a
+        // suggestion they answered and never got.
+        let dir = crate::log::testing::tempdir();
+        let (mut store, sink, _requests) = watched();
+        sink.refuses.store(true, Ordering::Relaxed);
+        let id = with_proposal(&mut store, &dir);
+
+        assert!(store.resolve_runbook_proposal(&id, true).is_err());
+        assert!(store
+            .snapshot(&id, &at("2026-09-08T11:30:00Z"))
+            .expect("a tab")
+            .runbook_proposal
+            .is_some());
+        crate::log::testing::clean(&dir);
+    }
+
+    #[test]
+    fn answering_a_handoff_that_has_no_proposal_does_nothing_at_all() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, false));
+        assert!(!store
+            .resolve_runbook_proposal(&id, true)
+            .expect("not an error"));
+        assert!(matches!(
+            store.resolve_runbook_proposal("hf_9999999999", true),
+            Err(Refusal::NotFound)
+        ));
+    }
+
+    // ------------------------------------------------------------ T-045: LOG-04 deletion
+
+    #[test]
+    fn one_entry_of_the_log_goes_with_its_rows_and_leaves_the_store() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, false));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+
+        assert!(store.delete_log_entry(&id).expect("the row is deleted"));
+        assert!(store.snapshot(&id, &at("2026-09-08T11:30:00Z")).is_none());
+        assert!(crate::log::handoffs::get(&store.db, &id)
+            .expect("a read")
+            .is_none());
+        assert!(crate::log::rounds::list_for_handoff(&store.db, &id)
+            .expect("a read")
+            .is_empty());
+    }
+
+    #[test]
+    fn a_handoff_that_is_still_open_is_not_an_entry_anybody_may_delete() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, false));
+        assert!(matches!(
+            store.delete_log_entry(&id),
+            Err(Refusal::NotActive { .. })
+        ));
+        assert!(store.snapshot(&id, &at("2026-09-08T11:30:00Z")).is_some());
+    }
+
+    #[test]
+    fn delete_everything_empties_every_table_but_settings() {
+        let mut store = store();
+        let closed = open_with(&mut store, spec(1, false));
+        store
+            .done(&closed, &at("2026-09-08T11:30:00Z"))
+            .expect("done");
+        crate::log::settings::set(&store.db, "window.language", &"en").expect("a setting");
+
+        store.delete_log(&[]).expect("the log is emptied");
+
+        // Read through the export of LOG-04, which lists the tables the file actually has:
+        // a table a later migration adds is then covered the day it exists.
+        let exported = crate::log::maintenance::export_value(&store.db).expect("an export");
+        let tables = exported["tables"].as_object().expect("the tables");
+        assert!(tables.len() >= 9, "every table of the schema: {tables:?}");
+        for (table, rows) in tables {
+            let rows = rows.as_array().expect("an array of rows").len();
+            if table == "settings" {
+                assert_eq!(rows, 1, "settings are the app's, not the user's record");
+            } else {
+                assert_eq!(rows, 0, "{table} still has rows");
+            }
+        }
+        assert!(store
+            .snapshot(&closed, &at("2026-09-08T11:30:00Z"))
+            .is_none());
+    }
+
+    #[test]
+    fn delete_everything_leaves_a_run_that_is_still_going_able_to_write() {
+        // The half §7.11 does not describe: a live handoff's next transition would `upsert`
+        // a row whose `session_ref` names a session the truncation removed, and the foreign
+        // key would refuse it for the rest of the run.
+        let mut store = store();
+        let live = open_with(&mut store, spec(2, false));
+
+        store
+            .delete_log(&[session(OPENER), session(OTHER)])
+            .expect("the log is emptied");
+
+        assert!(store.snapshot(&live, &at("2026-09-08T11:30:00Z")).is_some());
+        assert!(crate::log::handoffs::get(&store.db, &live)
+            .expect("a read")
+            .is_some());
+        assert_eq!(
+            crate::log::rounds::list_for_handoff(&store.db, &live)
+                .expect("a read")
+                .len(),
+            1
+        );
+        // The transition after the deletion is the one that would have failed.
+        store
+            .confirm(&live, &at("2026-09-08T11:31:00Z"))
+            .expect("the step is confirmed after a deletion");
     }
 }

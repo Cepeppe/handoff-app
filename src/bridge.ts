@@ -29,10 +29,14 @@ import type {
   CrashNotice,
   GeneralSettings,
   HandoffView,
+  LogDetailView,
+  LogEntryView,
   Notice,
   OnboardingView,
   Redacted,
+  PendingRunbookProposalView,
   RequestChoice,
+  RunbookEntryView,
   ScanReport,
   Scope,
   SessionChoice,
@@ -258,6 +262,45 @@ export interface Bridge {
   /** Opens the macOS screen-recording pane (CAP-04). Rejects off macOS. */
   openScreenRecordingSettings(): Promise<void>;
 
+  /** Settings -> Log: the closed handoffs, most recently closed first (§7.11, LOG-04). */
+  logEntries(): Promise<LogEntryView[]>;
+
+  /** One whole entry, or `null` when the log no longer holds that id. */
+  logDetail(id: string): Promise<LogDetailView | null>;
+
+  /** Deletes one entry, with its rounds, events and sends (LOG-04). */
+  deleteLogEntry(id: string): Promise<void>;
+
+  /** Empties the log: every table but `settings` (LOG-04). */
+  deleteLog(): Promise<void>;
+
+  /**
+   * Writes every table to a file the user chooses (LOG-04): it is their data.
+   *
+   * Answers the path it wrote, or `null` when they cancelled the save dialog.
+   */
+  exportLog(): Promise<string | null>;
+
+  /** Settings -> Runbooks: what `~/.handoff/runbooks/` holds (§7.12). */
+  runbooks(): Promise<RunbookEntryView[]>;
+
+  /** The rewrites of RUN-09 nobody has answered yet, for the Runbooks page (§7.6). */
+  runbookProposals(): Promise<PendingRunbookProposalView[]>;
+
+  /** Opens the runbook folder with the operating system's file manager (RUN-03). */
+  openRunbooksFolder(): Promise<void>;
+
+  /**
+   * Moves one runbook to the OS trash (RUN-01: the user can delete any runbook).
+   *
+   * The **file name** and never a path: the Rust side resolves it against the runbook
+   * folder, which is what stops the webview naming a file anywhere else.
+   */
+  deleteRunbook(fileName: string): Promise<void>;
+
+  /** The user answered the rewrite of RUN-09: `true` rewrites the file, `false` keeps both. */
+  resolveRunbookProposal(id: string, accept: boolean): Promise<void>;
+
   /** Runs `handler` with the id of a handoff whose state changed. */
   onHandoffChanged(handler: (id: string) => void): Promise<Unlisten>;
 
@@ -405,6 +448,36 @@ export function tauriBridge(): Bridge {
     async openScreenRecordingSettings() {
       await invoke('open_screen_recording_settings');
     },
+    async logEntries() {
+      return invoke<LogEntryView[]>('log_entries');
+    },
+    async logDetail(id) {
+      return (await invoke<LogDetailView | null>('log_detail', { id })) ?? null;
+    },
+    async deleteLogEntry(id) {
+      await invoke('delete_log_entry', { id });
+    },
+    async deleteLog() {
+      await invoke('delete_log');
+    },
+    async exportLog() {
+      return (await invoke<string | null>('export_log')) ?? null;
+    },
+    async runbooks() {
+      return invoke<RunbookEntryView[]>('runbooks');
+    },
+    async runbookProposals() {
+      return invoke<PendingRunbookProposalView[]>('runbook_proposals');
+    },
+    async openRunbooksFolder() {
+      await invoke('open_runbooks_folder');
+    },
+    async deleteRunbook(fileName) {
+      await invoke('delete_runbook', { fileName });
+    },
+    async resolveRunbookProposal(id, accept) {
+      await invoke('resolve_runbook_proposal', { id, accept });
+    },
     async onHandoffChanged(handler) {
       return listen<string>(EVENT_HANDOFF_CHANGED, (event) => handler(event.payload));
     },
@@ -512,6 +585,28 @@ export function noopBridge(): Bridge {
       return null;
     },
     async openScreenRecordingSettings() {},
+    async logEntries() {
+      return [];
+    },
+    async logDetail() {
+      return null;
+    },
+    async deleteLogEntry() {},
+    async deleteLog() {},
+    async exportLog() {
+      // Outside the webview there is no save dialog; "the user cancelled" is the honest
+      // answer, and the page then says nothing rather than claiming a file was written.
+      return null;
+    },
+    async runbooks() {
+      return [];
+    },
+    async runbookProposals() {
+      return [];
+    },
+    async openRunbooksFolder() {},
+    async deleteRunbook() {},
+    async resolveRunbookProposal() {},
     onHandoffChanged: unlisten,
     onSessionsChanged: unlisten,
     onNotice: unlisten,

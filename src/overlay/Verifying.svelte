@@ -11,6 +11,11 @@
   they are reading. A `late` report — one that arrived after the handoff had already been
   declared not verified (DD-16, FM-26) — says so too, because "verified" and "verified
   three days later" are different facts.
+
+  And when there is **no** report at all, the third half: `not_verified` is reached by three
+  roads (VER-06) and only one of them leaves an agent's words behind. `reasonKey` is the core's
+  sentence for the other two — the window of VER-06 ran out, or the session ended first —
+  because "Not verified" on its own tells the user nothing about which happened.
 -->
 <script lang="ts">
   import { t } from '../i18n';
@@ -19,11 +24,19 @@
   const {
     verify,
     result,
+    reasonKey = null,
   }: {
     /** What the agent will check: the spec's own `verify` text. */
     verify: string | null;
     /** What it reported, once it has. */
     result: VerifyResultView | null;
+    /**
+     * The catalogue key of why it is `not_verified` with nothing reported (VER-06).
+     *
+     * `null` whenever there is something better to show, which the core decides: any other
+     * state, and a report the agent made itself.
+     */
+    reasonKey?: string | null;
   } = $props();
 </script>
 
@@ -35,7 +48,11 @@
     the agent could not check at all.
   -->
   {#if result === null}
-    {#if verify !== null}
+    {#if reasonKey !== null}
+      <p class="verify-result" data-verify-reason={reasonKey}>
+        <span class="verify-state">{t(reasonKey)}</span>
+      </p>
+    {:else if verify !== null}
       <p class="verify-intro">{t('overlay.shouldCheck')}</p>
       <blockquote class="verify-text">{verify}</blockquote>
     {/if}

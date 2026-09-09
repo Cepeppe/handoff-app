@@ -65,6 +65,13 @@ export interface HandoffState {
     readonly state: string;
     readonly detail: string | null;
   } | null;
+  /**
+   * Why a `not_verified` handoff is not verified, when no report says it (VER-06).
+   *
+   * A catalogue key, `null` on every other state and on a `not_verified` the agent reported
+   * itself — there `verifyResult` carries the agent's own detail.
+   */
+  readonly notVerifiedReason: string | null;
   readonly callAttached: boolean;
   readonly undelivered: number;
   readonly requestText: string | null;

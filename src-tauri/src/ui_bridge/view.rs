@@ -408,6 +408,12 @@ pub struct HandoffView {
     pub verify: Option<String>,
     /// What it reported (VER-05); the label "declared by agent" belongs to it.
     pub verify_result: Option<VerifyResultView>,
+    /// Why a `not_verified` handoff is not verified, when no report says it (VER-06).
+    ///
+    /// A catalogue key like every other text this module produces, and `None` whenever the
+    /// tab has something better to show: any other state, and a `not_verified` the agent
+    /// reported itself, where `verify_result` carries the agent's own detail.
+    pub not_verified_reason: Option<&'static str>,
     /// Which buttons to draw.
     pub actions: ActionsView,
     /// The user's own words, when it grew from a request (OPEN-04).
@@ -474,6 +480,9 @@ pub fn build(
         history: history_of(snapshot, exchanges),
         verify: snapshot.verify.clone(),
         verify_result,
+        not_verified_reason: snapshot
+            .not_verified_reason
+            .map(crate::store::NotVerifiedReason::key),
         actions: actions_of(snapshot),
         request_text: snapshot.request_text.clone(),
         linked_request: snapshot
@@ -570,7 +579,10 @@ fn banner_of(snapshot: &HandoffSnapshot, ui_state: UiState) -> Option<BannerView
 }
 
 /// The catalogue key of a state's label (§8.4).
-fn state_key(state: HandoffState) -> &'static str {
+///
+/// `pub(super)` for the Log page, which labels a row of the record with the same table: two
+/// mappings would be two names for one handoff, one in the strip and one in the log.
+pub(super) fn state_key(state: HandoffState) -> &'static str {
     match state {
         HandoffState::AwaitingSpec => "state.awaitingSpec",
         HandoffState::Active => "state.active",
@@ -962,6 +974,7 @@ mod tests {
             final_outcome: None,
             orphan: false,
             runbook_proposal: None,
+            not_verified_reason: None,
             created_at: at("2026-09-09T09:00:00Z"),
             closed_at: None,
         }

@@ -83,6 +83,22 @@
     await runOn(current.tab.id, action, payload);
   }
 
+  /**
+   * The user answered the runbook rewrite of RUN-09 (§7.12 row 3).
+   *
+   * The store clears the question only when an accepted rewrite was actually written, so a
+   * failure leaves the two buttons where they are and the notice says what went wrong — a
+   * suggestion the user answered and never got would be worse than asking twice.
+   */
+  async function answerProposal(id: string, accept: boolean): Promise<void> {
+    try {
+      await bridge().resolveRunbookProposal(id, accept);
+    } catch (error) {
+      showNotice({ kind: 'error', text: t('install.failed', { reason: String(error) }) });
+    }
+    await refreshCurrent();
+  }
+
   /** Opens the FM-20 list, or closes it when it is already open. */
   async function offerRelink(id: string): Promise<void> {
     if (relinking !== null) {
@@ -179,6 +195,34 @@
       <p class="banner banner-orphan">{t('overlay.orphan')}</p>
     {/if}
 
+    <!--
+      The runbook rewrite of RUN-09, on the handoff that produced it: "update runbook <name>
+      with the corrected sequence?", one click either way (§7.12 row 3). It is asked here and
+      not on the Runbooks page because the answer depends on the correction the user has just
+      lived through, which is what this tab shows. Declining keeps both files.
+    -->
+    {#if view.runbookProposal !== null}
+      <section class="runbook-proposal" data-runbook-proposal={view.runbookProposal.runbookId}>
+        <p>{t('overlay.runbookProposal', { name: view.runbookProposal.fileName })}</p>
+        <div class="runbook-proposal-actions">
+          <button
+            type="button"
+            class="button button-primary"
+            onclick={() => void answerProposal(view.tab.id, true)}
+          >
+            {t('overlay.runbookAccept')}
+          </button>
+          <button
+            type="button"
+            class="button button-quiet"
+            onclick={() => void answerProposal(view.tab.id, false)}
+          >
+            {t('overlay.runbookDecline')}
+          </button>
+        </div>
+      </section>
+    {/if}
+
     {#if view.goal !== null}
       <h1 class="goal">{view.goal}</h1>
     {/if}
@@ -253,8 +297,12 @@
         <QuestionPending pending={view.pending} />
       {/if}
 
-      {#if view.uiState === 'verifying' || view.verifyResult !== null}
-        <Verifying verify={view.verify} result={view.verifyResult} />
+      {#if view.uiState === 'verifying' || view.verifyResult !== null || view.notVerifiedReason !== null}
+        <Verifying
+          verify={view.verify}
+          result={view.verifyResult}
+          reasonKey={view.notVerifiedReason}
+        />
       {/if}
 
       <StepView {view} />

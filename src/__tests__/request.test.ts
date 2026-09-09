@@ -319,6 +319,7 @@ describe('the Change control of FM-20', () => {
       actions: ACTIONS,
       requestText: 'create the API key',
       linkedRequest: { id: 'hf_9p2r4k7m3t', text: 'create the API key' },
+      notVerifiedReason: null,
       runbookProposal: null,
       resumedFrom: null,
       callAttached: true,
