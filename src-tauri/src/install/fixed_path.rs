@@ -231,6 +231,16 @@ mod tests {
             command,
             "\"C:\\Users\\someone\\AppData\\Local\\Baton\\handoff-mcp.exe\" hook stop"
         );
+
+        // Reading it back is a Windows question, and only on Windows does it have this
+        // answer: `Path` parses with the host's separators, so on a Unix host the whole
+        // `C:\…\handoff-mcp.exe` is one component and `file_stem` is that whole string.
+        // Nothing in production meets the case — a Windows path only ever appears in the
+        // configuration of a Windows installation, which is read by a Windows build — and
+        // the reverse direction needs no gate: `Path` on Windows accepts `/` as a
+        // separator, which is why the POSIX-looking golden fixtures are read correctly on
+        // both platforms.
+        #[cfg(windows)]
         assert_eq!(server_in_hook_command(&command).as_deref(), Some(server));
     }
 
@@ -254,9 +264,16 @@ mod tests {
             server_in_hook_command(&hook_command(old)).as_deref(),
             Some(old)
         );
+        // The bare spelling every machine installed before the quoting fix carries; a
+        // Windows one, so it only parses on Windows (see the test above).
+        #[cfg(windows)]
         assert_eq!(
             server_in_hook_command("C:\\Baton\\handoff-mcp.exe hook stop"),
             Some(PathBuf::from("C:\\Baton\\handoff-mcp.exe"))
+        );
+        assert_eq!(
+            server_in_hook_command("/old/Baton/handoff-mcp hook stop"),
+            Some(PathBuf::from("/old/Baton/handoff-mcp"))
         );
         // The development sidecar spelling is ours too.
         assert!(server_in_hook_command(
