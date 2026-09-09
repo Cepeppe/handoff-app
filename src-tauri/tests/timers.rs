@@ -80,6 +80,18 @@ const REGISTRY: &[Timer] = &[
         armed_when: "a connection has been accepted and has two seconds to send its `hello` \
                      (§6.2). A bound on one read, not a wake-up.",
     },
+    Timer {
+        file: "src/e2e/server.rs",
+        call: "tokio::time::sleep",
+        count: 1,
+        armed_when: "the automation channel of DD-33 refused a token and is holding the \
+                     connection for a second before closing it — the same penalty the \
+                     product listener imposes (§6.2). It exists only in an `--features e2e` \
+                     build, which no release enables, and only after a wrong token; it is \
+                     declared here all the same, because this registry is what a person \
+                     reads when they ask what wakes the app up, and a site the suite is \
+                     blind to is a site nobody re-reads.",
+    },
 ];
 
 /// Everything that arms a timer, in the spelling the sources use. `tokio::time` is the only

@@ -19,6 +19,8 @@ dist/
 # Test and tooling output
 coverage/
 *.log
+# The e2e report names a machine and a moment (tests/e2e/main.ts)
+tests/e2e/results/
 
 # Local environment
 .env

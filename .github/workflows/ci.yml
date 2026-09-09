@@ -90,6 +90,13 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # The transport of the automation channel (DD-33) is behind a feature, so the suite
+      # above compiles it to nothing. Only this target is asked for: the rest of the crate
+      # is already covered by the run above and by the all-features clippy.
+      - name: cargo test (the automation channel)
+        working-directory: src-tauri
+        run: cargo test --features e2e --test e2e_channel
+
       - name: cargo deny
         working-directory: src-tauri
         run: cargo deny check
@@ -104,6 +111,24 @@ jobs:
 
       - name: Tauri build
         run: pnpm tauri build --debug
+
+      # DD-33, §11.5: "it does not exist in release builds ... CI asserts the symbol is
+      # absent from release binaries". The binary is built without `--features e2e`, which
+      # is what every shipped build does, and then grepped for the two names the endpoint
+      # cannot exist without. Only the binary is built: a bundle would add the installer
+      # and prove nothing more.
+      - name: Release build, without the automation channel
+        working-directory: src-tauri
+        run: cargo build --release --bin handoff-app
+
+      - name: The release binary carries no automation channel
+        run: node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe
+
+      # The positive control, and it is not decoration: a grep for a string nobody writes
+      # passes for ever, including on the day the grep breaks. The debug binary the step
+      # above left behind was built **with** the feature, so the same script must report it.
+      - name: The check can still fail
+        run: node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe
 
   # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
   # this leg runs only when it is dispatched by hand; T-059 makes it run on every push.

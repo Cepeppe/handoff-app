@@ -3,11 +3,24 @@
 //! A round is opened when the handoff starts and again whenever replacement steps arrive
 //! (§7.4); the verification of §8.1 is recorded on the round it belongs to, including a
 //! report that arrived after `not_verified` and was accepted as late (VER-10, DD-16).
+//!
+//! # The two free-text columns are swept (LOG-02, DET-04)
+//!
+//! `steps_json` holds the same texts as the spec, and `handoffs` stores its spec masked
+//! ([`super::redact`]) — so a certain secret written into a step's text would be a
+//! placeholder in one table and a secret in the other. `verify_detail` is what an agent
+//! typed and is under the same rule: no row of the log may hold a value the certain detector
+//! matches. Both go through [`super::redact::sweep`] here rather than at the call site, for
+//! the reason `handoffs::upsert` gives: no caller can then put one in by accident.
+//!
+//! `sends.text_as_sent` and `events.payload_json` are deliberately **not** treated this way
+//! (`tests/log_invariants.rs` says why): LOG-03 wants those to be what actually left.
 
 use rusqlite::{params, Row};
 
 use super::db::Db;
 use super::error::{Result, StoreError};
+use super::redact;
 use super::time::Timestamp;
 
 /// One row of `rounds`.
@@ -33,13 +46,18 @@ pub struct RoundRow {
     pub verify_late: bool,
 }
 
-/// Writes a round, creating it or replacing it.
+/// Writes a round, creating it or replacing it, with its free text swept (LOG-02).
 ///
 /// # Errors
 ///
 /// [`StoreError::Persistence`] when the write fails; a round of a handoff that does not
 /// exist is refused by the foreign key.
 pub fn upsert(db: &Db, row: &RoundRow) -> Result<()> {
+    let steps_json = redact::sweep(&row.steps_json, &[]);
+    let verify_detail = row
+        .verify_detail
+        .as_deref()
+        .map(|detail| redact::sweep(detail, &[]));
     db.conn()
         .execute(
             "INSERT INTO rounds (\
@@ -57,11 +75,11 @@ pub fn upsert(db: &Db, row: &RoundRow) -> Result<()> {
             params![
                 row.handoff_id,
                 row.no,
-                row.steps_json,
+                steps_json,
                 row.started_at,
                 row.ended_at,
                 row.verify_ok,
-                row.verify_detail,
+                verify_detail,
                 row.verify_reported_at,
                 row.verify_late,
             ],
@@ -111,6 +129,46 @@ mod tests {
     use super::*;
     use crate::log::handoffs;
     use crate::log::testing::{handoff, round};
+
+    /// A value every build of the certain pattern file matches as `api_key` (§4.6).
+    const STRIPE_KEY: &str = "sk_live_0123456789abcdefghij";
+
+    #[test]
+    fn a_secret_in_a_step_text_or_in_a_report_never_reaches_the_row() {
+        // Found by the e2e suite of T-043, not by a unit test: `handoffs` masked its spec
+        // and this table wrote the same step texts unmasked, so `rounds.steps_json` held a
+        // key that `spec_json` had already replaced with a placeholder.
+        let db = Db::open_in_memory().expect("a database");
+        handoffs::upsert(&db, &handoff("hf_0123456789")).expect("a handoff");
+
+        let mut leaky = round("hf_0123456789", 1);
+        leaky.steps_json = format!(r#"[{{"text":"paste {STRIPE_KEY} into .env"}}]"#);
+        leaky.verify_detail = Some(format!("I checked the key {STRIPE_KEY}"));
+        upsert(&db, &leaky).expect("the round");
+
+        let stored = list_for_handoff(&db, "hf_0123456789").expect("the rounds");
+        let row = stored.first().expect("one round");
+        assert!(
+            !row.steps_json.contains(STRIPE_KEY),
+            "the step text still holds the key: {}",
+            row.steps_json
+        );
+        assert!(
+            row.steps_json.contains("[treated as secret: api_key]"),
+            "the mask of §5.9 is what replaces it: {}",
+            row.steps_json
+        );
+        assert!(
+            !row.verify_detail
+                .as_deref()
+                .unwrap_or("")
+                .contains(STRIPE_KEY),
+            "the report still holds the key: {:?}",
+            row.verify_detail
+        );
+        // Only the matched span goes: the instruction around it is what the Log page shows.
+        assert!(row.steps_json.contains("into .env"));
+    }
 
     #[test]
     fn a_round_is_written_updated_and_read_back_in_order() {

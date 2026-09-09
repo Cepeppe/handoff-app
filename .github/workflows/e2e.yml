@@ -1,0 +1,107 @@
+name: e2e
+
+# The end-to-end suite of §11.5, against the real Claude Code.
+#
+# `workflow_dispatch` only, and it will stay that way until the owner decides otherwise:
+# running a real agent in CI needs an `ANTHROPIC_API_KEY`, and `TASKS.md` §0.4 item 9 records
+# the decision not to provision one — the suite is run by hand with `scripts/e2e.ps1` after
+# every Claude Code update, and the result is recorded in `docs/dev/e2e.md`. This file exists
+# so that turning it on later is a secret and not a task (T-056 is that task).
+#
+# Without the secret every step below is skipped and the job is green, which is deliberate:
+# a dispatch by somebody who has not read this should say "nothing to run", not fail.
+on:
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: 'Scenario ids, space separated; empty runs all nine'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is there a key to run an agent with?
+        id: gate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No ANTHROPIC_API_KEY: the e2e suite is run locally (TASKS.md §0.4 item 9)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Rust toolchain
+        if: steps.gate.outputs.run == 'true'
+        run: rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.run == 'true'
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.gate.outputs.run == 'true'
+
+      # The pinned server (§3.5): the same binary the installer registers, so the scenarios
+      # run against what ships and not against a local build.
+      - name: Fetch the pinned server
+        if: steps.gate.outputs.run == 'true'
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      # Release, not debug: a debug build embeds `devUrl` and comes up with an empty webview
+      # when there is no Vite dev server (the T-040 handoff entry). `pnpm build` fills the
+      # `dist/` a release build loads.
+      - name: Build the frontend
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm build
+
+      - name: Build the app with the automation channel
+        if: steps.gate.outputs.run == 'true'
+        working-directory: src-tauri
+        run: cargo build --release --features e2e --bin handoff-app
+
+      - name: Install Claude Code
+        if: steps.gate.outputs.run == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run the scenarios
+        if: steps.gate.outputs.run == 'true'
+        run: pnpm e2e -- ${{ inputs.scenarios }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: The report
+        if: steps.gate.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: tests/e2e/results/last-run.json
+          if-no-files-found: ignore

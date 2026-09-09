@@ -342,6 +342,12 @@ pub struct Store {
     requests: Box<dyn Requests>,
     watchers: Box<dyn HandoffsObserver>,
     outbox: Vec<Delivery>,
+    /// How long a handoff waits for its verification report (VER-06). The constant of
+    /// §4.1 in every build; the e2e automation channel of DD-33 is the one caller that
+    /// shortens it, so that E2E-10 can watch the window run out inside a test rather than
+    /// in half an hour. It is never persisted: a run that injected twenty seconds must not
+    /// leave them behind for the next one.
+    verifying_timeout_ms: i64,
 }
 
 impl std::fmt::Debug for Store {
@@ -365,6 +371,7 @@ impl Store {
             requests: Box::new(NoRequests),
             watchers: Box::new(NoWatchers),
             outbox: Vec::new(),
+            verifying_timeout_ms: VERIFYING_TIMEOUT_MS,
         }
     }
 
@@ -413,7 +420,23 @@ impl Store {
             requests,
             watchers: Box::new(NoWatchers),
             outbox: Vec::new(),
+            verifying_timeout_ms: VERIFYING_TIMEOUT_MS,
         })
+    }
+
+    /// The verification window in force (VER-06).
+    #[must_use]
+    pub fn verifying_timeout_ms(&self) -> i64 {
+        self.verifying_timeout_ms
+    }
+
+    /// Shortens (or restores) the verification window for this process.
+    ///
+    /// The one caller is the automation channel of DD-33, which E2E-10 needs to watch the
+    /// window of VER-06 run out. Nothing writes it to the database and nothing else calls
+    /// it: the product value is the constant of §4.1.
+    pub fn set_verifying_timeout_ms(&mut self, ms: i64) {
+        self.verifying_timeout_ms = ms;
     }
 
     /// The outcomes waiting to be sent, and clears them.
@@ -1301,7 +1324,9 @@ impl Store {
     /// [`Refusal::NotFound`] or [`Refusal::Persistence`].
     pub fn verifying_timeout(&mut self, handoff_id: &str, now: &Timestamp) -> Result<()> {
         let mut draft = self.draft(handoff_id)?;
-        if draft.state != HandoffState::AwaitingVerification || !draft.verifying_expired(now) {
+        if draft.state != HandoffState::AwaitingVerification
+            || !draft.verifying_expired(now, self.verifying_timeout_ms)
+        {
             // The report arrived, or the window was restarted by a correction round.
             return Ok(());
         }
@@ -1324,7 +1349,7 @@ impl Store {
             .values()
             .filter(|handoff| {
                 handoff.state == HandoffState::AwaitingVerification
-                    && handoff.verifying_expired(now)
+                    && handoff.verifying_expired(now, self.verifying_timeout_ms)
             })
             .map(|handoff| handoff.id.clone())
             .collect()
@@ -1339,7 +1364,7 @@ impl Store {
             .filter_map(|handoff| handoff.verifying_since.as_ref())
             .map(|since| {
                 let elapsed = now.millis().saturating_sub(since.millis());
-                u64::try_from(VERIFYING_TIMEOUT_MS.saturating_sub(elapsed)).unwrap_or(0)
+                u64::try_from(self.verifying_timeout_ms.saturating_sub(elapsed)).unwrap_or(0)
             })
             .min()
             .map(Duration::from_millis)
@@ -1981,6 +2006,13 @@ pub enum Command {
         /// Where the answer goes.
         reply_to: oneshot::Sender<Result<()>>,
     },
+    /// Reads or writes the verification window itself (DD-33, E2E-10).
+    VerifyingWindow {
+        /// The new window in milliseconds, or nothing to read the one in force.
+        set: Option<i64>,
+        /// Where the answer goes: the window after the command.
+        reply_to: oneshot::Sender<i64>,
+    },
     /// One tab (§7.6).
     Snapshot {
         /// Which handoff.
@@ -2209,6 +2241,33 @@ impl StoreHandle {
         .await
     }
 
+    /// The verification window of VER-06 in force (VERIFYING_TIMEOUT_MS unless it was set).
+    pub async fn verifying_timeout_ms(&self) -> i64 {
+        self.ask(
+            |reply_to| Command::VerifyingWindow {
+                set: None,
+                reply_to,
+            },
+            || VERIFYING_TIMEOUT_MS,
+        )
+        .await
+    }
+
+    /// Shortens the verification window for this process.
+    ///
+    /// The one caller is the automation channel of DD-33: E2E-10 has to watch VER-06 run
+    /// out, and thirty minutes is not a length a test can wait. Nothing persists it.
+    pub async fn set_verifying_timeout_ms(&self, ms: i64) -> i64 {
+        self.ask(
+            |reply_to| Command::VerifyingWindow {
+                set: Some(ms),
+                reply_to,
+            },
+            || ms,
+        )
+        .await
+    }
+
     /// A session's server went away.
     pub async fn session_disconnected(&self, session_ref: String, at: Timestamp) -> Result<()> {
         self.ask(
@@ -2399,6 +2458,12 @@ fn apply(store: &mut Store, command: Command) {
             reply_to,
         } => {
             let _ = reply_to.send(store.session_disconnected(&session_ref, &at));
+        }
+        Command::VerifyingWindow { set, reply_to } => {
+            if let Some(ms) = set {
+                store.set_verifying_timeout_ms(ms);
+            }
+            let _ = reply_to.send(store.verifying_timeout_ms());
         }
         Command::VerifyingTimeout {
             handoff_id,

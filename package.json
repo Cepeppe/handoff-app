@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "check:server": "node scripts/fetch-server.mjs --check",
+    "e2e": "node tests/e2e/main.ts",
     "tauri": "tauri"
   },
   "dependencies": {

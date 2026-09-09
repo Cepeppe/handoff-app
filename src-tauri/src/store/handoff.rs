@@ -536,11 +536,15 @@ impl Handoff {
     }
 
     /// Whether the verification window of VER-06 has run out at `now`.
+    ///
+    /// `window_ms` is [`VERIFYING_TIMEOUT_MS`] in every build; the store carries it as a
+    /// field rather than reading the constant here because the e2e automation channel of
+    /// DD-33 shortens it for one run (E2E-10), and a handoff must not have to know that.
     #[must_use]
-    pub fn verifying_expired(&self, now: &Timestamp) -> bool {
-        self.verifying_since.as_ref().is_some_and(|since| {
-            now.millis().saturating_sub(since.millis()) >= VERIFYING_TIMEOUT_MS
-        })
+    pub fn verifying_expired(&self, now: &Timestamp, window_ms: i64) -> bool {
+        self.verifying_since
+            .as_ref()
+            .is_some_and(|since| now.millis().saturating_sub(since.millis()) >= window_ms)
     }
 
     /// Whether a late report is still accepted: within `ORPHAN_AGE_MS` of the opening
@@ -725,8 +729,8 @@ mod tests {
     fn the_verifying_window_is_thirty_minutes_and_a_late_report_seven_days() {
         let mut handoff = handoff();
         handoff.verifying_since = Some(at("2026-09-08T11:00:00Z"));
-        assert!(!handoff.verifying_expired(&at("2026-09-08T11:29:59Z")));
-        assert!(handoff.verifying_expired(&at("2026-09-08T11:30:00Z")));
+        assert!(!handoff.verifying_expired(&at("2026-09-08T11:29:59Z"), VERIFYING_TIMEOUT_MS));
+        assert!(handoff.verifying_expired(&at("2026-09-08T11:30:00Z"), VERIFYING_TIMEOUT_MS));
 
         assert!(handoff.accepts_a_late_report(&at("2026-09-15T10:59:59Z")));
         assert!(!handoff.accepts_a_late_report(&at("2026-09-15T11:00:00Z")));

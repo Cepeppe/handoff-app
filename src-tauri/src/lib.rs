@@ -59,6 +59,12 @@ pub mod ui_bridge;
 #[cfg(feature = "secrets-write")]
 pub mod secrets;
 
+/// The automation channel of DD-33, compiled only under `--features e2e`: the second socket
+/// through which the harness of §11.5 plays the user. No release build enables the feature,
+/// and `scripts/check-no-automation.mjs` is what proves the names are absent from one.
+#[cfg(feature = "e2e")]
+pub mod e2e;
+
 /// Starts the application: the startup sequence of §7.2, in its order.
 ///
 /// ```text
@@ -210,7 +216,15 @@ pub fn run() {
         // WIN-02, WIN-03, WIN-04: the close button hides the window to the tray, the focus
         // change is what the panel collapses on, and a move is remembered per monitor.
         .on_window_event(ui_bridge::on_window_event)
-        .setup(|app| ui_bridge::init(app.handle()))
+        .setup(|app| {
+            ui_bridge::init(app.handle())?;
+            // DD-33: the harness of §11.5 needs an `AppHandle` to press a button with, and
+            // this is the first moment there is one. Compiled out of every build that does
+            // not ask for `--features e2e`.
+            #[cfg(feature = "e2e")]
+            e2e::start(app.handle());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while starting the Baton application");
 
