@@ -346,7 +346,7 @@ fn a_screenshot() -> ScreenshotPayload {
         height: 900,
         redactions: 0,
         redaction_boxes_json: Some("[]".to_owned()),
-        ocr_engine: Some("tesseract".to_owned()),
+        ocr_engine: Some("ocrs".to_owned()),
         patterns_version: Some("1".to_owned()),
         comment: Some("is this right?".to_owned()),
     }

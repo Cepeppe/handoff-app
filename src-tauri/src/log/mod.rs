@@ -143,7 +143,7 @@ pub(crate) mod testing {
             image_w: Some(1600),
             image_h: Some(900),
             redaction_boxes_json: Some("[]".to_owned()),
-            ocr_engine: Some("tesseract".to_owned()),
+            ocr_engine: Some("ocrs".to_owned()),
             patterns_version: Some("1".to_owned()),
         }
     }

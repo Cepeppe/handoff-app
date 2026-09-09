@@ -1,0 +1,24 @@
+Text detection and recognition models for `ocrs`
+================================================
+
+`text-detection.rten` and `text-recognition.rten` in this directory are the English
+models of the `ocrs` project, by Robert Knight, distributed unmodified.
+
+    Source:   https://github.com/robertknight/ocrs-models
+    Weights:  https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten
+              https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten
+    Licence:  Creative Commons Attribution-ShareAlike 4.0 International
+              (CC BY-SA 4.0), https://creativecommons.org/licenses/by-sa/4.0/
+
+The models were trained on the HierText dataset (Long et al., 2022), which is itself
+distributed under CC BY-SA 4.0; the licence of the training data is why the weights
+carry it.
+
+CC BY-SA 4.0 asks for attribution and for the same licence on adaptations of the
+licensed material. The files above are shipped byte for byte as they were published:
+they are not adapted, and the application that reads them is a separate work that
+merely uses their output. This notice, kept beside the files inside the application
+bundle, is the attribution.
+
+The `ocrs` source code itself is a separate matter: the crate is under MIT OR
+Apache-2.0 and is covered by the third-party notices of the application.

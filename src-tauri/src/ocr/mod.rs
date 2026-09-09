@@ -1,7 +1,7 @@
 //! OCR (§7.9, OCR-01..05, DD-30).
 //!
-//! One [`OcrEngine`] trait, one implementation per platform behind it, and the selection
-//! rule of §7.9: the operating system's engine when it is available, the bundled one
+//! One [`OcrEngine`] trait, one implementation per file behind it, and the selection rule
+//! of §7.9: the operating system's engine when it is available, the bundled one
 //! otherwise, and an engine that errors or outstays [`OCR_ENGINE_TIMEOUT_MS`] falls through
 //! to the next. Everything is local and offline — no OCR text ever leaves the machine
 //! (NFR-02) — and the engine that answered is recorded, because the outcome and the log
@@ -20,11 +20,11 @@
 //!
 //! A [`TextBlock`] is **one line** of recognised text. That is the one granularity all
 //! three engines of §7.9 produce faithfully — Vision returns line observations, `OcrLine`
-//! is the unit `Windows.Media.Ocr` reports, and Tesseract can be asked for it — and the
-//! parity matters more than the precision: a fallback that changed the shape of the result
-//! would change what §7.10 detects, and FM-16 promises lower accuracy, not a different
-//! pipeline. Word boxes are recoverable from the pixels; a line the engine never separated
-//! is not.
+//! is the unit `Windows.Media.Ocr` reports, and `ocrs` groups its detected words into lines
+//! before it recognises them — and the parity matters more than the precision: a fallback
+//! that changed the shape of the result would change what §7.10 detects, and FM-16 promises
+//! lower accuracy, not a different pipeline. Word boxes are recoverable from the pixels; a
+//! line the engine never separated is not.
 //!
 //! # What runs where
 //!
@@ -33,16 +33,16 @@
 //! (OCR-04) while a native engine holds a thread for several seconds. On Windows that is
 //! also load-bearing for a second reason, written down in [`windows`].
 //!
-//! # The bundled engine is not here yet
+//! # The bundled engine
 //!
-//! OCR-03 bundles Tesseract as the fallback and this module has no `tesseract.rs`: no
-//! published crate builds it from source without a system install, and the ways round that
-//! are decisions about what the product ships rather than implementation choices. The
-//! survey, the four options and their costs are in `DEVIATIONS.md` and in the T-047 entry
-//! of `TASKS.md`; until one is chosen, [`engines`] returns the platform engine alone and
-//! FM-16 has no answer on a machine whose language pack is missing.
-// TASK: T-047 — the bundled fallback engine of OCR-03.
+//! [`ocrs`] is the second entry of [`engines`] on every platform: pure Rust, English
+//! models, no native dependency and nothing downloaded at build time (OCR-03, A-26). It is
+//! what makes FM-16 a degradation rather than a hole, and it is the reason this module can
+//! promise the detector an input on a machine that has no OCR language pack at all.
 
+pub mod ocrs;
+#[cfg(all(test, windows))]
+pub mod paint;
 #[cfg(target_os = "macos")]
 pub mod vision;
 #[cfg(target_os = "windows")]
@@ -99,7 +99,7 @@ pub struct Recognition {
 /// a blocking thread and may abandon it when its budget runs out, so nothing here may hold
 /// a resource whose owner has to be told.
 pub trait OcrEngine: Send + Sync {
-    /// The name recorded in the outcome and the log: `windows`, `vision`, `tesseract`.
+    /// The name recorded in the outcome and the log: `windows`, `vision`, `ocrs`.
     ///
     /// It is the vocabulary the published outcome fixtures already use
     /// (`fixtures/outcomes/screenshot.json` carries `"ocr_engine": "vision"`), so it is a
@@ -129,8 +129,6 @@ pub trait OcrEngine: Send + Sync {
 
 /// The engines of this platform, in the order §7.9 tries them: the operating system's
 /// first, the bundled one after it.
-///
-/// The bundled one is missing; see the module documentation.
 #[must_use]
 pub fn engines() -> Vec<Arc<dyn OcrEngine>> {
     #[cfg(target_os = "windows")]
@@ -139,8 +137,8 @@ pub fn engines() -> Vec<Arc<dyn OcrEngine>> {
     let os_engine: Option<Arc<dyn OcrEngine>> = Some(Arc::new(vision::VisionOcr));
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let os_engine: Option<Arc<dyn OcrEngine>> = None;
-    // The bundled engine of OCR-03 goes after this one, when there is one to put here.
-    os_engine.into_iter().collect()
+    let bundled: Arc<dyn OcrEngine> = ocrs::OcrsOcr::bundled();
+    os_engine.into_iter().chain(Some(bundled)).collect()
 }
 
 /// Read `image` with the first engine of this platform that answers (§7.9).
@@ -149,7 +147,8 @@ pub fn engines() -> Vec<Arc<dyn OcrEngine>> {
 ///
 /// [`OcrError::NoEngine`] when every engine was unavailable, refused or outstayed its
 /// budget, with one reason each. There is no partial answer: a caller that got `Err` has to
-/// treat the capture as unread, which is what FM-16 degrades to when nothing is bundled.
+/// treat the capture as unread. With the bundled engine in the list that means an
+/// installation whose model resources are missing, not a machine without a language pack.
 pub async fn select_and_run(
     image: Arc<RgbaImage>,
     lang_hint: Option<String>,
@@ -296,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn the_first_available_engine_answers_and_is_named() {
         let (os, os_calls) = Stub::wired("windows", true, Answer::Lines("sk_live_notarealkey"));
-        let (bundled, bundled_calls) = Stub::wired("tesseract", true, Answer::Lines("never asked"));
+        let (bundled, bundled_calls) = Stub::wired("ocrs", true, Answer::Lines("never asked"));
         let recognition = run_with(
             vec![os, bundled],
             an_image(),
@@ -321,7 +320,7 @@ mod tests {
     async fn an_unavailable_os_engine_falls_through_to_the_bundled_one() {
         // FM-16 as the user meets it: no language pack, so the OS engine is not even asked.
         let (os, os_calls) = Stub::wired("windows", false, Answer::Lines("never asked"));
-        let (bundled, _) = Stub::wired("tesseract", true, Answer::Lines("read by the fallback"));
+        let (bundled, _) = Stub::wired("ocrs", true, Answer::Lines("read by the fallback"));
         let recognition = run_with(
             vec![os, bundled],
             an_image(),
@@ -331,7 +330,7 @@ mod tests {
         .await
         .expect("the fallback answers");
 
-        assert_eq!(recognition.engine, "tesseract");
+        assert_eq!(recognition.engine, "ocrs");
         assert_eq!(recognition.blocks[0].text, "read by the fallback");
         assert_eq!(
             os_calls.load(Ordering::SeqCst),
@@ -343,7 +342,7 @@ mod tests {
     #[tokio::test]
     async fn an_engine_that_errors_falls_through_to_the_next() {
         let (os, _) = Stub::wired("windows", true, Answer::Fails("the API refused"));
-        let (bundled, _) = Stub::wired("tesseract", true, Answer::Lines("read by the fallback"));
+        let (bundled, _) = Stub::wired("ocrs", true, Answer::Lines("read by the fallback"));
         let recognition = run_with(
             vec![os, bundled],
             an_image(),
@@ -353,7 +352,7 @@ mod tests {
         .await
         .expect("the fallback answers");
 
-        assert_eq!(recognition.engine, "tesseract");
+        assert_eq!(recognition.engine, "ocrs");
     }
 
     #[tokio::test]
@@ -362,7 +361,7 @@ mod tests {
         // The abandoned thread is still sleeping when this test ends, deliberately: the
         // point is that the caller does not.
         let (os, _) = Stub::wired("windows", true, Answer::Hangs);
-        let (bundled, _) = Stub::wired("tesseract", true, Answer::Lines("read by the fallback"));
+        let (bundled, _) = Stub::wired("ocrs", true, Answer::Lines("read by the fallback"));
         let started = std::time::Instant::now();
         let recognition = run_with(
             vec![os, bundled],
@@ -373,7 +372,7 @@ mod tests {
         .await
         .expect("the fallback answers");
 
-        assert_eq!(recognition.engine, "tesseract");
+        assert_eq!(recognition.engine, "ocrs");
         assert!(
             started.elapsed() < Duration::from_secs(4),
             "the caller waited for the hung engine instead of moving on: {:?}",
@@ -384,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn every_engine_failing_reports_each_reason_in_order() {
         let (os, _) = Stub::wired("windows", false, Answer::Lines("never asked"));
-        let (bundled, _) = Stub::wired("tesseract", true, Answer::Fails("no traineddata"));
+        let (bundled, _) = Stub::wired("ocrs", true, Answer::Fails("the models are missing"));
         let error = run_with(
             vec![os, bundled],
             an_image(),
@@ -396,9 +395,9 @@ mod tests {
 
         let said = error.to_string();
         assert!(said.contains("windows: unavailable"), "{said}");
-        assert!(said.contains("tesseract: no traineddata"), "{said}");
+        assert!(said.contains("ocrs: the models are missing"), "{said}");
         assert!(
-            said.find("windows").unwrap() < said.find("tesseract").unwrap(),
+            said.find("windows").unwrap() < said.find("ocrs").unwrap(),
             "the reasons are in the order the engines were tried: {said}"
         );
     }
@@ -415,21 +414,18 @@ mod tests {
     }
 
     #[test]
-    fn this_platform_offers_the_operating_systems_engine_first() {
+    fn this_platform_offers_the_operating_systems_engine_first_and_the_bundled_one_last() {
         let list = engines();
-        if cfg!(any(target_os = "windows", target_os = "macos")) {
-            let first = list.first().expect("a platform engine");
-            assert_eq!(
-                first.name(),
-                if cfg!(target_os = "windows") {
-                    "windows"
-                } else {
-                    "vision"
-                }
-            );
-        }
-        // The bundled engine of OCR-03 is not in the list yet (T-047); when it lands this
-        // assertion is what says the OS engine still comes first.
-        assert!(list.len() <= 2, "an engine appeared that nobody declared");
+        let names: Vec<&str> = list.iter().map(|engine| engine.name()).collect();
+        let expected: &[&str] = if cfg!(target_os = "windows") {
+            &["windows", "ocrs"]
+        } else if cfg!(target_os = "macos") {
+            &["vision", "ocrs"]
+        } else {
+            // Not a platform of §1.5, and the one shape in which OCR-03 has to answer
+            // alone: the crate still compiles and still has an engine.
+            &["ocrs"]
+        };
+        assert_eq!(names, expected, "the order of §7.9 changed");
     }
 }

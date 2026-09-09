@@ -55,8 +55,23 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # Without it the crate resolves nothing over the network, which is what we want anyway: the
 # four schemas are registered as in-memory resources.
 jsonschema = { version = "0.55", default-features = false }
+# The bundled OCR engine of OCR-03 and FM-16: pure Rust, English models, nothing fetched at
+# build time (`DEVIATIONS.md`, 2026-09-09, has the survey that ruled Tesseract out). Its two
+# `.rten` models are committed under `models/ocrs/` and shipped as Tauri resources, not
+# linked in. `default-features = false` drops `export-wasm`, which is only meaningful for a
+# `wasm32` target this application never builds; `rten` is the inference engine the models
+# are in the format of, and it is the crate that brings `rayon` into the tree — the one
+# place a thread pool earns its keep here, since a full-resolution capture (CAP-05) is what
+# it is asked to read.
+ocrs = { version = "0.13.0", default-features = false, features = ["rten"] }
 rand = "0.10.2"
 regex = "1.13.1"
+# The inference engine `ocrs` runs on, named here because loading a `.rten` file is
+# `rten::Model::load_file` and `ocrs` does not re-export it. The version tracks the one
+# `ocrs` resolves: two copies of `rten` in the tree would be two `Model` types with the same
+# name, and the second would not fit `OcrEngineParams`. `default-features = false` is what
+# `ocrs` itself asks for.
+rten = { version = "0.26.0", default-features = false }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }

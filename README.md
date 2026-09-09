@@ -114,8 +114,8 @@ Two rules the layout depends on, both explained at the top of `src-tauri/src/lib
 ### OCR
 
 Every capture is read locally before anything can be sent, because the secret detection is
-built on the text (`OCR-01`). `src-tauri/src/ocr/` holds one `OcrEngine` trait, the engine
-of the operating system behind it, and the selection rule: the OS engine when it is
+built on the text (`OCR-01`). `src-tauri/src/ocr/` holds one `OcrEngine` trait, one engine
+per file behind it, and the selection rule: the operating system's engine when it is
 available, the bundled one after it, and an engine that errors or takes longer than ten
 seconds falls through to the next. Nothing leaves the machine — no engine here is a service.
 
@@ -123,11 +123,20 @@ seconds falls through to the next. Nothing leaves the machine — no engine here
 |---|---|
 | `windows` | `Windows.Media.Ocr`, the platform's own recogniser. Available only for a language whose **OCR language pack** is installed; a machine without one falls through, which is what the bundled engine is for. |
 | `vision` | macOS `VNRecognizeTextRequest`. A stub answering "unavailable" until T-059; macOS is deferred. |
-| bundled fallback | **Not chosen yet.** No published crate links Tesseract statically from a vendored source: the four that build it from source download it at build time with `reqwest`, which `deny.toml` refuses; the two `-sys` crates need a system install; and the one prebuilt crate has no Windows target. Until the owner decides, a Windows machine with no OCR language pack has no OCR at all. |
+| `ocrs` | The bundled fallback (`OCR-03`): the pure-Rust `ocrs` engine, English models only. It answers whenever the engine above cannot, which on Windows is a machine with no OCR language pack. |
 
-There is therefore **no build prerequisite** for OCR beyond the ones above, and no
-`tessdata/` resource in `tauri.conf.json` — Tauri refuses a resource glob that matches
-nothing, so the entry arrives with the file it points at.
+The two `ocrs` models are committed unmodified under `src-tauri/models/ocrs/` and shipped
+as Tauri resources (`bundle.resources`), with the CC-BY-SA 4.0 attribution their licence
+asks for in `src-tauri/models/ocrs/LICENSE`. Tesseract was the engine `OCR-03` named until
+2026-09-09: no published crate links it statically from a vendored source, and the ones
+that build it from source download it at build time with `reqwest`, which `deny.toml`
+refuses. `ocrs` and `rten` are pure Rust, so there is **no build prerequisite** for OCR
+beyond the ones above and nothing is fetched during a build.
+
+At run time the engine looks for the models beside the executable, which is where Tauri
+puts a resource on Windows (`../Resources` inside the `.app` on macOS). A build that was
+not bundled — `cargo tauri dev`, `cargo test`, `cargo build` — has no such copy, so the
+lookup then walks up from the executable to the one committed in `src-tauri/`.
 
 ### Cargo features
 

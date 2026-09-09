@@ -44,7 +44,8 @@
     ],
     "externalBin": ["binaries/handoff-mcp"],
     "resources": {
-      "../vendor/handoff-mcp/format/patterns/certain-secrets.v1.json": "patterns/certain-secrets.v1.json"
+      "../vendor/handoff-mcp/format/patterns/certain-secrets.v1.json": "patterns/certain-secrets.v1.json",
+      "models/ocrs/*": "models/ocrs/"
     }
   }
 }

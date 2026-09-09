@@ -1,1 +1,6 @@
 * text=auto eol=lf
+
+# The two OCR models of `src-tauri/models/ocrs/` are 12 MB of weights and must reach the
+# working tree byte for byte: `text=auto` only guesses that they are binary, and a guess is
+# not what a file whose hash is its identity should depend on.
+*.rten binary
