@@ -5,9 +5,10 @@
   sections rather than a single page: §7.6 names six, they arrive with the tasks that own
   them, and a container that already lists them keeps each of those to one entry here.
 
-  General (T-041) and Agents (T-040) are the two that exist. Log is T-045, Runbooks T-044,
-  Network T-051 and Updates T-078; none of them is drawn as an empty placeholder, because a
-  section that says nothing is a section the user has to learn to skip.
+  General (T-041) and Agents (T-040) are the two that exist. Log and Runbooks are both T-045
+  (T-044 writes the runbook files; this page lists them), Network is T-051 and Updates T-078;
+  none of them is drawn as an empty placeholder, because a section that says nothing is a
+  section the user has to learn to skip.
 
   **The panel is wider here and narrower everywhere else** (§7.6: "settings that need more
   room open the window in a wider layout temporarily"). It is asked for on mount and given

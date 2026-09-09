@@ -113,6 +113,24 @@ pub enum Written {
     Proposed(Box<RunbookProposal>),
 }
 
+impl Written {
+    /// Which row of §7.12 this was, in one word, for a log line.
+    ///
+    /// The whole value is never logged: [`Written::Proposed`] carries the proposed document,
+    /// and a debug line that printed it would put a runbook's every step into the log for a
+    /// file nobody has written yet.
+    #[must_use]
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Nothing => "nothing",
+            Self::Created(_) => "created",
+            Self::Refreshed(_) => "refreshed",
+            Self::MarkedFailed(_) => "marked as failed",
+            Self::Proposed(_) => "proposed",
+        }
+    }
+}
+
 /// The writer of `~/.handoff/runbooks/`.
 ///
 /// It holds the folder rather than asking [`crate::paths`] on every call, so that a test can
@@ -358,7 +376,11 @@ impl RunbookSink for RunbookWriter {
         match self.run(db, handoff, final_state) {
             Ok(Written::Proposed(proposal)) => Some(*proposal),
             Ok(written) => {
-                tracing::debug!(handoff_id = %handoff.id, written = ?written, "the runbook folder is up to date");
+                tracing::debug!(
+                    handoff_id = %handoff.id,
+                    written = written.describe(),
+                    "the runbook folder is up to date"
+                );
                 None
             }
             Err(error) => {
