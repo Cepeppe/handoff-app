@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "docs": {
+      "type": "stdio",
+      "command": "./tools/docs-server"
+    },
+    "handoff": {
+      "type": "stdio",
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "claude-code",
+        "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+      },
+      "timeout": 1800000
+    }
+  }
+}

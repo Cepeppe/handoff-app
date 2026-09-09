@@ -1,0 +1,18 @@
+{
+  "numStartups": 42,
+  "mcpServers": {
+    "other": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "some-other-server"
+      ]
+    }
+  },
+  "projects": {
+    "/work/thing": {
+      "allowedTools": []
+    }
+  }
+}

@@ -99,7 +99,11 @@ pub fn socket_pointer_path() -> PathBuf {
 /// visible: on both supported platforms the value is always available, and a caller that
 /// cannot find `~/.handoff/` reports it as a missing token or a missing socket rather than
 /// panicking during startup.
-fn home_dir() -> PathBuf {
+///
+/// `pub(crate)` for [`crate::install`], which needs the home itself and not a folder under
+/// it: the Claude Code adapter writes `~/.claude.json` and `~/.claude/settings.json`, two
+/// names of another product that have nothing to do with `~/.handoff/` (§7.15).
+pub(crate) fn home_dir() -> PathBuf {
     #[allow(deprecated)]
     env::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

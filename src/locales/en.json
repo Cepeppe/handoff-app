@@ -116,5 +116,9 @@
   "notice.actionFailed": "That could not be saved. Nothing changed; try again.",
   "notice.copyFailed": "The clipboard refused the value.",
   "notice.urlRefused": "That link cannot be opened from here.",
-  "notice.openFailed": "That could not be opened."
+  "notice.openFailed": "That could not be opened.",
+  "install.claudeCode.mcpEntry": "The MCP server entry “handoff” in {file}, running {server} with a {minutes}-minute tool timeout",
+  "install.claudeCode.stopHook": "The Stop hook in {file}, running {server}",
+  "install.claudeCode.subagentStopHook": "The SubagentStop hook in {file}, running {server}",
+  "install.claudeCode.hooks": "Two hooks (Stop and SubagentStop) in {file}, same command"
 }

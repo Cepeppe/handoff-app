@@ -116,5 +116,9 @@
   "notice.actionFailed": "Non è stato possibile salvare. Nulla è cambiato; riprova.",
   "notice.copyFailed": "Gli appunti hanno rifiutato il valore.",
   "notice.urlRefused": "Questo link non si può aprire da qui.",
-  "notice.openFailed": "Non è stato possibile aprirlo."
+  "notice.openFailed": "Non è stato possibile aprirlo.",
+  "install.claudeCode.mcpEntry": "La voce del server MCP “handoff” in {file}, che esegue {server} con un timeout degli strumenti di {minutes} minuti",
+  "install.claudeCode.stopHook": "L’hook Stop in {file}, che esegue {server}",
+  "install.claudeCode.subagentStopHook": "L’hook SubagentStop in {file}, che esegue {server}",
+  "install.claudeCode.hooks": "Due hook (Stop e SubagentStop) in {file}, stesso comando"
 }
