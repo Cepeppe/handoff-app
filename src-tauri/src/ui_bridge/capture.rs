@@ -322,16 +322,24 @@ pub async fn start_region_capture(app: AppHandle) -> Result<(), String> {
         // the application; everything else about the monitor comes back from
         // [`selection_setup`], which reads the label, so there is one source for it.
         let url = format!("index.html?selection={}", monitor.id);
-        let built = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
             .title("")
             .decorations(false)
-            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .resizable(false)
             .shadow(false)
-            .visible(false)
-            .build();
+            .visible(false);
+        // The transparency DD-29 asks for. On macOS `transparent` exists only when Tauri is
+        // built with `macos-private-api`, which also has to be declared in the
+        // configuration — and turning it on decides that the bundle can never go to the App
+        // Store, which is the owner's call and not one to take while the platform is
+        // deferred (§0.4 item 7). A `> Note from T-046` under T-059 says so; until then the
+        // macOS branch compiles and the overlay would come up opaque.
+        // TASK: T-059
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.transparent(true);
+        let built = builder.build();
         let window = match built {
             Ok(window) => window,
             Err(error) => {
