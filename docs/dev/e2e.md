@@ -105,8 +105,9 @@ Each assertion declares whether a failure would be a **protocol** failure (the s
 run is wrong: a state the store should not be in, a row that is missing) or a **model**
 failure (the run was well formed and the model did not do what the prompt asked). Only a
 model failure is retried, once, exactly as §11.5 asks. A third kind, **pending**, is an
-assertion whose subject is a later task: E2E-1 and E2E-6 both ask about a runbook file, and
-the runbook writer is T-044, so those two are written, reported and not decisive.
+assertion whose subject is a later task: written and reported, never decisive. No scenario
+uses it at the moment — E2E-1 and E2E-6 both ask about the runbook file, and the writer
+exists now, so both read what is in it.
 
 ## The automation channel
 

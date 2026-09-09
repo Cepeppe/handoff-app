@@ -398,9 +398,12 @@ fn state_of_the_app(
         tracing::error!(error = %error, "the queued requests of the previous run could not be re-queued");
     }
 
+    // The runbook writer of §7.12, over `~/.handoff/runbooks/` (RUN-03a). It is built here
+    // rather than asked for the folder on every write because the environment is settled by
+    // now, and it is the store that tells it a handoff has finished (RUN-01, RUN-09).
     let store = store::Store::load(
         store_db,
-        Box::new(store::NoRunbookSink),
+        Box::new(runbooks::RunbookWriter::in_handoff_home()),
         Box::new(std::sync::Arc::clone(&queue)),
     )
     .inspect_err(|error| tracing::error!(error = %error, "the handoff store could not be restored"))

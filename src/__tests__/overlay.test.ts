@@ -96,6 +96,7 @@ function view(overrides: Partial<HandoffView> = {}): HandoffView {
     actions: ACTIONS,
     requestText: null,
     linkedRequest: null,
+    runbookProposal: null,
     resumedFrom: null,
     callAttached: true,
     undelivered: 0,

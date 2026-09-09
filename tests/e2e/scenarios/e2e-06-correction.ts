@@ -7,15 +7,21 @@
  * closes the handoff as `verified`. What this proves that E2E-1 does not is that a handoff
  * survives a failure — one id, two rounds, the first round kept as history.
  *
- * §11.5 also asks for the "runbook update proposal state". That is written and reported
- * `pending`: the runbook writer and its update proposals are T-044, and `lib.rs` passes
- * `NoRunbookSink` until then.
+ * §11.5 also asks for the "runbook update proposal state", and this scenario deliberately
+ * asserts the runbook it *wrote* rather than a proposal. A proposal is §7.12's third row —
+ * a match on disk whose sequence differs — and a runbook that matched this spec would be
+ * found by the safety net of RUN-07 at the open, which answers with `runbook_match` instead
+ * of opening the handoff: the scenario would then be about RUN-07 and not about the
+ * correction round. What it proves instead is the content half of RUN-09, which no unit test
+ * can reach with a real agent: the sequence actually executed across the two rounds, with
+ * the failure and the correction annotated on the steps they belong to. The proposal itself
+ * is covered by the writer's own suite (`runbooks::writer`).
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { callsTo, startAgent, statuses } from '../agent.ts';
-import { check, pending, type Assertion } from '../classify.ts';
+import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
 import { handoffOf, openPrompt, plantedSpec, REPORT_LINE, VERIFY_TEXT, walkTheSteps } from '../specs.ts';
 import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
@@ -83,6 +89,7 @@ export const correctionScenario: Scenario = {
     const row = log.handoff(id);
     const rounds = log.rounds(id);
     const runbooks = readRunbooks(workspace.home);
+    const steps = readSteps(workspace.home, runbooks[0]);
     log.close();
 
     const reports = callsTo(run, 'handoff_verify');
@@ -131,12 +138,26 @@ export const correctionScenario: Scenario = {
         row?.final_state === 'verified' && handoffOf(closed ?? { handoffs: [] }, id)?.state === 'verified',
         `row: ${JSON.stringify(row)}`,
       ),
-      pending(
+      check(
         'E2E-6',
-        'the runbook of the corrected handoff carries an update proposal (RUN-09)',
-        'T-044',
+        'a runbook was written for the corrected handoff (RUN-01)',
+        'protocol',
         runbooks.length === 1,
-        `runbooks/: ${JSON.stringify(runbooks)} — the writer and its proposals are T-044`,
+        `runbooks/: ${JSON.stringify(runbooks)}`,
+      ),
+      check(
+        'E2E-6',
+        'it holds the sequence actually executed across the two rounds (RUN-02)',
+        'protocol',
+        steps.length === 3 && steps[2]?.text === REPLACEMENT_STEP,
+        `steps: ${JSON.stringify(steps.map((step) => step.text))}`,
+      ),
+      check(
+        'E2E-6',
+        'the failure and the correction are annotations on the steps they belong to (§4.5.1)',
+        'protocol',
+        kindsOn(steps[1]).includes('error') && kindsOn(steps[2]).includes('correction'),
+        `annotations: ${JSON.stringify(steps.map(kindsOn))}`,
       ),
     ] satisfies Assertion[];
   },
@@ -155,4 +176,28 @@ function readRunbooks(home: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** One step of a runbook, as much of it as this scenario looks at. */
+interface RunbookStep {
+  readonly text: string;
+  readonly annotations: readonly { readonly kind: string }[];
+}
+
+/** The steps of the one runbook the run produced. */
+function readSteps(home: string, name: string | undefined): RunbookStep[] {
+  if (name === undefined) return [];
+  try {
+    const runbook = JSON.parse(readFileSync(join(home, 'runbooks', name), 'utf8')) as {
+      steps?: RunbookStep[];
+    };
+    return runbook.steps ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** The kinds of the annotations on one step, in order. */
+function kindsOn(step: RunbookStep | undefined): string[] {
+  return (step?.annotations ?? []).map((annotation) => annotation.kind);
 }

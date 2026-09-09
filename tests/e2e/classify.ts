@@ -18,9 +18,11 @@
  * nothing in `handoff-app` may reach into the other repository (§3.1 rule 3).
  *
  * A third kind exists here that the server's canary does not need: **pending**. An assertion
- * whose subject is a later task (E2E-1's runbook file, which T-044 writes) ships written but
- * reports `pending` and does not decide the verdict — the T-009 precedent. Deleting it would
- * lose the assertion; failing on it would make the suite red for work nobody has done yet.
+ * whose subject is a later task ships written but reports `pending` and does not decide the
+ * verdict — the T-009 precedent. Deleting it would lose the assertion; failing on it would
+ * make the suite red for work nobody has done yet. No scenario needs it at the moment: the
+ * two that did were E2E-1's and E2E-6's runbook checks, and T-044's writer turned them into
+ * ordinary ones.
  */
 
 /** What a failing assertion looked at. */
@@ -109,9 +111,9 @@ export function note(id: string, what: string, ok: boolean, detail?: string): As
  * An assertion whose subject is a later task: written now, reported `pending`, decisive
  * never.
  *
- * The two in this suite are E2E-1's "a runbook file was written" and E2E-6's "the runbook
- * carries an update proposal": the runbook writer is T-044 and `lib.rs` passes
- * `NoRunbookSink` until it exists, so the check cannot pass and deleting it would lose it.
+ * Unused while every scenario's subject exists (T-044 closed the last two). It stays because
+ * the next scenario written ahead of its task needs it — E2E-3 waits for T-049 — and because
+ * the report's own vocabulary is what makes "written but not yet decisive" sayable.
  */
 export function pending(id: string, what: string, task: string, ok: boolean, detail?: string): Assertion {
   return {

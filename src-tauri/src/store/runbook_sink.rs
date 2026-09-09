@@ -16,36 +16,54 @@
 //!   something else or gone entirely, so the request is queued and delivered by the
 //!   clipboard fast path or by the Stop hook.
 //!
-//! Both have a no-op implementation here, which is what the store is built with until the
-//! modules that fill them land.
+//! Both have a no-op implementation here, which is what the store is built with when a test
+//! is not about them.
 //!
-//! [`Requests`] takes the store's own `&Db`: the queue owns no connection (`requests::queue`
-//! says why), and a linking that happened on another connection could not be part of the
-//! transition that caused it.
-// TASK: T-044 — the runbook writer implements `RunbookSink`.
+//! Both take the store's own `&Db`: neither owns a connection (`requests::queue` says why),
+//! a linking that happened on another connection could not be part of the transition that
+//! caused it, and the runbook writer needs the diary of questions and replies that §7.4
+//! keeps no field for (§4.5.1).
 
 use crate::log::Db;
 use crate::requests::queue::OpenLink;
+use crate::runbooks::RunbookProposal;
 
 use super::handoff::{FinalState, Handoff};
 
 /// Told that a handoff reached a final state (§7.12, RUN-01, RUN-09).
 ///
 /// It is called **after** the transition has been persisted, so what it reads is what a
-/// restart would read. It returns nothing: a runbook that cannot be written must not undo a
-/// handoff that is finished (PRIN-10), and the writer reports its own failures.
+/// restart would read. It reports no failure: a runbook that cannot be written must not undo
+/// a handoff that is finished (PRIN-10), and the writer logs its own.
+///
+/// What it may hand back is a [`RunbookProposal`] — the third row of the §7.12 table, a
+/// rewrite the user has to accept — because that one has to be kept "in `state_json` until
+/// decided" and the store is the only writer of that column.
 pub trait RunbookSink: Send {
-    /// `handoff` has just reached `final_state`.
-    fn on_finalised(&self, handoff: &Handoff, final_state: FinalState);
+    /// `handoff` has just reached `final_state`; `db` is the store's connection, for the
+    /// diary the handoff record does not keep.
+    fn on_finalised(
+        &self,
+        db: &Db,
+        handoff: &Handoff,
+        final_state: FinalState,
+    ) -> Option<RunbookProposal>;
 }
 
 /// The sink of a store nobody is writing runbooks for: every test that is not about
-/// runbooks, and every build before T-044.
+/// runbooks.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoRunbookSink;
 
 impl RunbookSink for NoRunbookSink {
-    fn on_finalised(&self, _handoff: &Handoff, _final_state: FinalState) {}
+    fn on_finalised(
+        &self,
+        _db: &Db,
+        _handoff: &Handoff,
+        _final_state: FinalState,
+    ) -> Option<RunbookProposal> {
+        None
+    }
 }
 
 /// The user-request queue of §7.7, as the store reaches it.
@@ -117,11 +135,17 @@ pub(crate) mod testing {
     }
 
     impl RunbookSink for Arc<RecordingSink> {
-        fn on_finalised(&self, handoff: &Handoff, final_state: FinalState) {
+        fn on_finalised(
+            &self,
+            _db: &Db,
+            handoff: &Handoff,
+            final_state: FinalState,
+        ) -> Option<RunbookProposal> {
             self.finalised
                 .lock()
                 .expect("the recording sink is not poisoned")
                 .push((handoff.id.clone(), final_state));
+            None
         }
     }
 

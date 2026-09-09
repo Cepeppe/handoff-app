@@ -356,6 +356,15 @@ pub struct Handoff {
     pub verifying_since: Option<Timestamp>,
     /// The opening session, when the current call comes from a different one (TOOL-08).
     pub resumed_from: Option<ResumedFrom>,
+    /// A rewrite of the runbook this handoff came from, waiting for the user's answer
+    /// (§7.12 row 3, RUN-09).
+    ///
+    /// It is here, and therefore in `state_json`, because §7.12 says so: "until decided, the
+    /// new sequence is kept in `state_json`". It carries names and placeholders and no value
+    /// (RUN-04), which is what lets it be stored at all (LOG-02). `default` because a row
+    /// written before the writer existed has no such key.
+    #[serde(default)]
+    pub runbook_proposal: Option<crate::runbooks::RunbookProposal>,
 }
 
 impl Handoff {
@@ -394,6 +403,7 @@ impl Handoff {
             delivered_at: None,
             verifying_since: None,
             resumed_from: None,
+            runbook_proposal: None,
         }
     }
 
@@ -440,6 +450,7 @@ impl Handoff {
             delivered_at: None,
             verifying_since: None,
             resumed_from: None,
+            runbook_proposal: None,
         }
     }
 

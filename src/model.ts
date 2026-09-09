@@ -186,6 +186,13 @@ export interface ResumedFromView {
   project: string;
 }
 
+/** A runbook rewrite the user has not answered yet (§7.12, RUN-09). */
+export interface RunbookProposalView {
+  runbookId: string;
+  fileName: string;
+  goal: string;
+}
+
 /** One handoff, whole, as the overlay draws it (§7.6). */
 export interface HandoffView {
   tab: TabView;
@@ -206,6 +213,7 @@ export interface HandoffView {
   actions: ActionsView;
   requestText: string | null;
   linkedRequest: LinkedRequestView | null;
+  runbookProposal: RunbookProposalView | null;
   resumedFrom: ResumedFromView | null;
   callAttached: boolean;
   undelivered: number;

@@ -275,6 +275,10 @@ pub struct HandoffSnapshot {
     pub final_outcome: Option<Outcome>,
     /// A final outcome nobody collected for seven days (SRV-23, FM-27).
     pub orphan: bool,
+    /// The runbook rewrite waiting for the user's answer, if this handoff produced one
+    /// (§7.12 row 3, RUN-09). The summary and not the document: a snapshot is cloned on
+    /// every repaint and on every Stop hook, and the document stays in the store.
+    pub runbook_proposal: Option<crate::runbooks::RunbookProposalSummary>,
     /// When it opened.
     pub created_at: Timestamp,
     /// When it closed.
@@ -1506,6 +1510,32 @@ impl Store {
         Ok(())
     }
 
+    /// Keeps a runbook rewrite the user has not answered yet (§7.12 row 3, RUN-09).
+    ///
+    /// It is written on its own, after the transition, and a failure is logged rather than
+    /// returned: the handoff is already final and persisted, and losing an unanswered
+    /// proposal costs the user one click on a suggestion, never a handoff (PRIN-10). The
+    /// runbook file itself was not touched — that is what makes the proposal a proposal.
+    fn remember_proposal(&mut self, id: &str, proposal: crate::runbooks::RunbookProposal) {
+        let Some(handoff) = self.handoffs.get_mut(id) else {
+            return;
+        };
+        handoff.runbook_proposal = Some(proposal);
+        let written = self
+            .handoffs
+            .get(id)
+            .ok_or(Refusal::NotFound)
+            .and_then(row_of)
+            .and_then(|row| crate::log::handoffs::upsert(&self.db, &row).map_err(Refusal::from));
+        if let Err(error) = written {
+            tracing::warn!(
+                handoff_id = %id,
+                error = %error,
+                "the runbook update proposal could not be persisted"
+            );
+        }
+    }
+
     /// Persists a transition and, only then, puts the handoff back (FM-28).
     fn commit(&mut self, draft: Handoff, journal: Journal) -> Result<()> {
         let was_final = self
@@ -1527,7 +1557,10 @@ impl Store {
         self.outbox.extend(journal.deliveries);
         if let Some(final_state) = final_state {
             let handoff = self.handoffs.get(&id).expect("just inserted");
-            self.runbooks.on_finalised(handoff, final_state);
+            let proposal = self.runbooks.on_finalised(&self.db, handoff, final_state);
+            if let Some(proposal) = proposal {
+                self.remember_proposal(&id, proposal);
+            }
         }
         // Last, and only here: a window told about a transition the disk refused would draw
         // a tab that does not exist (FM-28). Every path that changes a handoff comes
@@ -1557,39 +1590,7 @@ impl Store {
     ///
     /// [`Refusal::Persistence`] when the rows cannot be read.
     pub fn exchanges(&self, handoff_id: &str) -> Result<Exchanges> {
-        let events = crate::log::events::list_for_handoff(&self.db, handoff_id)?;
-        let sends = crate::log::sends::list_for_handoff(&self.db, handoff_id)?;
-
-        let replies = events
-            .iter()
-            .filter(|row| row.kind == EventKind::Reply)
-            .filter_map(|row| {
-                Some(Reply {
-                    round: round_of(row),
-                    step: step_of(row),
-                    text: reply_text(row)?,
-                    at: row.at.clone(),
-                })
-            })
-            .collect();
-
-        let asked = events.iter().filter(|row| row.kind == EventKind::Ask);
-        let sent = sends
-            .iter()
-            .filter(|row| row.kind == crate::log::sends::SendKind::Question);
-        let questions = asked
-            .zip(sent)
-            .filter_map(|(event, send)| {
-                Some(Question {
-                    round: round_of(event),
-                    step: step_of(event),
-                    text: send.text_as_sent.clone()?,
-                    at: event.at.clone(),
-                })
-            })
-            .collect();
-
-        Ok(Exchanges { questions, replies })
+        exchanges_of(&self.db, handoff_id)
     }
 
     /// The **true** value `key` names, as the copy button and the ten-second reveal need it
@@ -1614,6 +1615,52 @@ impl Store {
             None => Vec::new(),
         }
     }
+}
+
+/// The same pass as [`Store::exchanges`], over a connection rather than over the store.
+///
+/// The runbook writer needs it: §4.5.1 turns each Ask into a `question` annotation and
+/// each reply into a `reply` one, and neither is in the handoff record — they are in the
+/// diary. The writer is handed the store's own `&Db` and reads them here, after the
+/// transition has been committed, so what it sees includes the transition that called it.
+///
+/// # Errors
+///
+/// [`Refusal::Persistence`] when the rows cannot be read.
+pub fn exchanges_of(db: &Db, handoff_id: &str) -> Result<Exchanges> {
+    let events = crate::log::events::list_for_handoff(db, handoff_id)?;
+    let sends = crate::log::sends::list_for_handoff(db, handoff_id)?;
+
+    let replies = events
+        .iter()
+        .filter(|row| row.kind == EventKind::Reply)
+        .filter_map(|row| {
+            Some(Reply {
+                round: round_of(row),
+                step: step_of(row),
+                text: reply_text(row)?,
+                at: row.at.clone(),
+            })
+        })
+        .collect();
+
+    let asked = events.iter().filter(|row| row.kind == EventKind::Ask);
+    let sent = sends
+        .iter()
+        .filter(|row| row.kind == crate::log::sends::SendKind::Question);
+    let questions = asked
+        .zip(sent)
+        .filter_map(|(event, send)| {
+            Some(Question {
+                round: round_of(event),
+                step: step_of(event),
+                text: send.text_as_sent.clone()?,
+                at: event.at.clone(),
+            })
+        })
+        .collect();
+
+    Ok(Exchanges { questions, replies })
 }
 
 /// Delivers an outcome to the attached call, or queues it (§7.4, DD-12).
@@ -1881,6 +1928,10 @@ fn snapshot_of(handoff: &Handoff, now: &Timestamp) -> HandoffSnapshot {
         resumed_from: handoff.resumed_from.clone(),
         final_outcome: handoff.final_outcome.clone(),
         orphan: handoff.is_orphan(now),
+        runbook_proposal: handoff
+            .runbook_proposal
+            .as_ref()
+            .map(crate::runbooks::RunbookProposal::summary),
         created_at: handoff.created_at.clone(),
         closed_at: handoff.closed_at.clone(),
     }

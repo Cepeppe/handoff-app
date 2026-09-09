@@ -347,6 +347,23 @@ pub struct ActionsView {
     pub close_orphan: bool,
 }
 
+/// A runbook rewrite the user has not answered yet (§7.12 row 3, RUN-09).
+///
+/// The question is "update runbook `<name>` with the corrected sequence?", so what crosses
+/// is what names the file: the id the answer refers to, the name the Runbooks page lists it
+/// under, and its goal. The proposed document stays in the store — the webview never needs
+/// it, and a document is not a question.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunbookProposalView {
+    /// The runbook the proposal would rewrite.
+    pub runbook_id: String,
+    /// Its file name (DD-17).
+    pub file_name: String,
+    /// Its goal, as it stands on disk.
+    pub goal: String,
+}
+
 /// The request a handoff answers, when the link is not the id itself (OPEN-08, FM-20).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -397,6 +414,8 @@ pub struct HandoffView {
     pub request_text: Option<String>,
     /// The request it answers, with the **Change** control of FM-20.
     pub linked_request: Option<LinkedRequestView>,
+    /// The runbook rewrite waiting for an answer (RUN-09).
+    pub runbook_proposal: Option<RunbookProposalView>,
     /// The opening session, when the current call comes from another one (TOOL-08).
     pub resumed_from: Option<ResumedFrom>,
     /// Whether a call is listening right now.
@@ -463,6 +482,14 @@ pub fn build(
             .map(|id| LinkedRequestView {
                 id,
                 text: snapshot.request_text.clone(),
+            }),
+        runbook_proposal: snapshot
+            .runbook_proposal
+            .as_ref()
+            .map(|proposal| RunbookProposalView {
+                runbook_id: proposal.runbook_id.clone(),
+                file_name: proposal.file_name.clone(),
+                goal: proposal.goal.clone(),
             }),
         resumed_from: snapshot.resumed_from.clone(),
         call_attached: snapshot.call_attached,
@@ -934,6 +961,7 @@ mod tests {
             resumed_from: None,
             final_outcome: None,
             orphan: false,
+            runbook_proposal: None,
             created_at: at("2026-09-09T09:00:00Z"),
             closed_at: None,
         }

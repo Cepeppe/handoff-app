@@ -6,17 +6,16 @@
  * confirms every step, the last one moves the handoff to `awaiting_verification`, and the
  * agent's `handoff_verify` closes it as `verified` (VER-04, VER-05, PRIN-08).
  *
- * §11.5 asks for three things here. Two are asserted: `verified` in the log, and the fields
- * of the outcome the agent received. The third — "runbook file valid" — is written and
- * reported `pending`: the runbook writer is T-044 and `lib.rs` passes `NoRunbookSink` until
- * it exists, so there is nothing to be valid yet. Deleting the check would lose it; failing
- * on it would make the suite red for work nobody has done.
+ * §11.5 asks for three things here, and all three are asserted: `verified` in the log, the
+ * fields of the outcome the agent received, and the runbook file — which T-044's writer now
+ * produces, so the check reads what is in it rather than only that it exists (RUN-01,
+ * RUN-02, RUN-04).
  */
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { callsTo, startAgent, statuses } from '../agent.ts';
-import { check, pending, type Assertion } from '../classify.ts';
+import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
 import { openPrompt, plantedSpec, REPORT_LINE, VERIFY_TEXT, walkTheSteps } from '../specs.ts';
 import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
@@ -62,6 +61,12 @@ export const verifiedScenario: Scenario = {
     const row = log.handoff(id);
     const rounds = log.rounds(id);
     const runbooks = readRunbooks(workspace.home);
+    const runbookText = readRunbook(workspace.home, runbooks[0]);
+    const runbook =
+      runbookText === undefined
+        ? undefined
+        : (JSON.parse(runbookText) as Record<string, unknown>);
+    const steps = (runbook?.['steps'] ?? []) as { text: string }[];
     log.close();
 
     const outcome = lastOutcome(run);
@@ -124,18 +129,79 @@ export const verifiedScenario: Scenario = {
         rounds.length === 1,
         `rounds: ${JSON.stringify(rounds)}`,
       ),
-      pending(
+      check(
         'E2E-1',
         'a runbook was written for the verified handoff (RUN-01)',
-        'T-044',
+        'protocol',
         runbooks.length === 1,
-        `runbooks/: ${JSON.stringify(runbooks)} — the writer is T-044; lib.rs passes NoRunbookSink`,
+        `runbooks/: ${JSON.stringify(runbooks)}`,
+      ),
+      check(
+        'E2E-1',
+        'it is a v1 document, trusted as verified, with this one run folded in',
+        'protocol',
+        runbook?.['runbook_version'] === 1 &&
+          runbook['trust'] === 'verified' &&
+          runbook['runs'] === 1 &&
+          (runbook['origin'] as Record<string, unknown> | undefined)?.['app'] === 'handoff-app',
+        `runbook: ${JSON.stringify({
+          runbook_version: runbook?.['runbook_version'],
+          trust: runbook?.['trust'],
+          runs: runbook?.['runs'],
+          origin: runbook?.['origin'],
+        })}`,
+      ),
+      check(
+        'E2E-1',
+        'it carries the two steps the user confirmed, the secret in them masked (RUN-02)',
+        'protocol',
+        steps.length === 2 &&
+          steps[1]?.text.includes('[treated as secret: api_key]') === true,
+        `steps: ${JSON.stringify(steps.map((step) => step.text))}`,
+      ),
+      check(
+        'E2E-1',
+        'it holds value names and no value at all, planted secrets included (RUN-04)',
+        'protocol',
+        runbookText !== undefined &&
+          !planted.forbidden.some((secret) => runbookText.includes(secret)) &&
+          !runbookText.includes(bannerOf(planted)) &&
+          secretDescription(runbook) === '[treated as secret at ingress]',
+        `values: ${JSON.stringify(runbook?.['values'])}`,
       ),
     ] satisfies Assertion[];
   },
 };
 
-/** The runbook folder of the run, which is empty until T-044 fills it. */
+/** The one runbook file of the run, as text, when the writer produced one. */
+function readRunbook(home: string, name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  try {
+    return readFileSync(join(home, 'runbooks', name), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The banner value the spec planted, which no runbook may hold (RUN-04).
+ *
+ * It is an ordinary value and not a secret, so the log keeps it (§7.11) and the
+ * log-invariant check of §11.2 deliberately does not look for it. A runbook is the other way
+ * round: it holds names and never values, whether or not the detector matched them.
+ */
+function bannerOf(planted: { readonly spec: Record<string, unknown> }): string {
+  const values = planted.spec['values'] as Record<string, string>;
+  return values['banner_text'];
+}
+
+/** What the runbook says about the value the detector matched at ingress (§4.5.2). */
+function secretDescription(runbook: Record<string, unknown> | undefined): unknown {
+  const values = runbook?.['values'] as Record<string, { description?: unknown }> | undefined;
+  return values?.['api_key']?.description;
+}
+
+/** The runbook folder of the run. */
 function readRunbooks(home: string): string[] {
   try {
     return readdirSync(join(home, 'runbooks')).filter((name) => name.endsWith('.json'));
