@@ -480,14 +480,26 @@ pub fn build(
 /// says "waiting for the reply" when the agent's process is gone is telling the user to wait
 /// for something that cannot arrive, while SRV-22's sentence stays correct in every case
 /// (the outcome is delivered at the next resume, by whichever session does it).
+///
+/// With one exception, and it is the case the whole row exists for: **a handoff with a call
+/// attached is not detached**, whatever its opener's session is doing. `session_ref` is the
+/// session that *opened* the handoff, and TOOL-08 lets any session resume it — while §8.3
+/// makes a server that comes back after a disconnection a **new** session with a new
+/// `session_ref`, the old record kept as history. So after an app restart every restored
+/// tab points at a session that can never reconnect under that name, and without this
+/// clause SRV-22's banner would be permanent: the agent resumes, an agent is guiding the
+/// user through the steps, and the tab still says the session is detached. A call cannot be
+/// attached from a session that is gone — `Store::session_disconnected` detaches the calls
+/// of a session as it goes — so "a call is attached" *is* "an agent is here right now".
 fn ui_state_of(snapshot: &HandoffSnapshot, connected: &dyn Fn(&str) -> bool) -> UiState {
     if snapshot.state.is_final() {
         return UiState::Final;
     }
-    if snapshot
-        .session_ref
-        .as_deref()
-        .is_some_and(|session_ref| !connected(session_ref))
+    if !snapshot.call_attached
+        && snapshot
+            .session_ref
+            .as_deref()
+            .is_some_and(|session_ref| !connected(session_ref))
     {
         return UiState::Detached;
     }
@@ -1004,6 +1016,7 @@ mod tests {
         assert_eq!(view(&it).banner.expect("a banner").key, "state.verified");
 
         it = snapshot();
+        it.call_attached = false;
         assert_eq!(
             build(&it, &silent(), &gone, &now()).ui_state,
             UiState::Detached,
@@ -1016,6 +1029,53 @@ mod tests {
                 .key,
             "banner.detached"
         );
+    }
+
+    #[test]
+    fn an_attached_call_is_an_agent_that_is_here_now_whatever_the_opener_is_doing() {
+        // The case the restart of §7.2 puts every restored tab in: a reconnection is a new
+        // session (§8.3), so the opener's `session_ref` never comes back. Without this the
+        // banner of SRV-22 would be permanent — an agent guiding the user through the steps,
+        // and a tab saying the session is detached.
+        let mut it = snapshot();
+        it.state = HandoffState::Active;
+        it.pending_question = None;
+
+        it.call_attached = false;
+        assert_eq!(
+            build(&it, &silent(), &gone, &now()).ui_state,
+            UiState::Detached
+        );
+
+        it.call_attached = true;
+        assert_eq!(
+            build(&it, &silent(), &gone, &now()).ui_state,
+            UiState::Guiding,
+            "a resumed handoff is guided, not detached"
+        );
+        assert_eq!(build(&it, &silent(), &gone, &now()).banner, None);
+    }
+
+    #[test]
+    fn a_deferred_handoff_of_a_lost_session_still_says_it_is_detached() {
+        // The clause above is confined to an attached call: everything the user is left
+        // waiting for — deferred, parked, a question sent — still reports SRV-22's sentence,
+        // which is the T-036 precedence and stays exactly as it was.
+        let mut it = snapshot();
+        it.call_attached = false;
+        for state in [
+            HandoffState::Deferred,
+            HandoffState::Parked,
+            HandoffState::AwaitingVerification,
+            HandoffState::AwaitingSpec,
+        ] {
+            it.state = state;
+            assert_eq!(
+                build(&it, &silent(), &gone, &now()).ui_state,
+                UiState::Detached,
+                "{state:?} of a session that is gone"
+            );
+        }
     }
 
     #[test]

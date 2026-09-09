@@ -37,6 +37,9 @@ use tracing_subscriber::EnvFilter;
 /// The folder under the app data directory that holds the crash files (§7.2).
 pub const CRASHES_FOLDER_NAME: &str = "crashes";
 
+/// The extension of a crash file, and the only thing read back out of the folder.
+const REPORT_EXTENSION: &str = ".txt";
+
 /// How many log lines the crash file carries (§7.14).
 pub const RECENT_LINES: usize = 50;
 
@@ -295,6 +298,48 @@ pub fn install_panic_hook(crashes_dir: PathBuf, recent: Arc<RecentLog>) {
     }));
 }
 
+/// `<app data dir>/crashes/`, the folder the reports are written to and read back from.
+#[must_use]
+pub fn crashes_dir(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(CRASHES_FOLDER_NAME)
+}
+
+/// The name of the most recent crash file in `dir`, or nothing when there is none.
+///
+/// The names are the UTC instant of the crash (`2026-09-08T14-32-05Z.txt`), so the newest
+/// is the greatest: a fixed-width stamp with the fields in descending order sorts as text
+/// exactly as it sorts in time. That is why the stamp is written that way, and it is what
+/// lets the notice of §7.14 be decided by one string comparison rather than by reading
+/// modification times, which a copied folder does not preserve.
+#[must_use]
+pub fn newest_report(dir: &Path) -> Option<String> {
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(REPORT_EXTENSION))
+        .max()
+}
+
+/// The crash file the user has not been told about, or nothing when there is none (§7.14).
+///
+/// `seen` is the name recorded the last time the notice was shown. A report that is
+/// lexicographically greater than it is one that arrived since, which is the whole rule.
+///
+/// The one case it cannot separate is two crashes inside the same second, where
+/// [`write_report`]'s collision suffix (`…Z-1.txt`) sorts *before* the plain name: both are
+/// covered by the same notice, which is right — they are the same second of the same
+/// launch — but a crash in the very second a previous launch's crash was recorded would go
+/// unannounced. That needs two crashes one launch apart within one second.
+#[must_use]
+pub fn unseen_report(dir: &Path, seen: Option<&str>) -> Option<String> {
+    let newest = newest_report(dir)?;
+    match seen {
+        Some(seen) if newest.as_str() <= seen => None,
+        _ => Some(newest),
+    }
+}
+
 /// Installs the tracing subscriber and the panic hook, and returns the ring they share.
 /// Called once, from `run()`.
 pub fn install(app_data_dir: PathBuf) -> Arc<RecentLog> {
@@ -308,7 +353,7 @@ pub fn install(app_data_dir: PathBuf) -> Arc<RecentLog> {
         .with(tracing_subscriber::fmt::layer().with_writer(io::stderr))
         .with(RecentLogLayer::new(Arc::clone(&recent)))
         .try_init();
-    install_panic_hook(app_data_dir.join(CRASHES_FOLDER_NAME), Arc::clone(&recent));
+    install_panic_hook(crashes_dir(&app_data_dir), Arc::clone(&recent));
     recent
 }
 
@@ -519,5 +564,67 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    #[test]
+    fn the_newest_report_is_the_greatest_name_and_the_folder_may_be_absent() {
+        let dir = std::env::temp_dir().join(format!(
+            "baton-crash-newest-{}-{}",
+            std::process::id(),
+            crate::ids::new_session_ref()
+        ));
+        assert_eq!(newest_report(&dir), None, "a folder that is not there");
+
+        // Written out of order on purpose: the answer is the greatest name, not the last
+        // file created, because a copied or restored folder keeps neither order nor times.
+        write_report(&dir, at(1_757_342_400), "older").expect("older report");
+        write_report(&dir, at(1_757_600_000), "newer").expect("newer report");
+        write_report(&dir, at(1_757_500_000), "middle").expect("middle report");
+        fs::write(dir.join("notes.md"), "not a report").expect("a stray file");
+
+        assert_eq!(
+            newest_report(&dir).as_deref(),
+            Some("2025-09-11T14-13-20Z.txt")
+        );
+
+        fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    #[test]
+    fn only_a_report_the_user_has_not_been_told_about_is_unseen() {
+        let dir = std::env::temp_dir().join(format!(
+            "baton-crash-unseen-{}-{}",
+            std::process::id(),
+            crate::ids::new_session_ref()
+        ));
+        // §7.14 says "when a new file exists": no files at all is the ordinary launch, and
+        // it must say nothing whatever the marker holds.
+        assert_eq!(unseen_report(&dir, None), None);
+        assert_eq!(unseen_report(&dir, Some("2025-09-08T14-40-00Z.txt")), None);
+
+        write_report(&dir, at(1_757_342_400), "the crash").expect("a report");
+        let name = "2025-09-08T14-40-00Z.txt";
+
+        // Never told, so it is news; told about this very one, so it is not; told about an
+        // older one, so it is news again.
+        assert_eq!(unseen_report(&dir, None).as_deref(), Some(name));
+        assert_eq!(unseen_report(&dir, Some(name)), None);
+        assert_eq!(
+            unseen_report(&dir, Some("2025-09-01T00-00-00Z.txt")).as_deref(),
+            Some(name)
+        );
+        // A marker from the future — a clock set backwards between two launches — leaves
+        // the user unbothered rather than told twice.
+        assert_eq!(unseen_report(&dir, Some("2026-01-01T00-00-00Z.txt")), None);
+
+        fs::remove_dir_all(&dir).expect("clean up");
+    }
+
+    #[test]
+    fn the_crash_folder_is_the_one_the_panic_hook_writes_into() {
+        // One name for the writer and the reader: a notice looking in another folder would
+        // be silent for ever and nothing would fail.
+        let data = Path::new("data-dir");
+        assert_eq!(crashes_dir(data), data.join(CRASHES_FOLDER_NAME));
     }
 }

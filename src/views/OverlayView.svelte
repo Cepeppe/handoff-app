@@ -21,6 +21,7 @@
   import { t } from '../i18n';
   import type { ActionName, HandoffView, RequestChoice } from '../model';
   import ActionBar from '../overlay/ActionBar.svelte';
+  import CrashNotice from '../overlay/CrashNotice.svelte';
   import History from '../overlay/History.svelte';
   import QuestionPending from '../overlay/QuestionPending.svelte';
   import SessionPicker from '../overlay/SessionPicker.svelte';
@@ -147,6 +148,13 @@
   <TabStrip {tabs} onact={(id, action) => void runOn(id, action)} />
 
   <SessionPicker {choices} onanswer={(sessionRef) => void answerSessionPicker(sessionRef)} />
+
+  <!--
+    §7.14: the launch after a crash. Above the tab it is about nothing in particular — it is
+    a fact about the application and not about a handoff — and below the strip, so it never
+    takes the place of the work the user came for.
+  -->
+  <CrashNotice onfailed={(text) => showNotice({ kind: 'error', text })} />
 
   {#if notice !== null}
     <p class="notice" data-notice={notice.kind} role="status">{notice.text}</p>

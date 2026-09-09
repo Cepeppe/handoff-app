@@ -26,6 +26,7 @@ import type {
   ActionName,
   AgentStatus,
   ConsentView,
+  CrashNotice,
   GeneralSettings,
   HandoffView,
   Notice,
@@ -206,6 +207,17 @@ export interface Bridge {
    */
   showWindow(): Promise<void>;
 
+  /**
+   * Whether the previous run ended in a crash (§7.14, TEL-02).
+   *
+   * It writes: the report it reports is recorded as told, so a remount or a reloaded
+   * webview says nothing and the launch after this one says nothing either.
+   */
+  crashNotice(): Promise<CrashNotice>;
+
+  /** Opens the crash folder so the user can send the report by hand (§7.14, TEL-01). */
+  openCrashesFolder(): Promise<void>;
+
   /** Whether this launch shows onboarding, and what it consists of (§7.6, F-13). */
   onboarding(): Promise<OnboardingView>;
 
@@ -357,6 +369,12 @@ export function tauriBridge(): Bridge {
     async showWindow() {
       await invoke('show_window');
     },
+    async crashNotice() {
+      return invoke<CrashNotice>('crash_notice');
+    },
+    async openCrashesFolder() {
+      await invoke('open_crashes_folder');
+    },
     async onboarding() {
       return invoke<OnboardingView>('onboarding');
     },
@@ -465,6 +483,11 @@ export function noopBridge(): Bridge {
     async setShortcut() {},
     async dismissShortcutQuestion() {},
     async showWindow() {},
+    async crashNotice() {
+      // Nothing crashed: a browser has no panic hook and no folder to open.
+      return { crashed: false };
+    },
+    async openCrashesFolder() {},
     async onboarding() {
       // Outside the webview there is no settings table to have been through onboarding, and
       // an onboarding that cannot record its own completion would run at every reload.

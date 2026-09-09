@@ -39,7 +39,7 @@ pub const SERVER_FILE_NAME: &str = if cfg!(windows) {
 };
 
 /// The file stem every spelling of the server shares, dev layout included.
-const SERVER_STEM: &str = "handoff-mcp";
+pub const SERVER_STEM: &str = "handoff-mcp";
 
 /// The arguments the Stop and SubagentStop hooks run the server with (§5.11).
 pub const HOOK_ARGUMENTS: &str = "hook stop";

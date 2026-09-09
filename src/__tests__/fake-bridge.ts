@@ -51,6 +51,8 @@ export function fakeBridge(overrides: Partial<Bridge> = {}): Bridge {
     setShortcut: vi.fn(base.setShortcut),
     dismissShortcutQuestion: vi.fn(base.dismissShortcutQuestion),
     showWindow: vi.fn(base.showWindow),
+    crashNotice: vi.fn(base.crashNotice),
+    openCrashesFolder: vi.fn(base.openCrashesFolder),
     onboarding: vi.fn(base.onboarding),
     finishOnboarding: vi.fn(base.finishOnboarding),
     agents: vi.fn(base.agents),

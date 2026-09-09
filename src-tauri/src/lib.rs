@@ -59,14 +59,34 @@ pub mod ui_bridge;
 #[cfg(feature = "secrets-write")]
 pub mod secrets;
 
-/// Starts the application.
+/// Starts the application: the startup sequence of §7.2, in its order.
 ///
-/// The full startup sequence of §7.2 — the database and its migrations, the `~/.handoff/`
-/// folder and the token, the listener, the restored tabs, the shortcut, the agent scan — is
-/// assembled by T-042 as its modules appear. What is here is what the earlier tasks own:
-/// the panic hook (TEL-02) and the licence entry point (LIC-01, LIC-02), which touch
-/// `main()` and would otherwise mean editing the startup path twice, plus the single
-/// instance, the tray and the window rules of §7.16.
+/// ```text
+/// single-instance lock            a second launch brings the running panel forward
+/// crash::install                  the panic hook and the ring it empties (TEL-02)
+/// license::check                  the one call site of LIC-01, LIC-02
+/// log::Db::open_app_data          the database and its migrations (§7.11)
+/// channel::start                  ~/.handoff/{runbooks/} and channel.token, then listen
+/// Store::load / Registry::open    tabs restored, sessions marked disconnected (FM-13)
+/// ui_bridge::init                 tray and shortcut, from setup() (WIN-05, OPEN-03)
+/// install::scan_agents            from the window's first mount, with the FM-23 path check
+/// net::updater::check_if_enabled  the update call site (UPD-01), a no-op in this build
+/// install::cleanup                the superseded server binaries of a Windows update (FM-24)
+/// ```
+///
+/// Two steps are not on this side of the process, and both are recorded in `DEVIATIONS.md`
+/// under T-040: the **agent scan** and the **registered-path check** are called by the
+/// window when it first mounts, because each of them produces a sentence for a person and
+/// at `setup()` no webview is listening — a notice pushed from here is dropped. The **crash
+/// notice** of §7.14 is the third of that family and is asked for in the same place
+/// ([`ui_bridge::crash`]). What stays here is everything that has to happen whether or not
+/// anybody ever opens the window.
+///
+/// The order of the first six is load-bearing rather than decorative: the migrations run
+/// before anything opens a second connection to the same file, the token and the folder
+/// exist before a peer can connect, and the listener is up before the store is restored so
+/// that a server which started before the app registers on its first retry (SRV-20, FM-02)
+/// — its traffic waits in the event queue until the dispatch is running.
 pub fn run() {
     // The ring buffer the panic hook empties into the crash file. Held for the process
     // lifetime; nothing else reads it.
@@ -82,20 +102,33 @@ pub fn run() {
     // `setup()`, which is the first moment there is one; `ui_bridge::events` says why.
     let notifier = ui_bridge::Notifier::new();
 
-    // §7.2: the shared folder, the token and the listener, before the window exists. A
-    // server that connects while the UI is still starting is registered all the same,
-    // because registration is the channel's business and not the window's (SRV-20).
-    let (channel, core) = start_channel(&notifier);
+    // §7.2: the database and its migrations, before anything reads or writes it. Three
+    // connections to the one file, opened here so the migrations run exactly once and in
+    // the sequence's own order: the session registry's and the store's (§7.11 sets the
+    // pragmas for that traffic pattern) and the window's, which remembers the panel's
+    // position per monitor (WIN-02) whether or not the channel ever came up.
+    let databases = Databases::open();
+    let window_db = databases.window;
 
-    // The window's own connection to the log (WIN-02, §7.16). Opened whether or not the
-    // channel came up: the panel remembers where it was even on a run where no agent could
-    // reach it.
+    // §7.2: the shared folder, the token, the listener, and then the state the database
+    // holds. A server that connects while the UI is still starting is registered all the
+    // same, because registration is the channel's business and not the window's (SRV-20).
+    let (channel, core) = start_channel(&notifier, databases.registry, databases.store);
+
+    // §7.2, UPD-01: the update call site, in the place the sequence puts it. This build
+    // makes no network connection at all (§0.4 item 8) and the function says so.
+    tracing::debug!(status = %net::updater::check_if_enabled(), "update check");
+
+    // §7.2, FM-24: the binaries a Windows update renamed out of the way, once the sessions
+    // that were using them have gone. Nothing to do on macOS, where an update replaces the
+    // bundle rather than renaming a file inside it.
+    if cfg!(windows) {
+        clean_up_superseded_binaries();
+    }
+
     let mut ui = ui_bridge::Ui::with_notifier(notifier);
-    match log::Db::open_app_data() {
-        Ok(db) => ui = ui.with_settings(db),
-        Err(error) => {
-            tracing::warn!(error = %error, "the window will not remember its position this run");
-        }
+    if let Some(db) = window_db {
+        ui = ui.with_settings(db);
     }
 
     let app = tauri::Builder::default()
@@ -158,6 +191,8 @@ pub fn run() {
             ui_bridge::commands::window_settings,
             ui_bridge::commands::set_collapse_fallback,
             ui_bridge::commands::show_window,
+            ui_bridge::crash::crash_notice,
+            ui_bridge::crash::open_crashes_folder,
             ui_bridge::install::onboarding,
             ui_bridge::install::finish_onboarding,
             ui_bridge::install::agents,
@@ -200,6 +235,54 @@ pub fn run() {
     std::process::exit(code);
 }
 
+/// The three connections to `handoff.sqlite` the startup sequence opens (§7.2, §7.11).
+///
+/// Opened together, and before anything that uses one: `Db::open_at` runs the migrations,
+/// so the first of them is what brings the file up to `current_schema_version()`, and the
+/// other two must not be racing it. Each is optional on its own — a database that cannot be
+/// opened costs the feature that needs it and not the launch (FM-28, PRIN-10) — and each
+/// failure is reported once, here, naming which half of the app will be without it.
+struct Databases {
+    /// The session registry's, written from the channel dispatch task (§7.5).
+    registry: Option<log::Db>,
+    /// The handoff store's, written from its actor task (§7.4).
+    store: Option<log::Db>,
+    /// The window's: settings, remembered geometry, the FM-22 picker's binding (§7.16).
+    window: Option<log::Db>,
+}
+
+impl Databases {
+    fn open() -> Self {
+        let open = |what: &str| match log::Db::open_app_data() {
+            Ok(db) => Some(db),
+            Err(error) => {
+                tracing::error!(error = %error, "the database could not be opened for the {what}");
+                None
+            }
+        };
+        Self {
+            registry: open("session registry"),
+            store: open("handoff store"),
+            window: open("window"),
+        }
+    }
+}
+
+/// The last step of §7.2: the server binaries a Windows update left beside ours (FM-24).
+fn clean_up_superseded_binaries() {
+    let Some(folder) = install::cleanup::bundle_folder() else {
+        tracing::debug!("no bundle folder to clean up");
+        return;
+    };
+    let cleaned = install::cleanup::remove_superseded_binaries(&folder);
+    if cleaned.found_something() {
+        tracing::info!(
+            count = cleaned.removed,
+            "superseded server binaries were deleted"
+        );
+    }
+}
+
 /// Starts the channel, or reports why it could not start and lets the app run without it.
 ///
 /// A listener that cannot bind is a bad day, not a reason to deny the user the window: the
@@ -207,6 +290,8 @@ pub fn run() {
 /// every agent call degrades to text mode, which is a supported way to work (SRV-14).
 fn start_channel(
     notifier: &ui_bridge::Notifier,
+    registry_db: Option<log::Db>,
+    store_db: Option<log::Db>,
 ) -> (Option<channel::ChannelHandle>, Option<ui_bridge::Core>) {
     match tauri::async_runtime::block_on(channel::start()) {
         Ok((handle, events)) => {
@@ -214,8 +299,9 @@ fn start_channel(
             // Inside `block_on` because `store::spawn` puts the actor on the runtime, and
             // `tokio::spawn` panics outside a runtime's context. Nothing here awaits; what
             // the block provides is the context, which the builder has not started yet.
-            let built =
-                tauri::async_runtime::block_on(async { state_of_the_app(&handle, notifier) });
+            let built = tauri::async_runtime::block_on(async {
+                state_of_the_app(&handle, notifier, registry_db, store_db)
+            });
             match built {
                 Some((dispatch, deliveries, core)) => {
                     tauri::async_runtime::spawn(dispatch.run(events, deliveries));
@@ -238,29 +324,35 @@ fn start_channel(
     }
 }
 
-/// The registry and the store of §7.2, and the dispatch that joins them to the channel.
+/// `store::load_active_handoffs()` and the session registry of §7.2, and the dispatch that
+/// joins them to the channel.
 ///
 /// Two connections to the same file: the registry writes `sessions` from the dispatch task
 /// and the store writes everything else from its own actor task, which is the traffic
-/// pattern the pragmas of `log::db` are set for. The full startup sequence — the restored
-/// tabs, the shortcut, the agent scan — is assembled by T-042.
+/// pattern the pragmas of `log::db` are set for.
+///
+/// The two halves of "restore on launch" are one call each, and both are the constructors'
+/// own business rather than a step written out here (FM-13):
+///
+/// - [`sessions::Registry::open`] closes the `sessions` rows a killed process left flagged
+///   connected, so every restored handoff starts out **detached** and stays that way until
+///   a server registers again (SRV-21, SRV-22, §8.3);
+/// - [`store::Store::load`] brings back every handoff, open and closed, with no attached
+///   call — a call is a connection and none of them survived — and the actor re-reads
+///   `verifying_since` on its first pass, so a verification window that ran out while the
+///   app was down is closed at once rather than at the next command (VER-06).
 fn state_of_the_app(
     handle: &channel::ChannelHandle,
     notifier: &ui_bridge::Notifier,
+    registry_db: Option<log::Db>,
+    store_db: Option<log::Db>,
 ) -> Option<(
     channel::Dispatch,
     tokio::sync::mpsc::Receiver<store::Delivery>,
     ui_bridge::Core,
 )> {
-    let open = |what: &str| match log::Db::open_app_data() {
-        Ok(db) => Some(db),
-        Err(error) => {
-            tracing::error!(error = %error, "the database could not be opened for the {what}");
-            None
-        }
-    };
-    let registry_db = open("session registry")?;
-    let store_db = open("handoff store")?;
+    let registry_db = registry_db?;
+    let store_db = store_db?;
 
     // The registry is shared with the window rather than owned by the dispatch alone:
     // §7.6's `sessions_changed` carries no payload because the view re-reads the registry,

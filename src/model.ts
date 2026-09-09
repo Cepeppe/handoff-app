@@ -292,6 +292,17 @@ export interface GeneralSettings {
 }
 
 /**
+ * Whether the previous run of the application ended in a panic (§7.14, TEL-01, TEL-02).
+ *
+ * There is nothing else in it on purpose: no path, no file name, no count. The folder is
+ * the user's and the app opens it on request; nothing is ever uploaded, and a shape that
+ * carried a report's contents would be the first step towards a shape that could.
+ */
+export interface CrashNotice {
+  crashed: boolean;
+}
+
+/**
  * The steps of onboarding (§7.6), as `ui_bridge::install` names them.
  *
  * `move` and `screenRecording` exist on macOS alone, and `move` only while the bundle is

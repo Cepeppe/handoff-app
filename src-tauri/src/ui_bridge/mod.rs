@@ -35,6 +35,7 @@
 //! that goes with it, plus the wider layout the settings page opens the panel in (§7.6).
 
 pub mod commands;
+pub mod crash;
 pub mod events;
 pub mod general;
 pub mod install;

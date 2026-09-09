@@ -3,3 +3,4 @@
 //! Everything that could open a connection lives under this module, and `egress` is the
 //! only place in the codebase allowed to do it. See `egress.rs`.
 pub mod egress;
+pub mod updater;

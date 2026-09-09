@@ -944,3 +944,25 @@ body {
   gap: 4px;
   padding-top: 8px;
 }
+
+/*
+  The crash notice of §7.14. It sits in the overlay like a banner, with the warning surface
+  the shortcut dialog uses: it is news the user has to act on if they want to, never an
+  error about the run they are in.
+*/
+.crash-notice {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  background: var(--warning-surface);
+  border-radius: 4px;
+}
+
+.crash-text {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.crash-actions {
+  display: flex;
+  gap: 4px;
+}

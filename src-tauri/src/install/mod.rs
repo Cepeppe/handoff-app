@@ -32,6 +32,7 @@
 //! sides (T-028), and the consent screen of T-040 renders the key in the user's language.
 
 pub mod claude_code;
+pub mod cleanup;
 pub mod diff;
 pub mod error;
 pub mod fixed_path;

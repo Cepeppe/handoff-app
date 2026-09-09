@@ -2281,6 +2281,20 @@ pub fn spawn(store: Store) -> (StoreHandle, mpsc::Receiver<Delivery>) {
     (StoreHandle { commands }, out)
 }
 
+/// Sleeps until the earliest verification window runs out, or never.
+///
+/// `None` is what an application at rest looks like — no handoff is being verified — and it
+/// waits for ever on purpose. WIN-06 and NFR-14 say the app is "an icon and a listening
+/// socket" at rest, so the store's task has to be genuinely idle between commands rather
+/// than waking on a poll it has nothing to do with. `tests/timers.rs` is the registry that
+/// keeps it that way.
+async fn until_verifying_deadline(deadline: Option<Duration>) {
+    match deadline {
+        Some(wait) => tokio::time::sleep(wait).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The actor loop: one command at a time, and the verification timer of VER-06 beside it.
 async fn run(
     mut store: Store,
@@ -2288,10 +2302,10 @@ async fn run(
     deliveries: mpsc::Sender<Delivery>,
 ) {
     loop {
-        let wait = store
-            .next_verifying_deadline(&Timestamp::now())
-            .unwrap_or(Duration::from_secs(3600));
-        let timer = tokio::time::sleep(wait);
+        // Re-read on every turn, including the first: a handoff restored from the database
+        // past its window (§7.2, FM-13) is closed on the first pass of this loop, with no
+        // command needed to wake it.
+        let timer = until_verifying_deadline(store.next_verifying_deadline(&Timestamp::now()));
         tokio::select! {
             command = commands.recv() => {
                 let Some(command) = command else { return };
@@ -3968,5 +3982,111 @@ mod tests {
             .iter()
             .any(|snapshot| snapshot.pending_question.is_some()));
         crate::log::testing::clean(&dir);
+    }
+
+    #[test]
+    fn a_restored_verification_window_is_resumed_from_verifying_since() {
+        // §7.2: "verifying timers resumed from `verifying_since`". Nothing is written into
+        // the loop for that — the deadline is a function of the restored rows — and this is
+        // what makes it true: a handoff that was being verified when the app went down
+        // comes back with the same instant, so the timer picks up where it was.
+        let dir = crate::log::testing::tempdir();
+        let path = dir.join("handoff.sqlite");
+
+        let id = {
+            let db = Db::open_at(&path).expect("a database");
+            for reference in [OPENER, OTHER] {
+                sessions::register(&db, &session(reference)).expect("a session");
+            }
+            let mut store = Store::new(db);
+            let id = open_with(&mut store, spec(1, true));
+            store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+            store.take_deliveries();
+            id
+        };
+
+        let db = Db::open_at(&path).expect("the same database");
+        let restored = Store::load(db, Box::new(NoRunbookSink), Box::new(NoRequests))
+            .expect("the store as it was");
+
+        assert_eq!(
+            restored.get(&id).expect("the handoff").verifying_since,
+            Some(at("2026-09-08T11:30:00Z")),
+            "the instant the window started, not the instant of the restart"
+        );
+        // Ten minutes into the window: twenty of the thirty are left, exactly as if nothing
+        // had been restarted.
+        assert_eq!(
+            restored.next_verifying_deadline(&at("2026-09-08T11:40:00Z")),
+            Some(Duration::from_secs(20 * 60))
+        );
+        // And a window that ran out while the app was down is due at once, so the actor
+        // closes it on its first pass rather than at the next command.
+        assert_eq!(
+            restored.next_verifying_deadline(&at("2026-09-08T12:30:00Z")),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            restored.expired_verifying(&at("2026-09-08T12:30:00Z")),
+            vec![id]
+        );
+        crate::log::testing::clean(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_actor_arms_no_timer_when_no_handoff_is_being_verified() {
+        // WIN-06 and NFR-14: at rest the app is an icon and a listening socket. The actor
+        // loop runs from startup to shutdown, so it is the one task that could quietly poll,
+        // and `until_verifying_deadline(None)` is what stops it: with nothing being verified
+        // it never resolves and the loop waits on commands alone. `tests/timers.rs` is the
+        // other half of the same promise, over the sources.
+        tokio::select! {
+            () = until_verifying_deadline(None) => {
+                panic!("the store armed a timer with no verification window open")
+            }
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+
+        // And it is a real timer when there is one to arm, so the assertion above is about
+        // the `None` branch and not about a future that never fires at all.
+        tokio::select! {
+            () = until_verifying_deadline(Some(Duration::ZERO)) => {}
+            () = tokio::time::sleep(Duration::from_secs(5)) => {
+                panic!("a verification window that had run out never woke the actor")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_handoff_restored_past_its_window_is_closed_on_the_first_pass() {
+        // The other side of the same loop: a verification window is a timer the actor does
+        // arm, and a handoff restored past its deadline (§7.2, FM-13) must not wait for a
+        // command to be noticed. Nothing is sent to the handle here on purpose.
+        let mut store = store();
+        let id = open_with(&mut store, spec(1, true));
+        store.done(&id, &at("2026-09-08T11:30:00Z")).expect("done");
+        store.take_deliveries();
+
+        let (handle, _deliveries) = spawn(store);
+
+        // Nothing is sent to the handle until the state is read, and the read is the only
+        // command of the run: if the loop needed one to look at its deadline, the first
+        // snapshot would still say `awaiting_verification`.
+        let mut state = None;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            state = handle
+                .snapshot(id.clone(), at("2026-09-08T12:30:00Z"))
+                .await
+                .map(|snapshot| snapshot.state);
+            if state == Some(HandoffState::NotVerified) {
+                break;
+            }
+        }
+        assert_eq!(
+            state,
+            Some(HandoffState::NotVerified),
+            "VER-06: the window ran out while the app was down"
+        );
     }
 }
