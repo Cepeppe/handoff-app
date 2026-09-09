@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setBridge } from '../bridge';
 import { DEFAULT_LANGUAGE, setLanguage } from '../i18n';
-import type { ActionsView, HandoffView, TabView } from '../model';
+import type { ActionsView, HandoffView, TabView, UiState } from '../model';
 import { REVEAL_MS, resetOverlay } from '../overlay/state.svelte';
 import OverlayView from '../views/OverlayView.svelte';
 import { fakeBridge, servingBridge, type FakeEvents } from './fake-bridge';
@@ -42,6 +42,7 @@ function tab(overrides: Partial<TabView> = {}): TabView {
     group: 'open',
     goal: 'Register the webhook',
     orphan: false,
+    actions: ACTIONS,
     createdAt: '2026-09-09T09:00:00.000Z',
     ...overrides,
   };
@@ -82,6 +83,7 @@ function view(overrides: Partial<HandoffView> = {}): HandoffView {
       confirmed: false,
       skipped: false,
       notes: [],
+      questions: [],
       replies: [],
       last: false,
     },
@@ -326,9 +328,50 @@ describe('the overlay', () => {
       }),
     );
 
-    expect(screen.getByText('Verified', { exact: false })).toBeDefined();
-    expect(screen.getByText('(declared by agent)')).toBeDefined();
+    // VER-05 read as one sentence across the two places §8.4 puts it: the state label in
+    // the banner, the label and the detail with the report. Each is said once.
+    expect(screen.getByText('Verified')).toBeDefined();
+    expect(screen.getByText('declared by agent')).toBeDefined();
     expect(screen.getByText('the webhook answered 200')).toBeDefined();
+  });
+
+  it('quotes the spec under "the agent should now check" while the report is owed (VER-04)', async () => {
+    await open(
+      view({
+        state: 'awaiting_verification',
+        uiState: 'verifying',
+        banner: { key: 'banner.verifying', arg: 'the webhook fires' },
+        step: null,
+        verify: 'the webhook fires',
+        actions: { ...ACTIONS, done: false, ask: false, note: false, skip: false, defer: false },
+      }),
+    );
+
+    expect(screen.getByText('The agent should now check:')).toBeDefined();
+    expect(screen.getByText('the webhook fires')).toBeDefined();
+    // Nothing has been declared yet, so nothing claims it has.
+    expect(screen.queryByText('declared by agent')).toBeNull();
+  });
+
+  it('says when the agent could not check, and when a report arrived late (DD-16)', async () => {
+    await open(
+      view({
+        state: 'not_verified',
+        uiState: 'final',
+        banner: { key: 'state.notVerified', arg: null },
+        step: null,
+        verifyResult: {
+          ok: null,
+          detail: 'the dashboard was unreachable',
+          reportedAt: '2026-09-12T09:45:00.000Z',
+          late: true,
+        },
+      }),
+    );
+
+    expect(screen.getByText('The agent could not check it.')).toBeDefined();
+    expect(screen.getByText('arrived late')).toBeDefined();
+    expect(screen.getByText('the dashboard was unreachable')).toBeDefined();
   });
 
   it('raises a badge on the tab that changed while the user was on another one', async () => {
@@ -427,6 +470,9 @@ describe('the overlay', () => {
             confirmed: [1],
             skipped: [2],
             notes: [{ step: 1, text: 'was already there', at: '2026-09-09T09:10:00.000Z' }],
+            questions: [
+              { round: 1, step: 2, text: 'is this the right page?', at: '2026-09-09T09:35:00.000Z' },
+            ],
             replies: [
               { round: 1, step: 2, text: 'the endpoint was wrong', at: '2026-09-09T09:41:00.000Z' },
             ],
@@ -436,6 +482,8 @@ describe('the overlay', () => {
               reportedAt: '2026-09-09T09:40:00.000Z',
               late: false,
             },
+            correction: false,
+            failed: true,
           },
         ],
       }),
@@ -448,11 +496,348 @@ describe('the overlay', () => {
     expect(history?.textContent).toContain('the endpoint was wrong');
   });
 
+  it('shows the questions and the replies of a closed round in the history (VER-09)', async () => {
+    await open(
+      view({
+        history: [
+          {
+            no: 2,
+            steps: ['try the other endpoint'],
+            confirmed: [1],
+            skipped: [],
+            notes: [],
+            questions: [
+              { round: 2, step: 1, text: 'which endpoint?', at: '2026-09-09T09:50:00.000Z' },
+            ],
+            replies: [{ round: 2, step: 1, text: 'the v2 one', at: '2026-09-09T09:51:00.000Z' }],
+            verify: null,
+            correction: true,
+            failed: false,
+          },
+        ],
+      }),
+    );
+
+    const round = document.querySelector('[data-round="2"]');
+    expect(round?.textContent).toContain('Correction 1');
+    expect(round?.textContent).toContain('which endpoint?');
+    expect(round?.textContent).toContain('the v2 one');
+  });
+
   it('renders in Italian when that is the resolved language', async () => {
     setLanguage('it');
     await open();
     expect(screen.getByText('Passo 1 di 2')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Fatto' })).toBeDefined();
+  });
+});
+
+describe('every row of §8.4', () => {
+  /**
+   * The acceptance of T-037: each row is reachable and says its own sentence.
+   *
+   * The rows and their texts are the core's (`ui_bridge/view.rs` resolves them, precedence
+   * included); what this walks is the other half — that the window draws each one and does
+   * not fall back to a neighbour's screen.
+   */
+  const ROWS: ReadonlyArray<{
+    uiState: UiState;
+    state: string;
+    banner: { key: string; arg: string | null } | null;
+    says: string;
+    overrides?: Partial<HandoffView>;
+  }> = [
+    {
+      uiState: 'waitingForSpec',
+      state: 'awaiting_spec',
+      banner: { key: 'banner.awaitingSpec', arg: null },
+      says: "Waiting for the agent's spec",
+      overrides: { step: null, requestText: 'create the key' },
+    },
+    {
+      uiState: 'guiding',
+      state: 'active',
+      banner: null,
+      says: 'Open the dashboard and add the endpoint.',
+    },
+    {
+      uiState: 'agentAway',
+      state: 'active',
+      banner: { key: 'banner.agentAway', arg: null },
+      says: 'The agent will pick up on its next resume',
+    },
+    {
+      uiState: 'questionSent',
+      state: 'active',
+      banner: { key: 'banner.questionSent', arg: null },
+      says: 'Sent to the agent, waiting for the reply',
+      overrides: { pending: { kind: 'question', step: 1, text: 'which button?' } },
+    },
+    {
+      uiState: 'deferred',
+      state: 'deferred',
+      banner: { key: 'banner.deferred', arg: null },
+      says: 'Deferred; the agent will come back',
+    },
+    {
+      uiState: 'parked',
+      state: 'parked',
+      banner: { key: 'banner.parked', arg: null },
+      says: 'Parked; resume when you want',
+    },
+    {
+      uiState: 'verifying',
+      state: 'awaiting_verification',
+      banner: { key: 'banner.verifying', arg: 'the webhook fires' },
+      says: 'The agent should now check:',
+      overrides: { step: null },
+    },
+    {
+      uiState: 'final',
+      state: 'verified',
+      banner: { key: 'state.verified', arg: null },
+      says: 'Verified',
+      overrides: { step: null },
+    },
+    {
+      uiState: 'detached',
+      state: 'active',
+      banner: { key: 'banner.detached', arg: null },
+      says: 'Session detached; the outcome will be delivered on the next resume',
+    },
+  ];
+
+  for (const row of ROWS) {
+    it(`draws the ${row.uiState} row`, async () => {
+      const handoff = view({
+        tab: tab({ state: row.state, uiState: row.uiState }),
+        state: row.state,
+        uiState: row.uiState,
+        banner: row.banner,
+        ...row.overrides,
+      });
+      const bridge = servingBridge([handoff.tab], { [handoff.tab.id]: handoff });
+      setBridge(bridge);
+      render(OverlayView);
+      await waitFor(() => expect(screen.getByText(row.says)).toBeDefined());
+    });
+  }
+});
+
+describe('the waiting group of the tab strip (§7.6, SRV-23, RESP-07)', () => {
+  /** A parked handoff and an orphan outcome, which is what the group is for. */
+  function waitingTabs(): [HandoffView, HandoffView] {
+    const parked = view({
+      tab: tab({
+        id: 'hf_0000000002',
+        label: 'Claude Code · api',
+        state: 'parked',
+        uiState: 'parked',
+        group: 'waiting',
+        actions: { ...ACTIONS, resume: true },
+      }),
+      state: 'parked',
+      uiState: 'parked',
+    });
+    const orphan = view({
+      tab: tab({
+        id: 'hf_0000000003',
+        label: 'Codex · web',
+        state: 'not_verified',
+        uiState: 'final',
+        group: 'waiting',
+        orphan: true,
+        actions: { ...ACTIONS, closeOrphan: true },
+      }),
+      state: 'not_verified',
+      uiState: 'final',
+    });
+    return [parked, orphan];
+  }
+
+  async function openWaiting() {
+    const [parked, orphan] = waitingTabs();
+    const bridge = servingBridge(
+      [tab(), parked.tab, orphan.tab],
+      { [ID]: view(), [parked.tab.id]: parked, [orphan.tab.id]: orphan },
+    );
+    setBridge(bridge);
+    render(OverlayView);
+    await waitFor(() => expect(document.querySelector('.waiting-group')).not.toBeNull());
+    return bridge;
+  }
+
+  it('lists parked handoffs and orphan outcomes apart from the open ones', async () => {
+    await openWaiting();
+    const group = document.querySelector('.waiting-group');
+    expect(group?.textContent).toContain('Waiting (2)');
+    expect(group?.textContent).toContain('Claude Code · api');
+    expect(group?.textContent).toContain('Codex · web');
+  });
+
+  it('resumes a parked handoff from the list, without selecting it first (RESP-07)', async () => {
+    const bridge = await openWaiting();
+    const entry = document.querySelector('[data-waiting="hf_0000000002"]');
+    const resume = Array.from(entry?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Resume',
+    );
+    resume?.click();
+    await waitFor(() =>
+      expect(bridge.act).toHaveBeenCalledWith('hf_0000000002', 'resume_from_overlay', undefined),
+    );
+  });
+
+  it('closes an orphan by hand and copies its id (SRV-23)', async () => {
+    const bridge = await openWaiting();
+    const entry = document.querySelector('[data-waiting="hf_0000000003"]');
+    const buttons = Array.from(entry?.querySelectorAll('button') ?? []);
+
+    buttons.find((button) => button.textContent?.trim() === 'Close it')?.click();
+    await waitFor(() =>
+      expect(bridge.act).toHaveBeenCalledWith('hf_0000000003', 'close_orphan', undefined),
+    );
+
+    buttons.find((button) => button.textContent?.trim() === 'Copy the id')?.click();
+    await waitFor(() => expect(bridge.copyHandoffId).toHaveBeenCalledWith('hf_0000000003'));
+  });
+
+  it('offers neither Resume nor Close it where the state does not have them', async () => {
+    await openWaiting();
+    const parked = document.querySelector('[data-waiting="hf_0000000002"]');
+    const orphan = document.querySelector('[data-waiting="hf_0000000003"]');
+    const labels = (entry: Element | null) =>
+      Array.from(entry?.querySelectorAll('button') ?? []).map((button) =>
+        button.textContent?.trim(),
+      );
+
+    expect(labels(parked)).not.toContain('Close it');
+    expect(labels(orphan)).not.toContain('Resume');
+  });
+});
+
+describe('the waiting-for-spec view (§7.6, OPEN-04, OPEN-05)', () => {
+  function awaitingSpec(): HandoffView {
+    return view({
+      tab: tab({ state: 'awaiting_spec', uiState: 'waitingForSpec', goal: null }),
+      state: 'awaiting_spec',
+      uiState: 'waitingForSpec',
+      banner: { key: 'banner.awaitingSpec', arg: null },
+      goal: null,
+      location: null,
+      step: null,
+      verify: null,
+      requestText: 'I am about to create the API key on Stripe',
+      actions: {
+        ...ACTIONS,
+        done: false,
+        ask: false,
+        note: false,
+        skip: false,
+        defer: false,
+      },
+    });
+  }
+
+  /**
+   * A tab waiting for its spec has no goal yet, so there is no heading to wait for: the
+   * view marker of §7.6 is what says it has been drawn.
+   */
+  async function openAwaiting() {
+    const handoff = awaitingSpec();
+    const bridge = servingBridge([handoff.tab], { [handoff.tab.id]: handoff });
+    setBridge(bridge);
+    render(OverlayView);
+    await waitFor(() =>
+      expect(document.querySelector('[data-ui-state="waitingForSpec"]')).not.toBeNull(),
+    );
+    return bridge;
+  }
+
+  it('shows what the user typed, the session, and that nothing has come back', async () => {
+    await openAwaiting();
+    expect(screen.getByText('I am about to create the API key on Stripe')).toBeDefined();
+    expect(screen.getByText('Session: Claude Code · baton')).toBeDefined();
+    expect(screen.getByText('The agent has not answered yet.')).toBeDefined();
+    // There is no step to walk and no round to end.
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+
+  it('puts the request sentence back on the clipboard (OPEN-05)', async () => {
+    const bridge = await openAwaiting();
+    screen.getByRole('button', { name: 'Copy request again' }).click();
+    await waitFor(() => expect(bridge.copyRequestText).toHaveBeenCalledWith(ID));
+  });
+
+  it('lets the user give up on a request no agent picked up', async () => {
+    const bridge = await openAwaiting();
+    screen.getByRole('button', { name: 'Abandon' }).click();
+    await tick();
+    screen.getByRole('button', { name: 'Send' }).click();
+    await waitFor(() => expect(bridge.act).toHaveBeenCalledWith(ID, 'abandon', ''));
+  });
+});
+
+describe('the question-pending view (§7.6, RESP-04)', () => {
+  it('shows the words the user asked, not only that they asked something', async () => {
+    await open(
+      view({
+        uiState: 'questionSent',
+        banner: { key: 'banner.questionSent', arg: null },
+        pending: { kind: 'question', step: 1, text: 'is this the right page?' },
+      }),
+    );
+
+    expect(screen.getByText('Sent to the agent, waiting for the reply')).toBeDefined();
+    expect(screen.getByText('You asked something on step 1.')).toBeDefined();
+    expect(screen.getByText('is this the right page?')).toBeDefined();
+  });
+
+  it('says a screenshot is pending without inventing a summary for it', async () => {
+    await open(
+      view({
+        uiState: 'questionSent',
+        banner: { key: 'banner.questionSent', arg: null },
+        pending: { kind: 'screenshot', step: 2, text: null },
+      }),
+    );
+    expect(screen.getByText('You sent a screenshot from step 2.')).toBeDefined();
+    expect(document.querySelector('.pending-text')).toBeNull();
+  });
+});
+
+describe('the session picker (FM-22, SRV-18)', () => {
+  const CHOICES = [
+    { sessionRef: 'ses_00000001', label: 'Claude Code · baton' },
+    { sessionRef: 'ses_00000002', label: 'Claude Code · api' },
+  ];
+
+  it('stays out of the way while there is no question to ask', async () => {
+    await open();
+    expect(document.querySelector('.session-picker')).toBeNull();
+  });
+
+  it('asks which session a hook belonged to, and binds the answer', async () => {
+    const bridge = servingBridge([tab()], { [ID]: view() });
+    vi.mocked(bridge.sessionPicker).mockResolvedValue(CHOICES);
+    setBridge(bridge);
+    render(OverlayView);
+
+    await waitFor(() => expect(screen.getByText('Which session is this?')).toBeDefined());
+    screen.getByRole('button', { name: 'Claude Code · api' }).click();
+    await waitFor(() =>
+      expect(bridge.answerSessionPicker).toHaveBeenCalledWith('ses_00000002'),
+    );
+  });
+
+  it('takes "I do not know" as an answer and binds nothing', async () => {
+    const bridge = servingBridge([tab()], { [ID]: view() });
+    vi.mocked(bridge.sessionPicker).mockResolvedValue(CHOICES);
+    setBridge(bridge);
+    render(OverlayView);
+
+    await waitFor(() => expect(screen.getByText('Which session is this?')).toBeDefined());
+    screen.getByRole('button', { name: 'I do not know' }).click();
+    await waitFor(() => expect(bridge.answerSessionPicker).toHaveBeenCalledWith(null));
   });
 });
 

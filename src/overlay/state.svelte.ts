@@ -21,7 +21,7 @@
  * changed and this module decides whether that is worth interrupting anyone for.
  */
 import { bridge } from '../bridge';
-import type { HandoffView, Notice, TabView } from '../model';
+import type { HandoffView, Notice, SessionChoice, TabView } from '../model';
 
 /** How long a revealed value stays visible (DET-04). */
 export const REVEAL_MS = 10_000;
@@ -32,6 +32,7 @@ let current = $state<HandoffView | null>(null);
 let badges = $state<Record<string, number>>({});
 let notice = $state<Notice | null>(null);
 let revealed = $state<Record<string, string[]>>({});
+let picker = $state<SessionChoice[]>([]);
 
 /**
  * Whether the strip has been read at least once.
@@ -71,6 +72,27 @@ export function currentNotice(): Notice | null {
 /** Shows a sentence to the user until the next one. */
 export function showNotice(next: Notice | null): void {
   notice = next;
+}
+
+/** The sessions the FM-22 picker is asking about, or nothing, which is the usual answer. */
+export function sessionChoices(): SessionChoice[] {
+  return picker;
+}
+
+/**
+ * Re-reads the FM-22 question from the registry (SRV-18).
+ *
+ * On `sessionsChanged`, which carries no payload: the registry is the one source of truth
+ * about who is connected and about what a hook could not tell apart.
+ */
+export async function refreshSessions(): Promise<void> {
+  picker = await bridge().sessionPicker();
+}
+
+/** The user picked a session, or said they do not know (`null`). */
+export async function answerSessionPicker(sessionRef: string | null): Promise<void> {
+  await bridge().answerSessionPicker(sessionRef);
+  await refreshSessions();
 }
 
 /** The items of `key` while its ten seconds last, or `null` when it is hidden. */
@@ -188,4 +210,5 @@ export function resetOverlay(): void {
   current = null;
   badges = {};
   notice = null;
+  picker = [];
 }

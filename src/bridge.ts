@@ -22,7 +22,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 import type { Language } from './i18n';
-import type { ActionName, HandoffView, Notice, Redacted, TabView } from './model';
+import type {
+  ActionName,
+  HandoffView,
+  Notice,
+  Redacted,
+  SessionChoice,
+  TabView,
+  WindowSettings,
+} from './model';
 import { isViewName, type ViewName } from './views';
 
 /**
@@ -32,6 +40,15 @@ import { isViewName, type ViewName } from './views';
  * Rust test reads this file to prove the two spellings still agree.
  */
 export const EVENT_SHOW_VIEW = 'ui://show-view';
+
+/**
+ * The window gained or lost the focus (WIN-03).
+ *
+ * The panel collapses to the one-line bar when the user clicks elsewhere and expands when
+ * they come back. Spelled in `ui_bridge/mod.rs` as `EVENT_WINDOW_FOCUS`; the same Rust test
+ * reads this file to keep the two together.
+ */
+export const EVENT_WINDOW_FOCUS = 'ui://window-focus';
 
 /** A tab changed; the window re-reads it. Spelled in `ui_bridge/events.rs` as well. */
 export const EVENT_HANDOFF_CHANGED = 'handoff_changed';
@@ -62,6 +79,15 @@ export interface Bridge {
   /** Runs `handler` whenever the tray menu asks for a view (Show, New request, Settings). */
   onShowView(handler: (view: ViewName) => void): Promise<Unlisten>;
 
+  /** Runs `handler` when the window gains or loses the focus (WIN-03). */
+  onWindowFocus(handler: (focused: boolean) => void): Promise<Unlisten>;
+
+  /** What the window needs to know about its own behaviour (§7.16, R-10). */
+  windowSettings(): Promise<WindowSettings>;
+
+  /** Switches the R-10 fallback collapse on or off. The checkbox for it is T-041. */
+  setCollapseFallback(enabled: boolean): Promise<void>;
+
   /** The tab strip, oldest handoff first (§7.6, MULTI-01). */
   listHandoffs(): Promise<TabView[]>;
 
@@ -80,6 +106,17 @@ export interface Bridge {
    */
   copyValue(id: string, key: string, index?: number): Promise<void>;
 
+  /**
+   * Puts the OPEN-05 sentence for a handoff waiting for its spec back on the clipboard.
+   *
+   * The "Copy request again" of §7.6: the first copy happened when the request was opened,
+   * and by the time the user comes back their clipboard has moved on.
+   */
+  copyRequestText(id: string): Promise<void>;
+
+  /** Puts a handoff's own id on the clipboard, to resume it in a new session (SRV-23). */
+  copyHandoffId(id: string): Promise<void>;
+
   /** The true value, for the ten-second reveal of DET-04. One entry per item. */
   revealValue(id: string, key: string): Promise<string[]>;
 
@@ -91,6 +128,17 @@ export interface Bridge {
 
   /** Runs the certain detector over typed text, before it can be sent (§7.10). */
   scanTypedText(text: string): Promise<Redacted>;
+
+  /**
+   * The "which session is this?" question, when a Stop hook left one (FM-22, SRV-18).
+   *
+   * Empty most of the time. It is re-read on `sessionsChanged`, which is how the registry
+   * announces it: the question is a fact about the run and carries no payload of its own.
+   */
+  sessionPicker(): Promise<SessionChoice[]>;
+
+  /** The user answered the picker, or said they do not know (`null`). */
+  answerSessionPicker(sessionRef: string | null): Promise<void>;
 
   /**
    * Brings the overlay to the front (MULTI-03).
@@ -133,6 +181,15 @@ export function tauriBridge(): Bridge {
         }
       });
     },
+    async onWindowFocus(handler) {
+      return listen<boolean>(EVENT_WINDOW_FOCUS, (event) => handler(event.payload));
+    },
+    async windowSettings() {
+      return invoke<WindowSettings>('window_settings');
+    },
+    async setCollapseFallback(enabled) {
+      await invoke('set_collapse_fallback', { enabled });
+    },
     async listHandoffs() {
       return invoke<TabView[]>('list_handoffs');
     },
@@ -145,6 +202,12 @@ export function tauriBridge(): Bridge {
     async copyValue(id, key, index) {
       await invoke('copy_value', { id, key, index: index ?? null });
     },
+    async copyRequestText(id) {
+      await invoke('copy_request_text', { id });
+    },
+    async copyHandoffId(id) {
+      await invoke('copy_handoff_id', { id });
+    },
     async revealValue(id, key) {
       return invoke<string[]>('reveal_value', { id, key });
     },
@@ -156,6 +219,12 @@ export function tauriBridge(): Bridge {
     },
     async scanTypedText(text) {
       return invoke<Redacted>('scan_typed_text', { text });
+    },
+    async sessionPicker() {
+      return invoke<SessionChoice[]>('session_picker');
+    },
+    async answerSessionPicker(sessionRef) {
+      await invoke('answer_session_picker', { sessionRef });
     },
     async showWindow() {
       await invoke('show_window');
@@ -179,6 +248,13 @@ export function noopBridge(): Bridge {
     async resizeToContent() {},
     async setUiLanguage() {},
     onShowView: unlisten,
+    onWindowFocus: unlisten,
+    async windowSettings() {
+      // Outside the webview there is no window to collapse, so the blur rule is all there
+      // would be; the fallback stays off, which is also its default (R-10).
+      return { collapseFallback: false, collapseFallbackMs: 3000 };
+    },
+    async setCollapseFallback() {},
     async listHandoffs() {
       return [];
     },
@@ -187,6 +263,8 @@ export function noopBridge(): Bridge {
     },
     async act() {},
     async copyValue() {},
+    async copyRequestText() {},
+    async copyHandoffId() {},
     async revealValue() {
       return [];
     },
@@ -198,6 +276,10 @@ export function noopBridge(): Bridge {
       // shows it unchanged.
       return { text, kinds: [] };
     },
+    async sessionPicker() {
+      return [];
+    },
+    async answerSessionPicker() {},
     async showWindow() {},
     onHandoffChanged: unlisten,
     onSessionsChanged: unlisten,

@@ -25,7 +25,7 @@ use serde::Serialize;
 use crate::format::outcome::{ResumedFrom, VerifyReport};
 use crate::format::spec::{url_allowed, SpecValue};
 use crate::log::{HandoffState, Timestamp};
-use crate::store::{HandoffSnapshot, Reply, RoundSummary};
+use crate::store::{Exchanges, HandoffSnapshot, Question, Reply, RoundSummary};
 
 /// What a secret-treated value looks like until the user asks to see it (DET-04, §7.6).
 pub const MASK: &str = "••••••";
@@ -98,6 +98,13 @@ pub struct TabView {
     pub goal: Option<String>,
     /// A final outcome nobody collected for seven days (SRV-23).
     pub orphan: bool,
+    /// Which buttons this tab offers where it is listed.
+    ///
+    /// The same block the whole view carries, and for the same reason: the "waiting" group
+    /// of §7.6 offers **Resume** and **Close it** from the list itself (SRV-23), and a
+    /// second rule deciding which of them to draw there would be a second rule to keep in
+    /// step with the store.
+    pub actions: ActionsView,
     /// When it opened; the strip is ordered by it.
     pub created_at: Timestamp,
 }
@@ -184,11 +191,27 @@ pub struct StepView {
     pub skipped: bool,
     /// What the user wrote on it (RESP-03).
     pub notes: Vec<StepNoteView>,
+    /// What the user asked on it (RESP-04); the reply below answers it.
+    pub questions: Vec<StepQuestionView>,
     /// What an agent answered on it (RESP-04, TOOL-04).
     pub replies: Vec<StepReplyView>,
     /// Whether it is the last step of the round, which is where **Done** ends the round
     /// rather than advancing (RESP-09).
     pub last: bool,
+}
+
+/// A question the user asked, on the step they asked it from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepQuestionView {
+    /// The round it belongs to.
+    pub round: u32,
+    /// The 1-based step it was raised on.
+    pub step: u32,
+    /// What the user wrote, as it was sent (already redacted, §7.10).
+    pub text: String,
+    /// When.
+    pub at: Timestamp,
 }
 
 /// A note the user wrote on a step.
@@ -225,6 +248,10 @@ pub struct PendingView {
     pub kind: &'static str,
     /// The 1-based step it was raised on.
     pub step: u32,
+    /// What the user asked, as it was sent (§7.6 shows the question, not only that there
+    /// is one). Absent for a screenshot, whose summary is the image's and comes with the
+    /// capture pipeline.
+    pub text: Option<String>,
 }
 
 /// One closed round, collapsed (VER-09).
@@ -241,10 +268,18 @@ pub struct HistoryRoundView {
     pub skipped: Vec<u32>,
     /// The notes written in it.
     pub notes: Vec<StepNoteView>,
+    /// The questions asked in it.
+    pub questions: Vec<StepQuestionView>,
     /// The replies given in it.
     pub replies: Vec<StepReplyView>,
     /// What the agent reported about it.
     pub verify: Option<VerifyResultView>,
+    /// Whether this round was opened by a failed verification, which is what makes it a
+    /// **correction** rather than the first pass (VER-09, VER-08).
+    pub correction: bool,
+    /// Whether the verification of this round came back negative — the marker §7.6 asks
+    /// the History to carry.
+    pub failed: bool,
 }
 
 /// A verification report, as the tab shows it (VER-05, §8.4).
@@ -385,6 +420,8 @@ pub fn tabs(
     connected: &dyn Fn(&str) -> bool,
     now: &Timestamp,
 ) -> Vec<TabView> {
+    // `now` is the store's own instant for this read; the orphan flag is already decided
+    // against it (`list_for_ui`), which is why nothing here compares timestamps.
     snapshots
         .iter()
         .map(|snapshot| tab_of(snapshot, ui_state_of(snapshot, connected), now))
@@ -395,7 +432,7 @@ pub fn tabs(
 #[must_use]
 pub fn build(
     snapshot: &HandoffSnapshot,
-    replies: &[Reply],
+    exchanges: &Exchanges,
     connected: &dyn Fn(&str) -> bool,
     now: &Timestamp,
 ) -> HandoffView {
@@ -411,20 +448,11 @@ pub fn build(
         location: snapshot.location.clone(),
         url: snapshot.url.clone().map(LinkView::of),
         lang: snapshot.lang.clone(),
-        step: step_of(snapshot, replies),
+        step: step_of(snapshot, exchanges),
         secrets: secrets_of(snapshot),
         notes: snapshot.notes.iter().map(note_view).collect(),
-        pending: snapshot
-            .pending_question
-            .as_ref()
-            .map(|pending| PendingView {
-                kind: match pending.kind {
-                    crate::store::PendingKind::Question => "question",
-                    crate::store::PendingKind::Screenshot => "screenshot",
-                },
-                step: pending.step,
-            }),
-        history: history_of(snapshot, replies),
+        pending: pending_of(snapshot, exchanges),
+        history: history_of(snapshot, exchanges),
         verify: snapshot.verify.clone(),
         verify_result,
         actions: actions_of(snapshot),
@@ -548,15 +576,42 @@ fn tab_of(snapshot: &HandoffSnapshot, ui_state: UiState, _now: &Timestamp) -> Ta
         },
         goal: snapshot.goal.clone(),
         orphan: snapshot.orphan,
+        actions: actions_of(snapshot),
         created_at: snapshot.created_at.clone(),
     }
+}
+
+/// The interruption the agent still owes an answer to (§8.4 "Question sent").
+///
+/// The store keeps that there **is** one and on which step (§7.4 has no field for the
+/// words); the words are in the diary, and the one this names is the last question asked on
+/// that step of the current round.
+fn pending_of(snapshot: &HandoffSnapshot, exchanges: &Exchanges) -> Option<PendingView> {
+    let pending = snapshot.pending_question.as_ref()?;
+    Some(PendingView {
+        kind: match pending.kind {
+            crate::store::PendingKind::Question => "question",
+            crate::store::PendingKind::Screenshot => "screenshot",
+        },
+        step: pending.step,
+        text: match pending.kind {
+            crate::store::PendingKind::Question => exchanges
+                .questions
+                .iter()
+                .rev()
+                .find(|question| question.round == snapshot.round && question.step == pending.step)
+                .map(|question| question.text.clone()),
+            // TASK: T-049 — a screenshot's summary comes from the preview that sent it.
+            crate::store::PendingKind::Screenshot => None,
+        },
+    })
 }
 
 /// The step the cursor is on, with everything that hangs off it.
 ///
 /// Absent when there is no spec yet and when the handoff is final: in both cases §8.4 gives
 /// the tab a banner and no step to walk.
-fn step_of(snapshot: &HandoffSnapshot, replies: &[Reply]) -> Option<StepView> {
+fn step_of(snapshot: &HandoffSnapshot, exchanges: &Exchanges) -> Option<StepView> {
     if snapshot.state == HandoffState::AwaitingSpec || snapshot.state.is_final() {
         return None;
     }
@@ -593,7 +648,14 @@ fn step_of(snapshot: &HandoffSnapshot, replies: &[Reply]) -> Option<StepView> {
             .filter(|note| note.step == index)
             .map(note_view)
             .collect(),
-        replies: replies
+        questions: exchanges
+            .questions
+            .iter()
+            .filter(|question| question.round == snapshot.round && question.step == index)
+            .map(question_view)
+            .collect(),
+        replies: exchanges
+            .replies
             .iter()
             .filter(|reply| reply.round == snapshot.round && reply.step == index)
             .map(reply_view)
@@ -666,27 +728,41 @@ fn secrets_of(snapshot: &HandoffSnapshot) -> Vec<SecretEntryView> {
         .unwrap_or_default()
 }
 
-fn history_of(snapshot: &HandoffSnapshot, replies: &[Reply]) -> Vec<HistoryRoundView> {
+fn history_of(snapshot: &HandoffSnapshot, exchanges: &Exchanges) -> Vec<HistoryRoundView> {
     snapshot
         .history
         .iter()
-        .map(|round| history_round(round, replies))
+        .map(|round| history_round(round, exchanges))
         .collect()
 }
 
-fn history_round(round: &RoundSummary, replies: &[Reply]) -> HistoryRoundView {
+fn history_round(round: &RoundSummary, exchanges: &Exchanges) -> HistoryRoundView {
     HistoryRoundView {
         no: round.no,
         steps: round.steps.iter().map(|step| step.text.clone()).collect(),
         confirmed: round.confirmed.clone(),
         skipped: round.skipped.clone(),
         notes: round.notes.iter().map(note_view).collect(),
-        replies: replies
+        questions: exchanges
+            .questions
+            .iter()
+            .filter(|question| question.round == round.no)
+            .map(question_view)
+            .collect(),
+        replies: exchanges
+            .replies
             .iter()
             .filter(|reply| reply.round == round.no)
             .map(reply_view)
             .collect(),
         verify: round.verify.as_ref().map(VerifyResultView::from),
+        // Every round after the first is a correction: §8.1 opens one only from a failed
+        // verification, and the counter of the round itself already says so (GUIDE-01).
+        correction: round.no > 1,
+        failed: round
+            .verify
+            .as_ref()
+            .is_some_and(|report| report.ok == Some(false)),
     }
 }
 
@@ -695,6 +771,15 @@ fn note_view(note: &crate::format::outcome::OutcomeNote) -> StepNoteView {
         step: note.step,
         text: note.text.clone(),
         at: note.at.clone(),
+    }
+}
+
+fn question_view(question: &Question) -> StepQuestionView {
+    StepQuestionView {
+        round: question.round,
+        step: question.step,
+        text: question.text.clone(),
+        at: question.at.clone(),
     }
 }
 
@@ -851,7 +936,12 @@ mod tests {
     }
 
     fn view(snapshot: &HandoffSnapshot) -> HandoffView {
-        build(snapshot, &[], &connected, &now())
+        build(snapshot, &Exchanges::default(), &connected, &now())
+    }
+
+    /// The diary of a handoff nobody asked anything on.
+    fn silent() -> Exchanges {
+        Exchanges::default()
     }
 
     #[test]
@@ -915,12 +1005,15 @@ mod tests {
 
         it = snapshot();
         assert_eq!(
-            build(&it, &[], &gone, &now()).ui_state,
+            build(&it, &silent(), &gone, &now()).ui_state,
             UiState::Detached,
             "a session that is gone outranks every other non-final row"
         );
         assert_eq!(
-            build(&it, &[], &gone, &now()).banner.expect("a banner").key,
+            build(&it, &silent(), &gone, &now())
+                .banner
+                .expect("a banner")
+                .key,
             "banner.detached"
         );
     }
@@ -1137,7 +1230,15 @@ mod tests {
             },
         ];
 
-        let view = build(&it, &replies, &connected, &now());
+        let view = build(
+            &it,
+            &Exchanges {
+                questions: Vec::new(),
+                replies,
+            },
+            &connected,
+            &now(),
+        );
         let step = view.step.expect("a step");
         assert_eq!(step.notes.len(), 1);
         assert_eq!(step.notes[0].step, 1);
@@ -1178,7 +1279,15 @@ mod tests {
             at: at("2026-09-09T09:41:00Z"),
         }];
 
-        let view = build(&it, &replies, &connected, &now());
+        let view = build(
+            &it,
+            &Exchanges {
+                questions: Vec::new(),
+                replies,
+            },
+            &connected,
+            &now(),
+        );
         assert_eq!(view.history.len(), 1);
         let past = &view.history[0];
         assert_eq!(past.no, 1);
@@ -1218,5 +1327,131 @@ mod tests {
         assert_eq!(tabs[0].group, TabGroup::Open);
         assert_eq!(tabs[1].group, TabGroup::Waiting);
         assert_eq!(tabs[1].ui_state, UiState::Parked);
+    }
+
+    #[test]
+    fn a_tab_of_the_waiting_group_carries_the_buttons_that_group_offers() {
+        // SRV-23 and RESP-07 put Resume and Close it in the list itself, so the entry has
+        // to say which of them it has; the rule is the store's and not the strip's.
+        let mut parked = snapshot();
+        parked.state = HandoffState::Parked;
+        let mut orphan = snapshot();
+        orphan.id = "hf_0000000002".to_owned();
+        orphan.state = HandoffState::NotVerified;
+        orphan.orphan = true;
+
+        let tabs = tabs(&[parked, orphan], &connected, &now());
+        assert!(tabs[0].actions.resume, "a parked handoff is resumable");
+        assert!(!tabs[0].actions.close_orphan);
+        assert!(tabs[1].actions.close_orphan, "SRV-23: close it by hand");
+        assert!(!tabs[1].actions.resume);
+    }
+
+    #[test]
+    fn a_pending_question_carries_the_words_the_user_wrote() {
+        // §7.6 shows the question, not only that there is one; the store keeps the step and
+        // the diary keeps the words.
+        let mut it = snapshot();
+        it.pending_question = Some(PendingQuestion {
+            kind: PendingKind::Question,
+            step: 1,
+            at: at("2026-09-09T09:20:00Z"),
+        });
+        let exchanges = Exchanges {
+            questions: vec![
+                Question {
+                    round: 1,
+                    step: 2,
+                    text: "another step".to_owned(),
+                    at: at("2026-09-09T09:15:00Z"),
+                },
+                Question {
+                    round: 1,
+                    step: 1,
+                    text: "which button?".to_owned(),
+                    at: at("2026-09-09T09:20:00Z"),
+                },
+            ],
+            replies: Vec::new(),
+        };
+
+        let view = build(&it, &exchanges, &connected, &now());
+        let pending = view.pending.expect("a pending question");
+        assert_eq!(pending.kind, "question");
+        assert_eq!(pending.step, 1);
+        assert_eq!(pending.text.as_deref(), Some("which button?"));
+        assert_eq!(
+            view.step.expect("a step").questions.len(),
+            1,
+            "the step shows what was asked on it and nothing else"
+        );
+    }
+
+    #[test]
+    fn a_pending_screenshot_has_no_words_of_its_own_yet() {
+        let mut it = snapshot();
+        it.pending_question = Some(PendingQuestion {
+            kind: PendingKind::Screenshot,
+            step: 1,
+            at: at("2026-09-09T09:20:00Z"),
+        });
+        let pending = view(&it).pending.expect("a pending screenshot");
+        assert_eq!(pending.kind, "screenshot");
+        assert_eq!(pending.text, None);
+    }
+
+    #[test]
+    fn a_history_round_says_whether_it_was_a_correction_and_whether_it_failed() {
+        // VER-09 asks the History to carry the markers; §8.1 opens a second round only from
+        // a failed verification, so the round number and the report say the same thing twice
+        // and the window can draw either.
+        let mut it = snapshot();
+        it.round = 2;
+        it.history = vec![
+            RoundSummary {
+                no: 1,
+                steps: vec![step("open the dashboard")],
+                confirmed: vec![1],
+                skipped: Vec::new(),
+                notes: Vec::new(),
+                verify: Some(VerifyReport {
+                    ok: Some(false),
+                    detail: Some("404".to_owned()),
+                    reported_at: "2026-09-09T09:40:00.000Z".to_owned(),
+                    late: false,
+                }),
+            },
+            RoundSummary {
+                no: 2,
+                steps: vec![step("try the other endpoint")],
+                confirmed: vec![1],
+                skipped: Vec::new(),
+                notes: Vec::new(),
+                verify: None,
+            },
+        ];
+
+        let history = build(
+            &it,
+            &Exchanges {
+                questions: vec![Question {
+                    round: 1,
+                    step: 1,
+                    text: "is this the right page?".to_owned(),
+                    at: at("2026-09-09T09:35:00Z"),
+                }],
+                replies: Vec::new(),
+            },
+            &connected,
+            &now(),
+        )
+        .history;
+
+        assert!(!history[0].correction, "the first round is the first pass");
+        assert!(history[0].failed);
+        assert_eq!(history[0].questions.len(), 1);
+        assert!(history[1].correction);
+        assert!(!history[1].failed, "a round with no report has not failed");
+        assert!(history[1].questions.is_empty());
     }
 }

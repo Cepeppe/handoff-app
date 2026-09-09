@@ -87,7 +87,18 @@ pub fn run() {
     // because registration is the channel's business and not the window's (SRV-20).
     let (channel, core) = start_channel(&notifier);
 
-    tauri::Builder::default()
+    // The window's own connection to the log (WIN-02, §7.16). Opened whether or not the
+    // channel came up: the panel remembers where it was even on a run where no agent could
+    // reach it.
+    let mut ui = ui_bridge::Ui::with_notifier(notifier);
+    match log::Db::open_app_data() {
+        Ok(db) => ui = ui.with_settings(db),
+        Err(error) => {
+            tracing::warn!(error = %error, "the window will not remember its position this run");
+        }
+    }
+
+    let app = tauri::Builder::default()
         // First, as the plugin requires: a second launch must reach the running instance
         // before that instance has finished starting. The overlay is one window and one
         // process (MULTI-04, APP-01), so a second launch only brings it forward.
@@ -100,7 +111,7 @@ pub fn run() {
         // `open_secret_file`, which decide what may be copied and what may be opened.
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(ui_bridge::Ui::with_notifier(notifier))
+        .manage(ui)
         .manage(ui_bridge::CoreState(core))
         .invoke_handler(tauri::generate_handler![
             ui_bridge::resize_to_content,
@@ -109,25 +120,44 @@ pub fn run() {
             ui_bridge::commands::get_handoff_view,
             ui_bridge::commands::act,
             ui_bridge::commands::copy_value,
+            ui_bridge::commands::copy_request_text,
+            ui_bridge::commands::copy_handoff_id,
             ui_bridge::commands::reveal_value,
             ui_bridge::commands::open_url,
             ui_bridge::commands::open_secret_file,
             ui_bridge::commands::scan_typed_text,
+            ui_bridge::commands::session_picker,
+            ui_bridge::commands::answer_session_picker,
+            ui_bridge::commands::window_settings,
+            ui_bridge::commands::set_collapse_fallback,
             ui_bridge::commands::show_window
         ])
-        // WIN-04: the close button hides the window to the tray; `Quit` in the tray menu is
-        // the only way out.
+        // WIN-02, WIN-03, WIN-04: the close button hides the window to the tray, the focus
+        // change is what the panel collapses on, and a move is remembered per monitor.
         .on_window_event(ui_bridge::on_window_event)
         .setup(|app| ui_bridge::init(app.handle()))
-        .run(tauri::generate_context!())
-        .expect("error while running the Baton application");
+        .build(tauri::generate_context!())
+        .expect("error while starting the Baton application");
+
+    // `run_return` and not `run`: `App::run` exits the process itself and never comes back,
+    // so everything after it — including the goodbye below — would be code that cannot run.
+    // The tray's `Quit` calls `AppHandle::exit`, which unwinds the event loop to here.
+    let code = app.run_return(|app, event| {
+        // The panel's last position, while the window still exists to be asked (WIN-02).
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            ui_bridge::on_exit_requested(app);
+        }
+    });
 
     // The peers are owed the `app.shutdown` of §6.3 before the socket goes away: a server
     // that is told why its channel went down degrades to text mode at once, while one left
     // to infer it from an EOF spends the backoff schedule finding out.
     if let Some(handle) = channel {
+        tracing::info!(endpoint = %handle.endpoint().display(), "telling the peers the app is leaving");
         tauri::async_runtime::block_on(handle.shutdown("the user quit the app"));
     }
+
+    std::process::exit(code);
 }
 
 /// Starts the channel, or reports why it could not start and lets the app run without it.

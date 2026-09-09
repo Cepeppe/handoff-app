@@ -2,9 +2,17 @@
 //!
 //! The icon is always present; the menu is `Show`, `New request`, `Settings`, `Quit`, and
 //! `Quit` is the *only* way to end the process — closing the window hides it here instead.
-//! The badge that appears when handoffs are active comes later, with the store that knows
-//! how many there are.
-// TASK: T-037 — the badge over the icon, from the count of active handoffs (WIN-05).
+//!
+//! # The badge (WIN-05)
+//!
+//! "A badge appears only when there are active handoffs." Tauri's own badge — a title beside
+//! the icon — is **unsupported on Windows**, which is the platform this build is for, so the
+//! badge is painted into the icon itself: [`badged`] draws a filled dot over the bottom-right
+//! corner of the icon's own pixels. That needs no image codec (the icon arrives as RGBA
+//! already) and therefore no new dependency to justify to `cargo deny`.
+//!
+//! The count goes to the tooltip rather than into the dot: two digits rendered into a
+//! 32-pixel icon are a smudge, and the tooltip is where a person reads a number anyway.
 
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -12,7 +20,7 @@ use tauri::{AppHandle, Wry};
 
 use crate::i18n::{self, Language};
 
-/// The id of the tray icon, so a later task can find it again to set the badge.
+/// The id of the tray icon, so the badge can find it again.
 pub const TRAY_ID: &str = "main";
 
 const ID_SHOW: &str = "show";
@@ -101,6 +109,99 @@ pub fn install(app: &AppHandle, language: Language) -> Result<Handles, Box<dyn s
     })
 }
 
+/// The dot's diameter, as a fraction of the icon's shorter side.
+///
+/// Just over a third: small enough to leave the mark recognisable, large enough to be seen
+/// at the sixteen physical pixels a Windows tray gives an icon on a 100% display.
+const BADGE_FRACTION: f32 = 0.38;
+
+/// The dot's colour, opaque, as R, G, B, A.
+///
+/// A warning red rather than the product's own accent: the badge has to read as "something
+/// is waiting" against an icon whose colours it does not know.
+const BADGE_COLOUR: [u8; 4] = [0xd7, 0x26, 0x38, 0xff];
+
+/// The icon's pixels with the "there is work" dot painted over the bottom-right corner.
+///
+/// Row-major RGBA in, row-major RGBA out, which is what `tauri::image::Image` carries both
+/// ways. The dot is drawn opaque over whatever is under it — an icon corner is decoration,
+/// and a translucent dot over a dark icon is not a badge — with one pixel of feathering, so
+/// that the circle does not read as a square at tray sizes.
+///
+/// Pixels that are not a `width × height` RGBA buffer come back unchanged: an icon this
+/// cannot understand is still a usable icon, and a tray with no icon at all would be a
+/// worse answer than a tray with no badge.
+#[must_use]
+pub fn badged(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let expected = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
+    if width == 0 || height == 0 || rgba.len() != expected {
+        return rgba.to_vec();
+    }
+
+    let side = width.min(height) as f32;
+    let radius = side * BADGE_FRACTION / 2.0;
+    // Inset by a pixel, so the dot does not bleed off the icon's own edge.
+    let centre_x = width as f32 - radius - 1.0;
+    let centre_y = height as f32 - radius - 1.0;
+
+    let mut painted = rgba.to_vec();
+    for y in 0..height {
+        for x in 0..width {
+            let dx = (x as f32 + 0.5) - centre_x;
+            let dy = (y as f32 + 0.5) - centre_y;
+            let distance = dx.mul_add(dx, dy * dy).sqrt();
+            // One pixel of feathering: 1.0 well inside the circle, 0.0 well outside it.
+            let coverage = (radius - distance + 0.5).clamp(0.0, 1.0);
+            if coverage <= 0.0 {
+                continue;
+            }
+            let at = ((y as usize * width as usize) + x as usize) * 4;
+            for channel in 0..4 {
+                let under = f32::from(painted[at + channel]);
+                let over = f32::from(BADGE_COLOUR[channel]);
+                painted[at + channel] = coverage.mul_add(over - under, under).round() as u8;
+            }
+        }
+    }
+    painted
+}
+
+/// Shows or hides the badge, and says how many handoffs it stands for (WIN-05).
+///
+/// `count` is how many handoffs are not final: everything the user still has something to do
+/// about, which is what "active" means to the person glancing at the tray. Zero puts the
+/// plain icon and the plain tooltip back.
+pub fn set_badge(app: &AppHandle, count: usize) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let Some(icon) = app.default_window_icon().cloned() else {
+        return;
+    };
+    let language = super::language_of(app);
+
+    let icon = if count == 0 {
+        icon
+    } else {
+        let painted = badged(icon.rgba(), icon.width(), icon.height());
+        tauri::image::Image::new_owned(painted, icon.width(), icon.height())
+    };
+    if let Err(error) = tray.set_icon(Some(icon)) {
+        tracing::warn!(error = %error, "the tray icon refused the badge");
+    }
+
+    let tooltip = if count == 0 {
+        i18n::text(language, "app.name").to_owned()
+    } else {
+        i18n::text(language, "tray.tooltipActive").replace("{count}", &count.to_string())
+    };
+    if let Err(error) = tray.set_tooltip(Some(tooltip)) {
+        tracing::warn!(error = %error, "the tray icon refused its tooltip");
+    }
+}
+
 /// `Quit` is the only exit of the application (WIN-04); the other three open a view.
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
@@ -131,8 +232,62 @@ mod tests {
     }
 
     #[test]
+    fn the_badge_paints_the_corner_and_leaves_the_rest_alone() {
+        let icon = vec![0xff_u8; 16 * 16 * 4];
+        let painted = badged(&icon, 16, 16);
+        assert_eq!(painted.len(), icon.len());
+        // The corner furthest from the dot is untouched: the mark stays recognisable.
+        assert_eq!(&painted[0..4], &[0xff, 0xff, 0xff, 0xff]);
+        // A pixel inside the dot is the badge colour, opaquely.
+        let pixel = |x: usize, y: usize| {
+            let at = (y * 16 + x) * 4;
+            painted[at..at + 4].to_vec()
+        };
+        assert_eq!(pixel(12, 12), BADGE_COLOUR.to_vec());
+        // And the dot is inset, so it does not bleed off the icon's own edge.
+        assert_eq!(pixel(15, 15), vec![0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn pixels_that_are_not_an_image_come_back_as_they_went_in() {
+        let odd = vec![1_u8, 2, 3];
+        assert_eq!(badged(&odd, 4, 4), odd);
+        assert_eq!(badged(&[], 0, 0), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn the_badge_is_the_same_size_whatever_the_icon_resolution_is() {
+        for side in [16_u32, 32, 64, 128] {
+            let icon = vec![0x00_u8; (side * side * 4) as usize];
+            let painted = badged(&icon, side, side);
+            let lit = painted
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[3] > 0)
+                .count() as f32;
+            let share = lit / (side * side) as f32;
+            // A disc of that fraction covers about π/4 · fraction² of the square, plus the
+            // feathered ring, which weighs more on a small icon than on a large one. The
+            // point of the check is that the dot scales with the icon rather than staying a
+            // fixed number of pixels, which is what would make it invisible at 128.
+            let ideal = std::f32::consts::PI / 4.0 * BADGE_FRACTION * BADGE_FRACTION;
+            assert!(
+                (ideal..ideal + 0.05).contains(&share),
+                "a {side}px icon has {share} of its area lit, expected about {ideal}"
+            );
+        }
+    }
+
+    #[test]
     fn every_menu_entry_has_a_text_in_both_languages() {
-        for key in ["tray.show", "tray.newRequest", "tray.settings", "tray.quit"] {
+        for key in [
+            "tray.show",
+            "tray.newRequest",
+            "tray.settings",
+            "tray.quit",
+            "tray.tooltipActive",
+        ] {
             for language in [Language::En, Language::It] {
                 assert_ne!(i18n::text(language, key), key);
             }

@@ -68,11 +68,24 @@
       </section>
     {/if}
 
-    {#if step.replies.length > 0}
+    {#if step.questions.length > 0 || step.replies.length > 0}
       <section class="replies">
-        <h2>{t('overlay.reply')}</h2>
+        <!--
+          The round trip of RESP-04 and TOOL-04, on the step it was about: what was asked,
+          then what came back. The question is here and not only in the pending view because
+          an answer without its question is half a conversation.
+        -->
+        {#each step.questions as question, index (index)}
+          <p class="question">
+            <span class="who">{t('overlay.question')}:</span>
+            {question.text}
+          </p>
+        {/each}
         {#each step.replies as reply, index (index)}
-          <p class="reply">{reply.text}</p>
+          <p class="reply">
+            <span class="who">{t('overlay.reply')}:</span>
+            {reply.text}
+          </p>
         {/each}
       </section>
     {/if}

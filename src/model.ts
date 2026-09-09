@@ -43,6 +43,8 @@ export interface TabView {
   group: TabGroup;
   goal: string | null;
   orphan: boolean;
+  /** Which buttons this entry offers where it is listed (SRV-23, RESP-07). */
+  actions: ActionsView;
   createdAt: string;
 }
 
@@ -95,6 +97,15 @@ export interface StepReplyView {
   at: string;
 }
 
+/** A question the user asked, on the step they asked it from (RESP-04). */
+export interface StepQuestionView {
+  round: number;
+  step: number;
+  /** As it was sent: the certain detector already ran over it (§7.10). */
+  text: string;
+  at: string;
+}
+
 /** The step the user is on (GUIDE-01..04). */
 export interface StepView {
   counter: CounterView;
@@ -105,6 +116,7 @@ export interface StepView {
   confirmed: boolean;
   skipped: boolean;
   notes: StepNoteView[];
+  questions: StepQuestionView[];
   replies: StepReplyView[];
   last: boolean;
 }
@@ -113,6 +125,8 @@ export interface StepView {
 export interface PendingView {
   kind: 'question' | 'screenshot';
   step: number;
+  /** What was asked; `null` for a screenshot, whose summary comes with the capture (T-049). */
+  text: string | null;
 }
 
 /** A verification report (VER-05). */
@@ -130,8 +144,13 @@ export interface HistoryRoundView {
   confirmed: number[];
   skipped: number[];
   notes: StepNoteView[];
+  questions: StepQuestionView[];
   replies: StepReplyView[];
   verify: VerifyResultView | null;
+  /** Whether a failed verification opened this round (VER-08, VER-09). */
+  correction: boolean;
+  /** Whether the verification of this round came back negative. */
+  failed: boolean;
 }
 
 /** The banner of §8.4: a catalogue key and the text it quotes, when it quotes one. */
@@ -221,4 +240,19 @@ export type NoticeKind = 'info' | 'warning' | 'error';
 export interface Notice {
   kind: NoticeKind;
   text: string;
+}
+
+/** One of the sessions the FM-22 picker asks the user to choose between. */
+export interface SessionChoice {
+  sessionRef: string;
+  /** Agent and project folder, as the tab strip labels it (OPEN-02). */
+  label: string;
+}
+
+/** What the window needs to know about its own behaviour (§7.16, WIN-03, R-10). */
+export interface WindowSettings {
+  /** Whether the fallback collapse of R-10 is switched on. Off unless the user said so. */
+  collapseFallback: boolean;
+  /** How long after the last interaction it fires, in milliseconds. */
+  collapseFallbackMs: number;
 }

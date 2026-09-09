@@ -14,6 +14,11 @@
     tall the content is, so it measures and asks the core to resize; the width is fixed.
   - the tray menu switches views from outside the component tree, through the bridge.
 
+  The collapsed bar of WIN-03 is here rather than inside the overlay, because it replaces
+  the *window* and not a view: the header goes with it, and the bar carries its own drag
+  region. It is drawn only over a handoff being guided — collapsing the settings page or the
+  request sheet to "the current step" would be collapsing them to nothing.
+
   No component in this application carries a `<style>` block: all styling is in
   `styles.css`. The webview CSP is `default-src 'self'` with no `unsafe-inline`, so an
   injected inline stylesheet would be refused, and one file is also what the task asks for.
@@ -23,6 +28,16 @@
 
   import { bridge } from './bridge';
   import { t } from './i18n';
+  import type { ActionName } from './model';
+  import CollapsedBar from './overlay/CollapsedBar.svelte';
+  import {
+    focusChanged,
+    isCollapsed,
+    loadWindowSettings,
+    noteInteraction,
+    stopIdleTimer,
+  } from './overlay/collapse.svelte';
+  import { currentView, refreshCurrent, refreshTabs } from './overlay/state.svelte';
   import { showView, view } from './view-state.svelte';
   import { VIEW_NAMES, viewTitleKey, type ViewName } from './views';
   import OnboardingView from './views/OnboardingView.svelte';
@@ -53,12 +68,53 @@
   let root = $state<HTMLElement | null>(null);
   const Current = $derived(VIEWS[view()]);
 
+  /**
+   * The handoff the collapsed bar would show, when there is one to show (WIN-03).
+   *
+   * Only the overlay collapses, and only over a tab that is being guided: there is no
+   * "current step" behind the settings page, and a final tab has nothing left to press.
+   */
+  const collapsible = $derived.by(() => {
+    if (view() !== 'overlay') {
+      return null;
+    }
+    const handoff = currentView();
+    return handoff !== null && handoff.step !== null ? handoff : null;
+  });
+
+  const collapsed = $derived(isCollapsed() && collapsible !== null);
+
+  /** One action from the bar, on the tab the bar is showing. */
+  async function act(action: ActionName): Promise<void> {
+    const handoff = collapsible;
+    if (handoff === null) {
+      return;
+    }
+    try {
+      await bridge().act(handoff.tab.id, action);
+    } catch {
+      // The core pushed the sentence the user reads; the view redraws what it now says.
+    }
+    await refreshCurrent();
+    await refreshTabs();
+  }
+
   onMount(() => {
     const stopping: Array<() => void> = [];
 
     void bridge()
       .onShowView((next: ViewName) => showView(next))
       .then((unlisten) => stopping.push(unlisten));
+
+    // WIN-03: clicking elsewhere collapses the panel, clicking back on it expands it. The
+    // Rust side is where Tauri reports the focus, so the fact arrives as an event.
+    void bridge()
+      .onWindowFocus(focusChanged)
+      .then((unlisten) => stopping.push(unlisten));
+
+    // R-10: the fallback timer, off unless the user switched it on.
+    void loadWindowSettings();
+    stopping.push(stopIdleTimer);
 
     // The window height follows the content, so it is remeasured whenever the content
     // changes rather than only after a view switch. jsdom has no `ResizeObserver`, and a
@@ -80,27 +136,44 @@
   });
 </script>
 
+<!--
+  `onpointerdown` and `onkeydown` are the "last interaction" of R-10 and nothing else: they
+  restart a timer that is only armed when the setting is on, and they never swallow an
+  event. The handlers sit on a plain container, so no element loses its own behaviour.
+-->
+<svelte:document onpointerdown={noteInteraction} onkeydown={noteInteraction} />
+
+<!--
+  The measured element is the outer one, so the height follows the content in **both**
+  shapes: WIN-02 asks for a content-driven height and WIN-03 makes the collapsed bar one of
+  the contents it has to follow. Measuring the panel alone would leave the window its full
+  height with a one-line bar in it.
+-->
 <div class="app" bind:this={root}>
-  <header class="header" data-tauri-drag-region>
-    <span class="title" data-tauri-drag-region>{t('app.name')}</span>
-  </header>
+  {#if collapsed && collapsible !== null}
+    <CollapsedBar view={collapsible} onact={(action) => void act(action)} />
+  {:else}
+    <header class="header" data-tauri-drag-region>
+      <span class="title" data-tauri-drag-region>{t('app.name')}</span>
+    </header>
 
-  {#if showDevMenu}
-    <nav class="dev-menu" aria-label={t('dev.views')}>
-      {#each VIEW_NAMES as name (name)}
-        <button
-          type="button"
-          class="dev-menu-item"
-          aria-current={view() === name ? 'page' : undefined}
-          onclick={() => showView(name)}
-        >
-          {t(viewTitleKey(name))}
-        </button>
-      {/each}
-    </nav>
+    {#if showDevMenu}
+      <nav class="dev-menu" aria-label={t('dev.views')}>
+        {#each VIEW_NAMES as name (name)}
+          <button
+            type="button"
+            class="dev-menu-item"
+            aria-current={view() === name ? 'page' : undefined}
+            onclick={() => showView(name)}
+          >
+            {t(viewTitleKey(name))}
+          </button>
+        {/each}
+      </nav>
+    {/if}
+
+    <main class="content">
+      <Current />
+    </main>
   {/if}
-
-  <main class="content">
-    <Current />
-  </main>
 </div>

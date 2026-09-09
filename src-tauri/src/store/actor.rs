@@ -161,6 +161,36 @@ pub struct Reply {
     pub at: Timestamp,
 }
 
+/// What the user asked, and on which step (RESP-04, §7.6).
+///
+/// The other half of [`Reply`], read from the same diary: an `events` row of kind `ask`.
+/// §7.6 shows it twice — beside the "waiting for the reply" banner while the agent owes an
+/// answer, and in the History of a closed round — and a round trip that printed the answer
+/// without the question would be a conversation with one voice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    /// The round it was asked in.
+    pub round: u32,
+    /// The 1-based step it was raised on.
+    pub step: u32,
+    /// What the user wrote, as it was sent — already redacted (§7.10).
+    pub text: String,
+    /// When it was asked.
+    pub at: Timestamp,
+}
+
+/// One handoff's whole question-and-answer trail, read in a single pass (§7.6).
+///
+/// Both halves come out of `events` and both are wanted by the same repaint, so they are
+/// read together: a second call would be a second scan of the same rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Exchanges {
+    /// What the user asked, oldest first.
+    pub questions: Vec<Question>,
+    /// What the agents answered, oldest first.
+    pub replies: Vec<Reply>,
+}
+
 /// What a view needs to draw one tab (§7.6, §8.4).
 ///
 /// A projection, not the record: the store stays the only owner, and a view that held a
@@ -169,9 +199,9 @@ pub struct Reply {
 /// Everything here is a clone of what is already in memory, because the list is rebuilt on
 /// every Stop hook as well as on every repaint (`hook::decide`) and a query per handoff
 /// there would spend a real-time budget on the window's behalf. The two things a view needs
-/// and this does not carry are read on their own: the agent's replies
-/// ([`Store::replies`], one query for one tab) and whether the session is still connected,
-/// which belongs to the registry (SRV-21).
+/// and this does not carry are read on their own: the question-and-answer trail
+/// ([`Store::exchanges`], one query for one tab) and whether the session is still
+/// connected, which belongs to the registry (SRV-21).
 ///
 /// **`values` are the true values.** §5.5 sends the app the spec unmasked so that the copy
 /// button can copy what the user has to paste (DET-04); `secret_treated` says which of them
@@ -1428,40 +1458,59 @@ impl Store {
         Ok(())
     }
 
-    /// What the agents answered on this handoff, oldest first (RESP-04, TOOL-04).
+    /// What was asked and what was answered on this handoff, oldest first (RESP-04,
+    /// TOOL-04).
     ///
-    /// Read from `events` rather than from the record, which keeps no reply: §7.4 has no
-    /// field for it because the text went to the agent's caller in the tool result, and the
-    /// overlay shows it again on the step it referred to. One query for one tab, which is
-    /// why it is not part of [`HandoffSnapshot`].
+    /// Read from the diary rather than from the record, which keeps neither: §7.4 has no
+    /// field for a question or a reply, because the question left in a tool result and the
+    /// answer came back in the next call, and §7.6 shows both again on the step they
+    /// referred to. One pass for one tab, which is why it is not part of
+    /// [`HandoffSnapshot`].
+    ///
+    /// The two halves live in two tables, and each is where it is for a reason: a reply is
+    /// an `events` row carrying its text, while a question is an `events` row (which has
+    /// the round and the step) **and** a `sends` row (which has the text as it was sent,
+    /// after the redaction of §7.10, and which is what LOG-02 asks to be able to show).
+    /// `Store::ask` writes exactly one of each in one transaction, so the *n*-th of one is
+    /// the *n*-th of the other.
     ///
     /// # Errors
     ///
     /// [`Refusal::Persistence`] when the rows cannot be read.
-    pub fn replies(&self, handoff_id: &str) -> Result<Vec<Reply>> {
-        let rows = crate::log::events::list_for_handoff(&self.db, handoff_id)?;
-        Ok(rows
-            .into_iter()
+    pub fn exchanges(&self, handoff_id: &str) -> Result<Exchanges> {
+        let events = crate::log::events::list_for_handoff(&self.db, handoff_id)?;
+        let sends = crate::log::sends::list_for_handoff(&self.db, handoff_id)?;
+
+        let replies = events
+            .iter()
             .filter(|row| row.kind == EventKind::Reply)
             .filter_map(|row| {
-                let text = row
-                    .payload_json
-                    .as_deref()
-                    .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-                    .and_then(|payload| {
-                        payload
-                            .get("text")
-                            .and_then(serde_json::Value::as_str)
-                            .map(std::borrow::ToOwned::to_owned)
-                    })?;
                 Some(Reply {
-                    round: u32::try_from(row.round.unwrap_or(1)).unwrap_or(1),
-                    step: u32::try_from(row.step_index.unwrap_or(1)).unwrap_or(1),
-                    text,
-                    at: row.at,
+                    round: round_of(row),
+                    step: step_of(row),
+                    text: reply_text(row)?,
+                    at: row.at.clone(),
                 })
             })
-            .collect())
+            .collect();
+
+        let asked = events.iter().filter(|row| row.kind == EventKind::Ask);
+        let sent = sends
+            .iter()
+            .filter(|row| row.kind == crate::log::sends::SendKind::Question);
+        let questions = asked
+            .zip(sent)
+            .filter_map(|(event, send)| {
+                Some(Question {
+                    round: round_of(event),
+                    step: step_of(event),
+                    text: send.text_as_sent.clone()?,
+                    at: event.at.clone(),
+                })
+            })
+            .collect();
+
+        Ok(Exchanges { questions, replies })
     }
 
     /// The **true** value `key` names, as the copy button and the ten-second reveal need it
@@ -1563,6 +1612,25 @@ fn open_correction_round(
         Some(json!({"state": HandoffState::Active.as_str()})),
     );
     Ok(())
+}
+
+/// The round an `events` row belongs to, defaulting to the first (§7.11 allows a null).
+fn round_of(row: &EventRow) -> u32 {
+    u32::try_from(row.round.unwrap_or(1)).unwrap_or(1)
+}
+
+/// The 1-based step an `events` row is about, defaulting to the first.
+fn step_of(row: &EventRow) -> u32 {
+    u32::try_from(row.step_index.unwrap_or(1)).unwrap_or(1)
+}
+
+/// The words an agent's `reply` row carries, when it carries any.
+fn reply_text(row: &EventRow) -> Option<String> {
+    let payload: serde_json::Value = serde_json::from_str(row.payload_json.as_deref()?).ok()?;
+    payload
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .map(std::borrow::ToOwned::to_owned)
 }
 
 /// Whether a handoff is still waiting for the spec that will fill it (OPEN-04, DD-13).
@@ -1862,12 +1930,12 @@ pub enum Command {
         /// Where the projections go.
         reply_to: oneshot::Sender<Vec<HandoffSnapshot>>,
     },
-    /// What the agents answered on one handoff (§7.6, RESP-04).
-    Replies {
+    /// What was asked and answered on one handoff (§7.6, RESP-04).
+    Exchanges {
         /// Which handoff.
         handoff_id: String,
         /// Where they go; empty when the rows cannot be read.
-        reply_to: oneshot::Sender<Vec<Reply>>,
+        reply_to: oneshot::Sender<Exchanges>,
     },
     /// The true value behind a chip (DET-04, GUIDE-02).
     Value {
@@ -2084,14 +2152,14 @@ impl StoreHandle {
             .await
     }
 
-    /// What the agents answered on one handoff, oldest first.
-    pub async fn replies(&self, handoff_id: String) -> Vec<Reply> {
+    /// What was asked and what was answered on one handoff, oldest first.
+    pub async fn exchanges(&self, handoff_id: String) -> Exchanges {
         self.ask(
-            |reply_to| Command::Replies {
+            |reply_to| Command::Exchanges {
                 handoff_id,
                 reply_to,
             },
-            Vec::new,
+            Exchanges::default,
         )
         .await
     }
@@ -2236,17 +2304,17 @@ fn apply(store: &mut Store, command: Command) {
         Command::ListForUi { at, reply_to } => {
             let _ = reply_to.send(store.list_for_ui(&at));
         }
-        Command::Replies {
+        Command::Exchanges {
             handoff_id,
             reply_to,
         } => {
-            // A diary that cannot be read costs the tab its replies and nothing else; the
-            // step, the values and the buttons are all in memory.
-            let replies = store.replies(&handoff_id).unwrap_or_else(|error| {
-                tracing::warn!(error = %error, handoff_id, "the replies could not be read");
-                Vec::new()
+            // A diary that cannot be read costs the tab its questions and its replies and
+            // nothing else; the step, the values and the buttons are all in memory.
+            let exchanges = store.exchanges(&handoff_id).unwrap_or_else(|error| {
+                tracing::warn!(error = %error, handoff_id, "the exchanges could not be read");
+                Exchanges::default()
             });
-            let _ = reply_to.send(replies);
+            let _ = reply_to.send(exchanges);
         }
         Command::Value {
             handoff_id,
@@ -2572,6 +2640,83 @@ mod tests {
         assert!(
             snapshot.call_attached,
             "T-020: a continue re-attaches the call the app already knows"
+        );
+    }
+
+    #[test]
+    fn the_diary_gives_back_the_question_and_the_answer_on_the_step_they_belong_to() {
+        // §7.6 shows a round trip, not half of one: the question the user asked and the
+        // answer that came back, both on the step they referred to.
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, true));
+        let asked = at("2026-09-08T11:05:00Z");
+        store.ask(&id, "which button?", &asked).expect("ask");
+        store.take_deliveries();
+        store
+            .continue_handoff(
+                &id,
+                &call(1, "call_00000001", OPENER),
+                "the blue one",
+                None,
+                &at("2026-09-08T11:06:00Z"),
+            )
+            .expect("the reply");
+
+        let exchanges = store.exchanges(&id).expect("the diary");
+        assert_eq!(exchanges.questions.len(), 1);
+        assert_eq!(exchanges.questions[0].text, "which button?");
+        assert_eq!(exchanges.questions[0].round, 1);
+        assert_eq!(exchanges.questions[0].step, 1);
+        assert_eq!(exchanges.questions[0].at, asked);
+        assert_eq!(exchanges.replies.len(), 1);
+        assert_eq!(exchanges.replies[0].text, "the blue one");
+        assert_eq!(exchanges.replies[0].step, 1);
+    }
+
+    #[test]
+    fn a_handoff_nobody_asked_anything_on_has_an_empty_diary() {
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, true));
+        assert_eq!(
+            store.exchanges(&id).expect("the diary"),
+            Exchanges::default()
+        );
+    }
+
+    #[test]
+    fn two_questions_keep_their_own_steps_and_their_own_words() {
+        // The `events` row carries the step and the `sends` row the words, so the pairing
+        // is what this is about: a second question must not take the first one's step.
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, true));
+        store
+            .ask(&id, "which button?", &at("2026-09-08T11:05:00Z"))
+            .expect("the first question");
+        store.take_deliveries();
+        store
+            .continue_handoff(
+                &id,
+                &call(1, "call_00000001", OPENER),
+                "the blue one",
+                None,
+                &at("2026-09-08T11:06:00Z"),
+            )
+            .expect("the reply");
+        store
+            .confirm(&id, &at("2026-09-08T11:07:00Z"))
+            .expect("the first step is done");
+        store
+            .ask(&id, "and now?", &at("2026-09-08T11:08:00Z"))
+            .expect("the second question");
+
+        let exchanges = store.exchanges(&id).expect("the diary");
+        assert_eq!(
+            exchanges
+                .questions
+                .iter()
+                .map(|question| (question.step, question.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "which button?"), (2, "and now?")]
         );
     }
 

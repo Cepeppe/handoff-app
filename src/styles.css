@@ -464,6 +464,145 @@ body {
   font-style: italic;
 }
 
+.tag-failed,
+.tag-late {
+  color: var(--warning);
+  font-style: normal;
+}
+
 .empty {
   color: var(--text-muted);
+}
+
+/*
+ * The waiting group of §7.6: parked handoffs and orphan outcomes, with the three things
+ * SRV-23 lets the user do from the list itself.
+ */
+.waiting-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.waiting-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* The FM-22 picker: a question the window puts to the user, not a notice it shows them. */
+.session-picker {
+  margin: 0 0 var(--space);
+  padding: 8px;
+  background: var(--warning-surface);
+  border-radius: 4px;
+}
+
+.session-picker h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.picker-explain {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.picker-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Waiting for the agent's spec (OPEN-04), and the round trip of a question (RESP-04). */
+.waiting-for-spec,
+.pending,
+.verifying {
+  margin: 0 0 var(--space);
+}
+
+.not-answered,
+.session,
+.pending-what,
+.verify-intro {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pending-text,
+.verify-text {
+  margin: 0 0 var(--space);
+  padding: 6px 8px;
+  font-size: 13px;
+  background: var(--surface-raised);
+  border-left: 3px solid var(--border);
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+
+.verify-result {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.verify-state {
+  font-weight: 600;
+}
+
+.verify-result[data-verify-ok='false'] .verify-state {
+  color: var(--danger);
+}
+
+.question,
+.history-question {
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.who {
+  color: var(--text-muted);
+}
+
+/*
+ * The collapsed bar of WIN-03: one line and three buttons, and nothing else. Its height is
+ * what the window takes while it is showing, so it stays on one row — the line ellipsises
+ * rather than wrapping, which is what makes the bar a bar.
+ */
+.collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px var(--space);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.collapsed-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.collapsed-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
 }

@@ -1,6 +1,6 @@
 <!--
-  The overlay: the tab strip, the banner of §8.4, the step view, the action bar and the
-  sheets behind Ask, Note, Defer and Abandon (§7.6).
+  The overlay: the tab strip, the banner of §8.4, whichever of the views of §7.6 the tab's
+  state calls for, the action bar and the sheets behind Ask, Note, Defer and Abandon.
 
   What it owns is the wiring, and nothing else: which tab is selected and what changed while
   the user was elsewhere live in `state.svelte.ts`, what a tab *is* comes from the core in
@@ -8,8 +8,11 @@
   object carries — the store refuses an action a state does not offer, and §7.4 calls a
   button that produces that refusal a defect of this file.
 
-  The collapsed bar of WIN-03 and the secondary views are T-037; what is here is the panel as
-  it looks while a person is working through a handoff.
+  **Which view is showing is decided by `uiState` and by nothing else.** The core resolved
+  the rows of §8.4 in one place, precedence included (`ui_bridge/view.rs`), so a second
+  reading of "is it detached or is it deferred" here would be a second answer to a question
+  that already has one. Waiting-for-spec, Question-pending and Verifying are the three rows
+  that replace the step view; everything else guides, and a final tab shows its outcome.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -18,17 +21,25 @@
   import { t } from '../i18n';
   import type { ActionName, HandoffView } from '../model';
   import ActionBar from '../overlay/ActionBar.svelte';
+  import History from '../overlay/History.svelte';
+  import QuestionPending from '../overlay/QuestionPending.svelte';
+  import SessionPicker from '../overlay/SessionPicker.svelte';
   import StepView from '../overlay/StepView.svelte';
   import TabStrip from '../overlay/TabStrip.svelte';
   import TextSheet from '../overlay/TextSheet.svelte';
+  import Verifying from '../overlay/Verifying.svelte';
+  import WaitingForSpec from '../overlay/WaitingForSpec.svelte';
   import {
     allTabs,
+    answerSessionPicker,
     currentNotice,
     currentView,
     handoffChanged,
     hideEverything,
     refreshCurrent,
+    refreshSessions,
     refreshTabs,
+    sessionChoices,
     showNotice,
   } from '../overlay/state.svelte';
 
@@ -38,6 +49,7 @@
   const view = $derived(currentView());
   const tabs = $derived(allTabs());
   const notice = $derived(currentNotice());
+  const choices = $derived(sessionChoices());
 
   /** The three actions that send what the user typed, and are therefore scanned (§7.10). */
   const SCANNED: ReadonlySet<ActionName> = new Set<ActionName>(['ask', 'defer', 'abandon']);
@@ -58,9 +70,20 @@
     if (current === null) {
       return;
     }
+    await runOn(current.tab.id, action, payload);
+  }
+
+  /**
+   * One action on a named handoff.
+   *
+   * Named rather than "the selected one", because the waiting group of §7.6 acts on entries
+   * the user is not looking at: closing an orphan from the list must not require selecting
+   * it first (SRV-23).
+   */
+  async function runOn(id: string, action: ActionName, payload?: string): Promise<void> {
     sheet = null;
     try {
-      await bridge().act(current.tab.id, action, payload);
+      await bridge().act(id, action, payload);
     } catch {
       // The Rust side already pushed the sentence the user reads (`notice`); what is left
       // here is to draw whatever the core now says, which is what a refused action left
@@ -80,11 +103,17 @@
       .onHandoffChanged((id) => void handoffChanged(id))
       .then(keep);
     void bridge()
-      .onSessionsChanged(() => void refreshTabs())
+      .onSessionsChanged(() => {
+        void refreshTabs();
+        // FM-22: the registry announces the picker through this same event, with no
+        // payload, so the question is re-read rather than delivered.
+        void refreshSessions();
+      })
       .then(keep);
     void bridge().onNotice(showNotice).then(keep);
 
     void refreshTabs();
+    void refreshSessions();
 
     return () => {
       hideEverything();
@@ -96,7 +125,9 @@
 </script>
 
 <section class="view" data-view="overlay">
-  <TabStrip {tabs} />
+  <TabStrip {tabs} onact={(id, action) => void runOn(id, action)} />
+
+  <SessionPicker {choices} onanswer={(sessionRef) => void answerSessionPicker(sessionRef)} />
 
   {#if notice !== null}
     <p class="notice" data-notice={notice.kind} role="status">{notice.text}</p>
@@ -105,12 +136,15 @@
   {#if view === null}
     <p class="empty">{t('overlay.empty')}</p>
   {:else}
-    {#if view.banner !== null}
+    <!--
+      The banner of §8.4, except for the verifying row: there `Verifying.svelte` says the
+      same sentence with the spec's own text quoted under it, and one screen should not
+      carry "the agent should now check" twice. The "declared by agent" label of the final
+      row travels with the report, for the same reason.
+    -->
+    {#if view.banner !== null && view.uiState !== 'verifying'}
       <p class="banner" data-ui-state={view.uiState}>
         {t(view.banner.key, view.banner.arg === null ? undefined : { text: view.banner.arg })}
-        {#if view.uiState === 'final' && view.verifyResult !== null}
-          <span class="banner-detail">({t('overlay.declaredByAgent')})</span>
-        {/if}
       </p>
     {/if}
 
@@ -131,68 +165,50 @@
         })}
       </p>
     {/if}
-    {#if view.requestText !== null}
+    {#if view.requestText !== null && view.uiState !== 'waitingForSpec'}
       <p class="request-text">
         {view.linkedRequest === null ? t('overlay.request') : t('overlay.linkedRequest')}:
         {view.requestText}
       </p>
     {/if}
-    {#if view.pending !== null}
-      <p class="pending">
-        {view.pending.kind === 'question'
-          ? t('overlay.pendingQuestion', { step: view.pending.step })
-          : t('overlay.pendingScreenshot', { step: view.pending.step })}
-      </p>
-    {/if}
 
-    <StepView {view} />
-
-    {#if view.verifyResult !== null && view.verifyResult.detail !== null}
-      <p class="verify-detail">{view.verifyResult.detail}</p>
-    {/if}
-
-    {#if sheet === null}
-      <ActionBar actions={view.actions} lastStep={view.step?.last ?? false} onact={start} />
+    {#if view.uiState === 'waitingForSpec'}
+      <!-- Abandon opens the same sheet here as anywhere else (RESP-08). -->
+      {#if sheet === null}
+        <WaitingForSpec {view} onact={start} />
+      {:else}
+        <TextSheet
+          action={sheet}
+          optional={OPTIONAL.has(sheet)}
+          scanned={SCANNED.has(sheet)}
+          onsend={(text) => void run(sheet ?? 'abandon', text)}
+          oncancel={() => (sheet = null)}
+        />
+      {/if}
     {:else}
-      <TextSheet
-        action={sheet}
-        optional={OPTIONAL.has(sheet)}
-        scanned={SCANNED.has(sheet)}
-        onsend={(text) => void run(sheet ?? 'note', text)}
-        oncancel={() => (sheet = null)}
-      />
+      {#if view.pending !== null}
+        <QuestionPending pending={view.pending} />
+      {/if}
+
+      {#if view.uiState === 'verifying' || view.verifyResult !== null}
+        <Verifying verify={view.verify} result={view.verifyResult} />
+      {/if}
+
+      <StepView {view} />
+
+      {#if sheet === null}
+        <ActionBar actions={view.actions} lastStep={view.step?.last ?? false} onact={start} />
+      {:else}
+        <TextSheet
+          action={sheet}
+          optional={OPTIONAL.has(sheet)}
+          scanned={SCANNED.has(sheet)}
+          onsend={(text) => void run(sheet ?? 'note', text)}
+          oncancel={() => (sheet = null)}
+        />
+      {/if}
     {/if}
 
-    {#if view.history.length > 0}
-      <details class="history">
-        <summary>{t('overlay.history')}</summary>
-        {#each view.history as round (round.no)}
-          <section class="history-round">
-            <h2>{t('overlay.round', { no: round.no })}</h2>
-            <ol>
-              {#each round.steps as text, index (index)}
-                <li class:done={round.confirmed.includes(index + 1)}>
-                  {text}
-                  {#if round.skipped.includes(index + 1)}
-                    <span class="tag">{t('overlay.skipped')}</span>
-                  {/if}
-                </li>
-              {/each}
-            </ol>
-            {#each round.notes as note, index (index)}
-              <p class="history-note">{note.text}</p>
-            {/each}
-            {#each round.replies as reply, index (index)}
-              <p class="history-reply">{reply.text}</p>
-            {/each}
-            {#if round.verify !== null && round.verify.detail !== null}
-              <p class="history-verify">
-                {round.verify.detail} <span class="tag">{t('overlay.declaredByAgent')}</span>
-              </p>
-            {/if}
-          </section>
-        {/each}
-      </details>
-    {/if}
+    <History rounds={view.history} />
   {/if}
 </section>

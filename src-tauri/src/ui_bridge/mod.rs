@@ -18,17 +18,23 @@
 //! T-036 added the rest: [`view`] is the projection the window draws, [`commands`] is
 //! everything the window may ask of the core, and [`events::Notifier`] is how the core tells
 //! the window that something changed without ever naming Tauri itself.
+//!
+//! T-037 added the last of it: [`window`] is where the panel is and how it behaves — the
+//! per-monitor position of WIN-02, the focus change WIN-03 collapses on — and the tray
+//! finally has the badge of WIN-05.
 
 pub mod commands;
 pub mod events;
 mod tray;
 pub mod view;
+pub mod window;
 
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter as _, LogicalSize, Manager as _, Window, WindowEvent};
 
 use crate::i18n::Language;
+use crate::log::Db;
 
 pub use commands::{Core, CoreState};
 pub use events::{Notice, NoticeKind, Notifier};
@@ -42,6 +48,14 @@ pub const MAIN_WINDOW: &str = "main";
 /// switch the view by calling into it; they emit this instead. The same literal is in
 /// `src/bridge.ts` and a test below reads that file to keep the two spellings together.
 pub const EVENT_SHOW_VIEW: &str = "ui://show-view";
+
+/// The window gained or lost the focus. Payload: `true` when it has it (WIN-03).
+///
+/// The panel collapses to the one-line bar when the user clicks elsewhere and expands when
+/// they come back, and *what* the bar shows is the frontend's — the current step, three
+/// buttons — so what crosses here is the bare fact. It is emitted from
+/// [`on_window_event`], the one place Tauri reports it.
+pub const EVENT_WINDOW_FOCUS: &str = "ui://window-focus";
 
 /// The fixed width of the panel (WIN-02, §7.6). `tauri.conf.json` declares the same value.
 pub const WINDOW_WIDTH: f64 = 360.0;
@@ -89,6 +103,8 @@ pub struct Ui {
     language: Mutex<Language>,
     tray: Mutex<Option<tray::Handles>>,
     notifier: Notifier,
+    geometry: window::Geometry,
+    db: Mutex<Option<Db>>,
 }
 
 impl Ui {
@@ -102,12 +118,66 @@ impl Ui {
         }
     }
 
+    /// Gives the window its own connection to the log.
+    ///
+    /// A third connection beside the store's actor and the registry's, and it is the
+    /// window's: it holds the panel's position per monitor (WIN-02), the settings §7.16
+    /// gives the window, and the one `sessions` row the FM-22 picker binds when the user
+    /// answers it. It is opened independently of the channel on purpose — a listener that
+    /// failed to bind must not cost the user their window as well (`lib.rs`) — and
+    /// `log::db` sets WAL and a busy timeout for exactly this traffic.
+    #[must_use]
+    pub fn with_settings(self, db: Db) -> Self {
+        self.geometry.load(&db);
+        *self.db.lock().expect("the settings mutex is poisoned") = Some(db);
+        self
+    }
+
     /// The language the interface is showing.
     pub fn language(&self) -> Language {
         *self
             .language
             .lock()
             .expect("the UI language mutex is poisoned")
+    }
+
+    /// Where the panel is, per monitor (WIN-02).
+    pub fn geometry(&self) -> &window::Geometry {
+        &self.geometry
+    }
+
+    /// Runs `read` against the window's connection, or answers `None` when there is none.
+    pub fn with_db<T>(&self, read: impl FnOnce(&Db) -> T) -> Option<T> {
+        let guard = self.db.lock().expect("the settings mutex is poisoned");
+        guard.as_ref().map(read)
+    }
+
+    /// Writes the panel's position, if it moved since the last write.
+    pub fn flush_geometry(&self) {
+        let guard = self.db.lock().expect("the settings mutex is poisoned");
+        self.geometry.flush(guard.as_ref());
+    }
+
+    /// Whether the R-10 fallback collapse is switched on. Off unless the user said so.
+    pub fn collapse_fallback(&self) -> bool {
+        self.with_db(|db| {
+            crate::log::settings::get::<bool>(db, window::COLLAPSE_FALLBACK_KEY)
+                .ok()
+                .flatten()
+        })
+        .flatten()
+        .unwrap_or(false)
+    }
+
+    /// Switches the R-10 fallback collapse on or off (§7.16; the checkbox is T-041).
+    ///
+    /// # Errors
+    ///
+    /// The message of the write that failed, for the window to show.
+    pub fn set_collapse_fallback(&self, enabled: bool) -> Result<(), String> {
+        self.with_db(|db| crate::log::settings::set(db, window::COLLAPSE_FALLBACK_KEY, &enabled))
+            .unwrap_or(Ok(()))
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -144,31 +214,81 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Closing the window hides it to the tray; only the tray's `Quit` ends the process (WIN-04).
+/// Everything Tauri reports about the one window (WIN-02, WIN-03, WIN-04).
+///
+/// Three events, three rules of §7.16:
+///
+/// - **Close** hides the panel to the tray; only the tray's `Quit` ends the process.
+/// - **Focus** is what WIN-03 collapses on. The fact travels to the frontend, which owns
+///   what the collapsed bar looks like; losing it is also when the remembered position is
+///   written, because a drag has certainly finished by then.
+/// - **Moved** is remembered in memory, per monitor, and written later (`window::Geometry`
+///   says why not here).
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        // A window that cannot hide is a window the user just failed to close; there is
-        // nothing to do about it here beyond leaving it open.
-        if let Err(error) = window.hide() {
-            tracing::warn!(error = %error, "the overlay window refused to hide");
+    let app = window.app_handle();
+    let ui = app.state::<Ui>();
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            ui.geometry().remember(window);
+            ui.flush_geometry();
+            // A window that cannot hide is a window the user just failed to close; there is
+            // nothing to do about it here beyond leaving it open.
+            if let Err(error) = window.hide() {
+                tracing::warn!(error = %error, "the overlay window refused to hide");
+            }
         }
+        WindowEvent::Moved(_) => ui.geometry().remember(window),
+        WindowEvent::Focused(focused) => {
+            if !focused {
+                ui.geometry().remember(window);
+                ui.flush_geometry();
+            }
+            if let Err(error) = app.emit(EVENT_WINDOW_FOCUS, *focused) {
+                tracing::warn!(error = %error, "the focus change reached no window");
+            }
+        }
+        _ => {}
     }
 }
 
 /// Brings the overlay window to the front (the tray's `Show`, and the second launch of
 /// APP-01's single instance).
+///
+/// The remembered position of WIN-02 is applied **before** the window is shown, so the
+/// panel appears where the user left it rather than moving once it is already visible.
 pub fn show_main_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         tracing::warn!(window = MAIN_WINDOW, "no window to show");
         return;
     };
+    app.state::<Ui>()
+        .geometry()
+        .restore(&window.as_ref().window());
     if let Err(error) = window.show() {
         tracing::warn!(error = %error, "the overlay window refused to show");
     }
     if let Err(error) = window.set_focus() {
         tracing::warn!(error = %error, "the overlay window refused the focus");
     }
+}
+
+/// The application is about to exit: write what only memory holds (WIN-02).
+///
+/// Called from the run-event callback rather than after it, so the window is still there to
+/// be asked where it is.
+pub fn on_exit_requested(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        app.state::<Ui>()
+            .geometry()
+            .remember(&window.as_ref().window());
+    }
+    app.state::<Ui>().flush_geometry();
+}
+
+/// Shows or hides the tray badge, from the count of handoffs that are not final (WIN-05).
+pub fn set_tray_badge(app: &AppHandle, count: usize) {
+    tray::set_badge(app, count);
 }
 
 /// Shows the window and asks the frontend for one of its views.
@@ -264,13 +384,16 @@ mod tests {
     }
 
     #[test]
-    fn the_frontend_listens_to_the_event_this_module_emits() {
+    fn the_frontend_listens_to_the_events_this_module_emits() {
         // The two sides spell the event name independently; a rename on one side alone
-        // would leave the tray's `New request` doing nothing at all, silently.
-        assert!(
-            BRIDGE_TS.contains(EVENT_SHOW_VIEW),
-            "src/bridge.ts does not mention {EVENT_SHOW_VIEW}"
-        );
+        // would leave the tray's `New request` doing nothing at all, silently — and the
+        // panel would never collapse again, just as quietly.
+        for event in [EVENT_SHOW_VIEW, EVENT_WINDOW_FOCUS] {
+            assert!(
+                BRIDGE_TS.contains(event),
+                "src/bridge.ts does not mention {event}"
+            );
+        }
     }
 
     #[test]

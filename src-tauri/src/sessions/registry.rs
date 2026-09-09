@@ -201,11 +201,23 @@ pub struct Registry {
     sessions: IndexMap<String, Session>,
     by_conn: HashMap<ConnId, String>,
     observer: Box<dyn SessionsObserver>,
-    /// The last set of sessions a hook could not be told apart between (FM-22, SRV-18).
+    /// The last set of sessions a hook could not be told apart between (FM-22, SRV-18),
+    /// with the agent `session_id` that could not be placed.
     ///
     /// In memory and not in the log: it is a question about the run, and a run that has
     /// ended has no session to attribute anything to.
-    ambiguous_hook: Vec<String>,
+    ambiguous_hook: Option<AmbiguousHook>,
+}
+
+/// The unanswered question of FM-22: which of these sessions is the one that ran the hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AmbiguousHook {
+    /// The `session_ref`s nothing separated.
+    candidates: Vec<String>,
+    /// The agent's own session identifier the hook carried, which is what the user's answer
+    /// binds ([`Registry::answer_session_picker`]). Without it the picker would clear a
+    /// question and change nothing, and the next hook of the same session would ask again.
+    session_id: String,
 }
 
 impl std::fmt::Debug for Registry {
@@ -226,7 +238,7 @@ impl Registry {
             sessions: IndexMap::new(),
             by_conn: HashMap::new(),
             observer,
-            ambiguous_hook: Vec::new(),
+            ambiguous_hook: None,
         }
     }
 
@@ -447,30 +459,69 @@ impl Registry {
     /// user the next time they interact ("which session is this?", SRV-18). It is kept
     /// rather than acted on because there is nobody to ask at the moment a hook arrives —
     /// the window may not even be open.
-    pub fn needs_session_picker(&mut self, candidates: &[String]) {
-        if self.ambiguous_hook == candidates {
+    pub fn needs_session_picker(&mut self, candidates: &[String], session_id: &str) {
+        let question = AmbiguousHook {
+            candidates: candidates.to_vec(),
+            session_id: session_id.to_owned(),
+        };
+        if self.ambiguous_hook.as_ref() == Some(&question) {
             return;
         }
         tracing::info!(
             candidates = candidates.len(),
             "a hook matched several sessions and none of the keys separated them"
         );
-        self.ambiguous_hook = candidates.to_vec();
+        self.ambiguous_hook = Some(question);
         self.observer.sessions_changed();
     }
 
     /// The sessions the overlay has to ask the user to choose between, if any (FM-22).
     #[must_use]
     pub fn session_picker(&self) -> &[String] {
-        &self.ambiguous_hook
+        match self.ambiguous_hook.as_ref() {
+            Some(question) => &question.candidates,
+            None => &[],
+        }
+    }
+
+    /// The user picked one of the candidates: bind the hook's session id to it (FM-22).
+    ///
+    /// This is what makes the picker worth asking. The binding is the same one
+    /// [`Registry::bind_hook`] writes when the chain is unambiguous, so from here on every
+    /// hook of that agent session is recognised at once and the safety net of SRV-12 stops
+    /// being delayed for it.
+    ///
+    /// A `session_ref` that is not one of the candidates is refused: the question was about
+    /// those, and a window that answers something else is answering a question nobody asked.
+    /// Returns whether the answer was taken.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::log::StoreError::Persistence`] when the binding cannot be written. The
+    /// question is then left standing, so the user can answer it again.
+    pub fn answer_session_picker(&mut self, db: &Db, session_ref: &str) -> Result<bool> {
+        let Some(question) = self.ambiguous_hook.clone() else {
+            return Ok(false);
+        };
+        if !question
+            .candidates
+            .iter()
+            .any(|candidate| candidate == session_ref)
+        {
+            return Ok(false);
+        }
+        self.bind_session_id(db, session_ref, &question.session_id)?;
+        self.ambiguous_hook = None;
+        self.observer.sessions_changed();
+        Ok(true)
     }
 
     /// The user answered the picker, or the question stopped being one.
     pub fn session_picker_answered(&mut self) {
-        if self.ambiguous_hook.is_empty() {
+        if self.ambiguous_hook.is_none() {
             return;
         }
-        self.ambiguous_hook.clear();
+        self.ambiguous_hook = None;
         self.observer.sessions_changed();
     }
 
@@ -922,6 +973,104 @@ mod tests {
         assert_eq!(
             bound,
             HookBinding::Ambiguous(vec!["ses_00000001".to_owned(), "ses_00000002".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_picker_answer_binds_the_session_id_the_hook_carried() {
+        // FM-22 is only worth asking about if the answer changes something: from here on
+        // the same agent session is recognised at once and SRV-12 stops being delayed.
+        let mut fixture = Fixture::new();
+        for (conn_id, session_ref, pid, ppid) in [
+            (1, "ses_00000001", 1001, 1000),
+            (2, "ses_00000002", 2001, 2000),
+        ] {
+            let peer = server_peer(conn_id, session_ref, pid, ppid, "C:\\projects\\baton");
+            fixture
+                .registry
+                .register(&fixture.db, &peer, &one_machine())
+                .expect("a registration");
+        }
+
+        let candidates = vec!["ses_00000001".to_owned(), "ses_00000002".to_owned()];
+        fixture
+            .registry
+            .needs_session_picker(&candidates, "session-a");
+        assert_eq!(fixture.registry.session_picker(), candidates.as_slice());
+
+        assert!(fixture
+            .registry
+            .answer_session_picker(&fixture.db, "ses_00000002")
+            .expect("an answer"));
+        assert!(fixture.registry.session_picker().is_empty());
+        assert_eq!(
+            fixture
+                .registry
+                .get("ses_00000002")
+                .expect("the session")
+                .claude_session_id
+                .as_deref(),
+            Some("session-a")
+        );
+
+        // And the next hook of that agent session needs no chain at all.
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(9003, 9002, "C:\\elsewhere"),
+                &hook_input("session-a"),
+                &SyntheticProcessTable::new(),
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_00000002".to_owned()));
+    }
+
+    #[test]
+    fn the_picker_refuses_an_answer_that_is_not_one_of_its_candidates() {
+        let mut fixture = Fixture::new();
+        let peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        fixture
+            .registry
+            .register(&fixture.db, &peer, &one_machine())
+            .expect("a registration");
+
+        fixture
+            .registry
+            .needs_session_picker(&["ses_00000009".to_owned()], "session-a");
+        assert!(!fixture
+            .registry
+            .answer_session_picker(&fixture.db, "ses_00000001")
+            .expect("an answer"));
+        assert_eq!(
+            fixture.registry.session_picker(),
+            ["ses_00000009".to_owned()],
+            "the question the user did not answer is still there"
+        );
+    }
+
+    #[test]
+    fn dismissing_the_picker_binds_nothing() {
+        let mut fixture = Fixture::new();
+        let peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        fixture
+            .registry
+            .register(&fixture.db, &peer, &one_machine())
+            .expect("a registration");
+
+        fixture
+            .registry
+            .needs_session_picker(&["ses_00000001".to_owned()], "session-a");
+        fixture.registry.session_picker_answered();
+
+        assert!(fixture.registry.session_picker().is_empty());
+        assert_eq!(
+            fixture
+                .registry
+                .get("ses_00000001")
+                .expect("the session")
+                .claude_session_id,
+            None
         );
     }
 

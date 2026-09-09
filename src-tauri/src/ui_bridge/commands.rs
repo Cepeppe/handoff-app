@@ -14,13 +14,14 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde::Deserialize;
-use tauri::{AppHandle, State};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_clipboard_manager::ClipboardExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
-use crate::log::Timestamp;
+use crate::log::{HandoffState, Timestamp};
 use crate::redaction::typed::{redact, Redacted};
+use crate::requests::text::render_request_text;
 use crate::sessions::Registry;
 use crate::store::{Refusal, StoreHandle, UserAction};
 
@@ -69,15 +70,33 @@ impl CoreState {
     }
 }
 
-/// The tab strip (§7.6, MULTI-01).
+/// The tab strip (§7.6, MULTI-01), and the tray badge that counts the same handoffs
+/// (WIN-05).
+///
+/// The badge is set here rather than from a command of its own, and that is deliberate: the
+/// strip and the badge are the same fact seen twice, the window re-reads the strip on every
+/// change already, and a second path would be a second answer to "how many are active" for
+/// the two to disagree about. What counts as active is decided on this side, next to the
+/// states: anything not final, which is everything the user still has something to do about.
 #[tauri::command]
-pub async fn list_handoffs(core: State<'_, CoreState>) -> Result<Vec<TabView>, String> {
+pub async fn list_handoffs(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+) -> Result<Vec<TabView>, String> {
     let Some(core) = core.get().cloned() else {
+        super::set_tray_badge(&app, 0);
         return Ok(Vec::new());
     };
     let now = Timestamp::now();
     let snapshots = core.store.list_for_ui(now.clone()).await;
     let connected = core.connected();
+    super::set_tray_badge(
+        &app,
+        snapshots
+            .iter()
+            .filter(|snapshot| !snapshot.state.is_final())
+            .count(),
+    );
     Ok(view::tabs(
         &snapshots,
         &|session_ref| connected.contains(session_ref),
@@ -98,11 +117,11 @@ pub async fn get_handoff_view(
     let Some(snapshot) = core.store.snapshot(id.clone(), now.clone()).await else {
         return Ok(None);
     };
-    let replies = core.store.replies(id).await;
+    let exchanges = core.store.exchanges(id).await;
     let connected = core.connected();
     Ok(Some(view::build(
         &snapshot,
-        &replies,
+        &exchanges,
         &|session_ref| connected.contains(session_ref),
         &now,
     )))
@@ -314,6 +333,171 @@ pub async fn open_secret_file(
 #[tauri::command]
 pub fn show_window(app: AppHandle) {
     super::show_main_window(&app);
+}
+
+/// Puts the OPEN-05 sentence for a handoff waiting for its spec back on the clipboard.
+///
+/// The "Copy request again" of the Waiting-for-spec view (§7.6): the first copy happened
+/// when the request was opened, and by the time the user comes back to the tab their
+/// clipboard has moved on. The sentence is rendered here, in the language the window is
+/// showing, from the same `requests::text` the queue and the Stop hook use — the id and the
+/// tool name are invariant across both languages, which is what the agent acts on.
+///
+/// Refused for a handoff that is not waiting for a spec: there is no request to re-send.
+#[tauri::command]
+pub async fn copy_request_text(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+    id: String,
+) -> Result<(), String> {
+    let Some(core) = core.get().cloned() else {
+        return Err("the store is not running".to_owned());
+    };
+    let Some(snapshot) = core.store.snapshot(id, Timestamp::now()).await else {
+        return Err("no such handoff".to_owned());
+    };
+    if snapshot.state != HandoffState::AwaitingSpec {
+        return Err("that handoff is not waiting for a spec".to_owned());
+    }
+    // The request the user typed, and the id the agent has to quote: for a handoff the user
+    // opened they are the same entry (§7.7 mints one id for both), and `linked_request_id`
+    // names it when a spec was linked to a request of another id (OPEN-08).
+    let request_id = snapshot
+        .linked_request_id
+        .as_deref()
+        .unwrap_or(&snapshot.id);
+    let text = render_request_text(
+        super::language_of(&app),
+        request_id,
+        snapshot.request_text.as_deref().unwrap_or_default(),
+    );
+
+    app.clipboard().write_text(text).map_err(|error| {
+        super::notifier(&app).notice(NoticeKind::Error, super::NOTICE_COPY_FAILED);
+        error.to_string()
+    })
+}
+
+/// Puts a handoff's own id on the clipboard (SRV-23).
+///
+/// The third thing the orphan list of SRV-23 offers, beside viewing it and closing it by
+/// hand: an id the user pastes into a new session to resume the work. It goes through the
+/// core like every other copy, so the window names a handoff and never a string to copy.
+#[tauri::command]
+pub async fn copy_handoff_id(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+    id: String,
+) -> Result<(), String> {
+    let Some(core) = core.get().cloned() else {
+        return Err("the store is not running".to_owned());
+    };
+    let Some(snapshot) = core.store.snapshot(id, Timestamp::now()).await else {
+        return Err("no such handoff".to_owned());
+    };
+
+    app.clipboard().write_text(snapshot.id).map_err(|error| {
+        super::notifier(&app).notice(NoticeKind::Error, super::NOTICE_COPY_FAILED);
+        error.to_string()
+    })
+}
+
+/// One of the sessions the FM-22 picker asks the user to choose between.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChoice {
+    /// The `ses_` reference, which is what the answer names.
+    pub session_ref: String,
+    /// Agent and project folder in one line, as the tab strip labels it (OPEN-02).
+    pub label: String,
+}
+
+/// The "which session is this?" question, when a hook left one (FM-22, SRV-18).
+///
+/// Empty most of the time. The registry raises it when a hook's ancestor chain matched
+/// several sessions and the working directory did not separate them; the window draws it the
+/// next time the user is looking, which is what §7.5 asks for.
+#[tauri::command]
+pub fn session_picker(core: State<'_, CoreState>) -> Vec<SessionChoice> {
+    let Some(core) = core.get() else {
+        return Vec::new();
+    };
+    let registry = core.registry();
+    registry
+        .session_picker()
+        .iter()
+        .filter_map(|session_ref| {
+            let session = registry.get(session_ref)?;
+            Some(SessionChoice {
+                session_ref: session_ref.clone(),
+                label: session.display_name(),
+            })
+        })
+        .collect()
+}
+
+/// The user answered the picker: this session is the one that ran the hook (FM-22).
+///
+/// The answer binds the agent session id the hook carried, so the safety net of SRV-12 stops
+/// being delayed for that session. `dismiss` is the other answer a person may give — "I do
+/// not know" — which drops the question without binding anything.
+#[tauri::command]
+pub fn answer_session_picker(
+    app: AppHandle,
+    core: State<'_, CoreState>,
+    session_ref: Option<String>,
+) -> Result<(), String> {
+    let Some(core) = core.get() else {
+        return Ok(());
+    };
+    let mut registry = core.registry();
+    let Some(session_ref) = session_ref else {
+        registry.session_picker_answered();
+        return Ok(());
+    };
+    // The binding goes through the window's own connection: the registry's belongs to the
+    // channel task, and this write comes from the user rather than from a peer.
+    let written = app
+        .state::<super::Ui>()
+        .with_db(|db| registry.answer_session_picker(db, &session_ref));
+    match written {
+        Some(Err(error)) => {
+            super::notifier(&app).notice(NoticeKind::Warning, super::NOTICE_ACTION_FAILED);
+            Err(error.to_string())
+        }
+        // No log to write to: the answer is taken in memory for the life of the process,
+        // which is exactly as long as the question could have been asked.
+        Some(Ok(_)) | None => Ok(()),
+    }
+}
+
+/// What the window needs to know about its own behaviour (§7.16, R-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSettings {
+    /// Whether the fallback collapse of R-10 is switched on.
+    pub collapse_fallback: bool,
+    /// How long after the last interaction it fires, in milliseconds.
+    pub collapse_fallback_ms: u32,
+}
+
+/// The window settings of §7.16, read at mount.
+#[tauri::command]
+pub fn window_settings(app: AppHandle) -> WindowSettings {
+    WindowSettings {
+        collapse_fallback: app.state::<super::Ui>().collapse_fallback(),
+        collapse_fallback_ms: super::window::COLLAPSE_FALLBACK_MS,
+    }
+}
+
+/// Switches the R-10 fallback collapse on or off.
+///
+/// It exists here because the fallback is useless without a way to turn it on and the
+/// General settings page is T-041; that page is where the checkbox belongs and this is what
+/// it will call.
+#[tauri::command]
+pub fn set_collapse_fallback(app: AppHandle, enabled: bool) -> Result<(), String> {
+    app.state::<super::Ui>().set_collapse_fallback(enabled)
 }
 
 /// Runs the certain detector over what the user typed (§7.10, DET-01).

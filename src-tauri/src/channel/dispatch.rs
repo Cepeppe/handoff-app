@@ -526,7 +526,7 @@ impl Dispatch {
             // FM-22, SRV-18: nothing separates the candidates, so the hook is answered
             // neutrally and the overlay asks the user which tab this was.
             self.registry()
-                .needs_session_picker(&decision.needs_session_picker);
+                .needs_session_picker(&decision.needs_session_picker, &context.input.session_id);
         }
         decision
     }
