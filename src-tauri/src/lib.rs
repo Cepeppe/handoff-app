@@ -137,6 +137,15 @@ pub fn run() {
         ui = ui.with_settings(db);
     }
 
+    // DD-33, T-055: an e2e build started by `msedgedriver` gives its windows the driver's
+    // WebView2 switches beside its own, which not every runtime build does by itself
+    // (`e2e::webdriver`). A release build compiles none of this, and the context is built
+    // exactly as before.
+    #[cfg_attr(not(feature = "e2e"), allow(unused_mut))]
+    let mut context = tauri::generate_context!();
+    #[cfg(feature = "e2e")]
+    e2e::webdriver::merge_driver_arguments(context.config_mut());
+
     let app = tauri::Builder::default()
         // First, as the plugin requires: a second launch must reach the running instance
         // before that instance has finished starting. The overlay is one window and one
@@ -248,7 +257,7 @@ pub fn run() {
             e2e::start(app.handle());
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while starting the Baton application");
 
     // `run_return` and not `run`: `App::run` exits the process itself and never comes back,

@@ -21,6 +21,8 @@ export const collapse: UiScenario = {
   covers: 'WIN-03, WIN-02',
   title: 'the panel shrinks to the current step and three buttons, and comes back',
   async run({ page, session, facts }) {
+    // This scenario is the one about the collapse, so the page must not undo it.
+    page.keepPanelOpen = false;
     const server = await session();
     await server.open(spec('Send the invoice to accounting', STEPS));
     await page.findText('.step .counter', 'Step 1 of 3');

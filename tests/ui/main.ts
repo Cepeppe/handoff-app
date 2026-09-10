@@ -169,17 +169,19 @@ async function attempt(
   const workspace = makeWorkspace(scenario.id);
   const servers: FakeServer[] = [];
   let app: RunningApp | undefined;
+  let page: Page | undefined;
   try {
     // The previous attempt's application must be gone first, for the reason `preflight` gives.
     await until('the previous Baton has left', () => !batonIsRunning(), 30_000);
     scenario.prepare?.(workspace);
     app = await startApp(workspace, tools, { onboarded: scenario.onboarded ?? true });
     const running = app;
+    page = new Page(running.session);
     await within(
       scenario.id,
       ATTEMPT_TIMEOUT_MS,
       scenario.run({
-        page: new Page(running.session),
+        page,
         app: running,
         session: async (options = {}) => {
           const server = await FakeServer.connect(running.channelEndpoint, workspace.home, {
@@ -209,6 +211,11 @@ async function attempt(
     const evidence = await keepEvidence(scenario, number, app, error);
     return { attempt: number, ok: false, durationMs: Date.now() - started, error, evidence };
   } finally {
+    // A panel the page had to open again is reported, attempt by attempt: the guard is doing
+    // work, and a run where it does a lot of it is a machine worth looking at.
+    if (page !== undefined && page.reopened > 0) {
+      facts[`panelReopened (attempt ${String(number)})`] = page.reopened;
+    }
     for (const server of servers) server.close();
     await app?.stop().catch(() => undefined);
     cleanUp(workspace);
@@ -319,6 +326,7 @@ async function main(argv: readonly string[]): Promise<number> {
         app: APP_BINARY,
         scenarios: reports,
         failed: reports.filter((report) => report.verdict === 'failed').length,
+        not_run: reports.filter((report) => report.verdict === 'not run').length,
         flaky: reports.filter((report) => report.verdict === 'flaky').length,
       },
       null,
@@ -328,10 +336,13 @@ async function main(argv: readonly string[]): Promise<number> {
   );
 
   const failed = reports.filter((report) => report.verdict === 'failed');
+  const notRun = reports.filter((report) => report.verdict === 'not run');
   const flaky = reports.filter((report) => report.verdict === 'flaky');
+  const passed = reports.length - failed.length - notRun.length;
   line(
-    `ui: ${String(reports.length - failed.length)}/${String(reports.length)} passed` +
+    `ui: ${String(passed)}/${String(reports.length)} passed` +
       (flaky.length > 0 ? `, ${String(flaky.length)} of them on the second attempt` : '') +
+      (notRun.length > 0 ? `, ${String(notRun.length)} not run` : '') +
       ' · report in tests/ui/results/last-run.json',
   );
   for (const report of [...failed, ...flaky]) {

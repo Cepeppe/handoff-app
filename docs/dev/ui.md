@@ -152,6 +152,14 @@ as the artifact `ui-results` whatever happened.
 
 Each of these cost a run while the suite was written.
 
+- **Not every WebView2 build keeps the driver's switches.** `msedgedriver` hands the runtime
+  `--remote-debugging-port=0`, `--enable-automation` and the rest through
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, and the application passes switches of its own
+  (T-052). Runtime 152 merges the two; the 151 of the CI runner kept the application's and
+  dropped the driver's, so no port was opened and every session failed after sixty seconds
+  with `DevToolsActivePort file doesn't exist` — the browser process's command line in the
+  attempt's snapshot is what showed it. An e2e build now merges them itself
+  (`src-tauri/src/e2e/webdriver.rs`); a release build is untouched.
 - **Redirecting `USERPROFILE` breaks every session.** It is where the installation adapter
   finds `~/.claude.json`, and the obvious way to keep a scenario off the machine's real one.
   But WebView2 and the Windows components it loads follow it too, and in a fresh profile folder
@@ -166,10 +174,13 @@ Each of these cost a run while the suite was written.
 - **The preview's four pixels are the capture's.** The canvas draws a 1300-pixel page at about
   a third of its size, so a "two-pixel" drag on screen is a box of about eight. A drag meant to
   be too short is sized from the scale on screen.
-- **The panel can come back collapsed after a capture.** The capture hides the panel and shows
-  it again, the operating system reports the focus lost, and WIN-03 does what it says. The
-  collapsed bar has no `[data-view]`, so a wait for "the overlay view" never ends;
-  `Page.backOnTheHandoff` clicks the bar, as a person would.
+- **The panel collapses whenever the operating system takes the focus off it**, and on a
+  desktop something always can: a capture hides the panel and shows it again, and a copy to
+  the clipboard was followed by a lost focus here about once in five runs. WIN-03 then does
+  what it says, and the bar that replaces the window has no `[data-view]` and none of the
+  panel's buttons, so a wait for either never ends. The page clicks the bar, as a person
+  would, and counts it (`panelReopened` in the report); the collapse scenario, which is about
+  exactly that, switches it off (`Page.keepPanelOpen`).
 - **A console program the harness starts can collapse the panel.** The suite's Node has no
   console of its own when a tool or a runner starts it, so every `powershell.exe` or
   `tasklist` it spawns gets a new console window, and that window takes the focus off the

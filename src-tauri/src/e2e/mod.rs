@@ -29,15 +29,18 @@
 //! reads the database for values that leaked, and a channel that published them would make
 //! that check meaningless.
 //!
-//! # The three files
+//! # The four files
 //!
 //! - [`endpoint`] — the pipe name, the socket path, the token file.
 //! - [`server`] — accept, authenticate, frame, answer.
 //! - [`api`] — the six methods, and what each of them is an adapter over.
+//! - [`webdriver`] — the WebView2 switches a WebDriver needs, added to the window's own when
+//!   one started the application (the UI suite of T-055, which drives the window itself).
 
 pub mod api;
 pub mod endpoint;
 pub mod server;
+pub mod webdriver;
 
 pub use endpoint::E2eEndpoint;
 

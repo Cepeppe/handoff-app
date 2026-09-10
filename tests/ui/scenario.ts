@@ -149,9 +149,41 @@ export class Page {
     return this.session.execute<ElementRef | null>(QUERY, [css, text ?? null]);
   }
 
+  /**
+   * Whether a panel that collapsed on its own is opened again while a lookup waits (WIN-03).
+   *
+   * The panel collapses whenever the operating system takes the focus off it, and on a desktop
+   * something always can: a capture hides the panel and shows it again, and here a copy to the
+   * clipboard was followed by a lost focus once in about five runs. A scenario about the step
+   * view is not about that, so the page does what a person does — clicks the bar — and counts
+   * it in `reopened`, which the report carries, so a guard that is doing work shows. The
+   * collapse scenario, which is about exactly that, switches it off.
+   */
+  keepPanelOpen = true;
+
+  /** How many times the page opened a panel that had collapsed on its own. */
+  reopened = 0;
+
+  /** Clicks the collapsed bar, when the panel is collapsed and the page is keeping it open. */
+  private async reopenIfCollapsed(): Promise<void> {
+    if (!this.keepPanelOpen) return;
+    const bar = await this.query('.collapsed-line');
+    if (bar === null) return;
+    this.reopened += 1;
+    await this.session.click(bar);
+  }
+
   /** Waits for the element and answers it. */
   find(css: string, text?: string, timeoutMs?: number): Promise<ElementRef> {
-    return until(`${describe(css, text)} is on screen`, () => this.query(css, text), timeoutMs);
+    return until(
+      `${describe(css, text)} is on screen`,
+      async () => {
+        const found = await this.query(css, text);
+        if (found === null) await this.reopenIfCollapsed();
+        return found;
+      },
+      timeoutMs,
+    );
   }
 
   /** Waits for an element whose trimmed text is exactly `text`. */
@@ -259,32 +291,22 @@ export class Page {
     );
   }
 
-  /** Waits until the window shows `name`. */
-  async untilView(name: string, timeoutMs?: number): Promise<void> {
-    await until(`the window shows the ${name} view`, async () => (await this.view()) === name, timeoutMs);
-  }
-
   /**
-   * Waits until the window is back on the handoff, and expands it if it came back collapsed.
+   * Waits until the window shows `name`.
    *
-   * A capture hides the panel and shows it again (§7.8), and whether the operating system
-   * gives the focus back to it depends on who else asked for the focus meanwhile — under a
-   * driver nobody at all has it. Losing it is WIN-03's "clicking elsewhere", so the panel may
-   * come back as the one-line bar; a person then clicks the bar, and so does this.
+   * A collapsed panel shows no view at all — the bar replaces the whole window — so a panel
+   * that collapsed on its own is opened again here as in `find`.
    */
-  async backOnTheHandoff(timeoutMs?: number): Promise<void> {
-    const shape = await until(
-      'the window is back on the handoff',
+  async untilView(name: string, timeoutMs?: number): Promise<void> {
+    await until(
+      `the window shows the ${name} view`,
       async () => {
-        if ((await this.view()) === 'overlay') return 'overlay';
-        return (await this.query('.collapsed')) === null ? null : 'collapsed';
+        if ((await this.view()) === name) return true;
+        await this.reopenIfCollapsed();
+        return false;
       },
       timeoutMs,
     );
-    if (shape === 'collapsed') {
-      await this.click('.collapsed-line');
-      await this.untilView('overlay');
-    }
   }
 
   /** The window's inner size, in CSS pixels. */

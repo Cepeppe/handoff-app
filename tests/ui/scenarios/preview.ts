@@ -154,7 +154,9 @@ export const preview: UiScenario = {
       typeof event.image === 'string' && event.image.length > 0,
       'the burned PNG crossed the channel beside the outcome',
     );
-    await page.backOnTheHandoff();
+    // The capture hid the panel and showed it again, which can cost it the focus and collapse
+    // it (WIN-03); the page opens it again, as a person clicking the bar would.
+    await page.untilView('overlay');
   },
 };
 
@@ -180,6 +182,8 @@ export const previewTextOnly: UiScenario = {
     const shot = event.outcome['screenshot'] as { mode?: string; image_attached?: boolean } | undefined;
     expect(shot?.mode === 'text' && shot.image_attached === false, 'the outcome says text was sent', shot);
     expect(event.image === undefined, 'no picture crossed the channel');
-    await page.backOnTheHandoff();
+    // The capture hid the panel and showed it again, which can cost it the focus and collapse
+    // it (WIN-03); the page opens it again, as a person clicking the bar would.
+    await page.untilView('overlay');
   },
 };
