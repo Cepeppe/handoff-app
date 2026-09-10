@@ -8,14 +8,14 @@
 //! - Without the variable it **checks**: every committed image is regenerated in memory and
 //!   compared pixel for pixel, and the labels are compared as data. A renderer that is not
 //!   deterministic, or a machine that draws differently, fails here rather than silently
-//!   moving the ground truth of `tests/redaction_corpus.rs` out from under it.
+//!   moving the ground truth of `tests/security/redaction.rs` out from under it.
 //!
 //! The comparison is over decoded pixels rather than over the bytes of the file: the PNG
 //! encoder is free to compress the same image differently between versions of its crate,
 //! and what this test is about is the drawing.
 //!
 //! Nothing here runs a detector. What the corpus *says* about each line is written by hand
-//! in `corpus/mod.rs`; what the detectors make of it is `tests/redaction_corpus.rs`.
+//! in `corpus/mod.rs`; what the detectors make of it is `tests/security/redaction.rs`.
 
 #[path = "corpus/mod.rs"]
 mod corpus;

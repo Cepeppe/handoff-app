@@ -58,6 +58,12 @@ cargo test
 cargo deny check
 ```
 
+`cargo test` includes the security suite of §11.7 (`src-tauri/tests/security/`). Run it
+alone with `cargo test --test security -- --nocapture` to see its numbers; it writes the
+machine-readable `src-tauri/target/security-report.json`, which the `security` job of CI keeps
+as an artifact. [`docs/dev/testing.md`](docs/dev/testing.md) says what every suite proves and
+what is checked by hand.
+
 and, from the repository root:
 
 ```sh
@@ -205,12 +211,12 @@ the detector would agree with it whatever it did.
 ```bash
 cargo test --test gen_corpus                          # the committed images still match
 HANDOFF_WRITE_CORPUS=1 cargo test --test gen_corpus   # redraw them after changing a page
-cargo test --test redaction_corpus metrics -- --nocapture   # the numbers of §11.7
+cargo test --test security metrics -- --nocapture     # the numbers of §11.7
 ```
 
 The pages are drawn with a stroke font written in `src-tauri/tests/corpus/font.rs` rather
 than with a system font, so the same source produces the same pixels on every machine and
-the images can be committed and checked back. `tests/redaction_corpus.rs` then asks four
+the images can be committed and checked back. `tests/security/redaction.rs` then asks four
 things of them: whether the detectors say what the corpus says, whether the burn covers
 every ink pixel of a redacted line, whether burning in the wrong order would be noticed,
 and whether an OCR engine can still read a planted key out of the redacted image.

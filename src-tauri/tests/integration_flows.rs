@@ -27,6 +27,10 @@
 
 #[path = "fake-server/mod.rs"]
 mod fake_server;
+// The forbidden set of §11.2 and §11.7, shared with the security suite: what
+// `App::log_invariants_hold` looks for after every flow.
+#[path = "security/forbidden.rs"]
+mod forbidden;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -227,24 +231,19 @@ impl App {
     /// test of this file the day it exists. [`dump_all_text`] reads the tables and the
     /// columns from the file itself, so nothing has to be kept in step with the migrations.
     ///
-    /// [`FIXTURE_SECRETS`] is what the flows plant. Most of them plant nothing — the
-    /// vendored channel fixtures carry an ordinary spec — and for those this is a cheap
-    /// no-op that guards the day one of them changes;
+    /// [`forbidden::forbidden`] is what is looked for: the sentinels the flows plant, shared
+    /// with the security suite, and the positive corpus of the pinned format. Most flows
+    /// plant nothing — the vendored channel fixtures carry an ordinary spec — and for those
+    /// this is a cheap no-op that guards the day one of them changes;
     /// [`a_planted_secret_reaches_no_column_of_the_log`] is the flow that makes it bite.
     ///
     /// What is deliberately not asserted is that `sends.text_as_sent` and
     /// `events.payload_json` are masked: LOG-03 wants those to be what actually left, and
-    /// `tests/log_invariants.rs` says the same from the other side.
+    /// `tests/security/log_invariants.rs` says the same from the other side.
     fn log_invariants_hold(&self) {
         let db = self.db();
         let dump = dump_all_text(&db).expect("the database can be dumped");
-        for secret in FIXTURE_SECRETS {
-            assert!(
-                !dump.contains(secret),
-                "LOG-02: a planted secret reached the database
-{dump}"
-            );
-        }
+        forbidden::assert_absent("LOG-02: the database", &dump, forbidden::forbidden());
     }
 }
 
@@ -369,19 +368,6 @@ async fn walk_the_four_steps(app: &App, id: &str, note: &str) {
 
 /// The keys a comparison ignores because their value belongs to the app and not to the flow.
 const THE_APPS_OWN: [&str; 2] = ["app_version", "token"];
-
-/// The certain secrets the flows of this file plant, and which no row of the log may hold.
-///
-/// Every one of them matches `stripe_secret_key` (§4.6: `[sr]k_(?:live|test)_[0-9A-Za-z]{16,}`)
-/// and none of them occurs anywhere else, so a failure names the field it came from instead
-/// of saying that a secret was found. [`App::log_invariants_hold`] looks for them after
-/// every flow.
-const FIXTURE_SECRETS: [&str; 4] = [
-    "sk_live_FLOWSENTINELVALUE01",
-    "sk_live_FLOWSENTINELITEM002",
-    "sk_live_FLOWSENTINELSTEP003",
-    "sk_live_FLOWSENTINELVERIFY4",
-];
 
 /// The keys three fixtures contradict themselves on: `notes` and `skipped_steps` are per
 /// round (§4.3 "current round", §7.4), and a fixture that reports them full in one message
@@ -1011,14 +997,14 @@ async fn a_planted_secret_reaches_no_column_of_the_log() {
                 "where": "Dashboard, then Developers",
                 "why_human": "only a person can read the key",
                 "values": {
-                    "api_key": FIXTURE_SECRETS[0],
-                    "backups": ["an ordinary item", FIXTURE_SECRETS[1]]
+                    "api_key": forbidden::VALUE,
+                    "backups": ["an ordinary item", forbidden::ITEM]
                 },
                 "steps": [
-                    { "text": format!("paste {} into .env", FIXTURE_SECRETS[2]),
+                    { "text": format!("paste {} into .env", forbidden::STEP),
                       "values": ["api_key"] }
                 ],
-                "verify": format!("call the API with {}", FIXTURE_SECRETS[3]),
+                "verify": format!("call the API with {}", forbidden::VERIFY),
                 "lang": "en"
             },
             "secret_treated": [],
@@ -1042,7 +1028,7 @@ async fn a_planted_secret_reaches_no_column_of_the_log() {
         "jsonrpc": "2.0", "id": 3, "method": "handoff.verify",
         "params": { "handoff_id": id, "verify": {
             "ok": true,
-            "detail": format!("the call with {} succeeded", FIXTURE_SECRETS[3])
+            "detail": format!("the call with {} succeeded", forbidden::DETAIL)
         } }
     }))
     .await;

@@ -17,7 +17,7 @@
  *
  * The command layer is faked, so what is asserted here is the window's half: which command
  * is called with what, and what the user is shown. That the burn actually covers the
- * glyphs is `src-tauri/tests/redaction_corpus.rs`, and that the whole chain works against a
+ * glyphs is `src-tauri/tests/security/redaction.rs`, and that the whole chain works against a
  * real agent is E2E-3.
  */
 import { cleanup, render, screen, waitFor } from '@testing-library/svelte';

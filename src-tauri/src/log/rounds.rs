@@ -14,7 +14,8 @@
 //! the reason `handoffs::upsert` gives: no caller can then put one in by accident.
 //!
 //! `sends.text_as_sent` and `events.payload_json` are deliberately **not** treated this way
-//! (`tests/log_invariants.rs` says why): LOG-03 wants those to be what actually left.
+//! (`tests/security/log_invariants.rs` says why): LOG-03 wants those to be what actually
+//! left.
 
 use std::collections::BTreeMap;
 

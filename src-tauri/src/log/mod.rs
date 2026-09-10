@@ -21,7 +21,7 @@
 //!   here and a compile error everywhere it matters.
 //! - **No secret-treated value is ever written.** LOG-02 and DET-04 say the log keeps a
 //!   placeholder; [`redact`] applies it and [`handoffs::upsert`] is where it happens, so a
-//!   caller cannot forget. `tests/log_invariants.rs` is the check, and
+//!   caller cannot forget. `tests/security/log_invariants.rs` is the check, and
 //!   [`test_support::dump_all_text`] is what it checks with.
 //!
 //! # Reading order

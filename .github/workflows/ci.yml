@@ -91,19 +91,11 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # The security suite of §11.7 runs here as one target among the others; the `security`
+      # job below runs it again on its own, prints its numbers and keeps its report.
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
-
-      # §11.7 asks for the corpus numbers to be reported per release, and R-07 is a number
-      # to watch rather than a line to cross, so the whole binary is re-run with the capture
-      # off. The glyph-leak test is in it on purpose: its summary says how many planted keys
-      # an engine of this runner read back and how many bands outstayed the 10 s budget, and
-      # a run where it read none would otherwise pass in silence. The binary is already
-      # built by the step above, so this costs its runtime and no compilation.
-      - name: Redaction corpus metrics
-        working-directory: src-tauri
-        run: cargo test --test redaction_corpus -- --nocapture
 
       # Two things are behind a feature and compile to nothing in the run above: the
       # transport of the automation channel (DD-33) and the HTTP client of `net::egress`
@@ -158,6 +150,60 @@ jobs:
 
       - name: The check can still fail
         run: node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe
+
+  # The security suite of §11.7 as a job of its own (T-053). It runs the suite alone with its
+  # output shown, so the numbers §11.7 asks to be reported per release — the corpus gates
+  # and the suspected false-positive rate of R-07 — are in the log of every run, and it keeps
+  # `target/security-report.json` as an artifact. The `windows` job runs the same target
+  # inside its `cargo test`; this one exists for the report. It restores that job's Rust
+  # cache read-only rather than building one of its own, so what it compiles is this crate
+  # and not its dependencies, and a dispatch skips it with the `windows` job because the
+  # push already ran it for the commit.
+  security:
+    name: security (windows-latest)
+    if: github.event_name != 'workflow_dispatch' || inputs.windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # `fetch-server` is a plain Node script: nothing from `node_modules` is needed here.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Rust toolchain
+        run: rustc --version
+
+      # `shared-key` names the key the `windows` job saves under (its job id), and `save-if`
+      # keeps this job from writing a second, competing copy of it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows
+          save-if: false
+
+      - name: Fetch the pinned server
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      - name: Security suite
+        working-directory: src-tauri
+        run: cargo test --test security -- --nocapture
+
+      - name: Security report
+        if: always()
+        run: cat src-tauri/target/security-report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report-windows
+          path: src-tauri/target/security-report.json
+          if-no-files-found: warn
 
   # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
   # this leg runs only when it is dispatched by hand; T-059 makes it run on every push.
@@ -221,12 +267,23 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # §11.7 asks for the corpus numbers to be reported per release, and R-07 is a number
-      # to watch rather than a line to cross, so the whole binary is re-run with the capture
-      # off. The glyph-leak test is in it on purpose: its summary says how many planted keys
-      # an engine of this runner read back and how many bands outstayed the 10 s budget, and
-      # a run where it read none would otherwise pass in silence. The binary is already
-      # built by the step above, so this costs its runtime and no compilation.
-      - name: Redaction corpus metrics
+      # The security suite of §11.7 on this platform (T-053): the socket, folder and token
+      # modes are asserted only here, and the glyph-leak summary says what the engine of this
+      # runner could read. A step of this job rather than a job of its own, because the leg
+      # is dispatch-only while macOS is deferred (TASKS.md §0.4 item 7) and a second macOS job
+      # would compile the crate again at ten times the minute; the step above built it.
+      # TASK: T-059 — decide whether it becomes a job of its own when this leg runs on push.
+      - name: Security suite
         working-directory: src-tauri
-        run: cargo test --test redaction_corpus -- --nocapture
+        run: cargo test --test security -- --nocapture
+
+      - name: Security report
+        if: always()
+        run: cat src-tauri/target/security-report.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report-macos
+          path: src-tauri/target/security-report.json
+          if-no-files-found: warn

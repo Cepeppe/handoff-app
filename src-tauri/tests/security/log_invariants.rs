@@ -6,8 +6,11 @@
 //! the table and column list from the file rather than from a list somebody maintains, so
 //! a column added by a later migration is covered the day it exists.
 //!
-//! The values are unique sentinels: if one leaks, the failure says which field it came
-//! from instead of "a secret was found".
+//! The values are the planted sentinels of `forbidden.rs`, the loader every Rust suite that
+//! asks this question shares: if one leaks, the failure says which field it was planted in
+//! instead of "a secret was found", and the vendored positive corpus is searched for too.
+//! The same check runs after every flow of `tests/integration_flows.rs` and, over the live
+//! database, after every e2e scenario (`tests/e2e/db.ts`).
 //!
 //! What is deliberately **not** asserted here: that `sends.text_as_sent` and
 //! `events.payload_json` are masked. LOG-03 requires the send text to be "the full text
@@ -16,6 +19,9 @@
 //! before the send, in the preview (PREV-01); this module guards the one place where a true
 //! value would otherwise be written down, which is the spec and the state that travels with
 //! it.
+//!
+//! This file was `tests/log_invariants.rs` until T-053 gathered the checks of §11.7 into one
+//! suite.
 
 use std::fs;
 use std::path::PathBuf;
@@ -27,13 +33,12 @@ use handoff_app_lib::log::handoffs::{HandoffRow, HandoffState};
 use handoff_app_lib::log::test_support::dump_all_text;
 use handoff_app_lib::log::{handoffs, sessions, Db, Timestamp};
 use indexmap::IndexMap;
+use serde_json::json;
 
-/// A sentinel that every build of the certain-secret pattern file matches as an `api_key`
-/// (`stripe_secret_key`: `[sr]k_(?:live|test)_[0-9A-Za-z]{16,}`), and that no two callers
-/// of this function share.
-fn sentinel(index: u32) -> String {
-    format!("sk_live_SENTINEL{index:016}")
-}
+use crate::forbidden::{
+    self, GOAL, ITEM, REQUEST, STATE, STEP, VALUE, VERIFY, WARNING, WHERE, WHY_HUMAN,
+};
+use crate::report;
 
 fn tempdir() -> PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -49,26 +54,26 @@ fn tempdir() -> PathBuf {
 /// A spec carrying a different sentinel in every field the ingress scan of §5.5 covers.
 fn spec_of_sentinels() -> HandoffSpec {
     let mut values = IndexMap::new();
-    values.insert("api_key".to_owned(), SpecValue::One(sentinel(1)));
+    values.insert("api_key".to_owned(), SpecValue::One(VALUE.to_owned()));
     values.insert(
         "backups".to_owned(),
-        SpecValue::Many(vec!["an ordinary item".to_owned(), sentinel(2)]),
+        SpecValue::Many(vec!["an ordinary item".to_owned(), ITEM.to_owned()]),
     );
     HandoffSpec {
         spec_version: 1,
-        goal: format!("rotate {} on the dashboard", sentinel(3)),
-        r#where: format!("Stripe account {}", sentinel(4)),
+        goal: format!("rotate {GOAL} on the dashboard"),
+        r#where: format!("Stripe account {WHERE}"),
         url: None,
-        why_human: format!("only a person may read {}", sentinel(5)),
+        why_human: format!("only a person may read {WHY_HUMAN}"),
         values,
         secrets: None,
         steps: vec![HandoffStep {
-            text: format!("paste {} into .env", sentinel(6)),
+            text: format!("paste {STEP} into .env"),
             url: None,
             values: Some(vec!["api_key".to_owned()]),
-            warning: Some(format!("never commit {}", sentinel(7))),
+            warning: Some(format!("never commit {WARNING}")),
         }],
-        verify: Some(format!("call the API with {}", sentinel(8))),
+        verify: Some(format!("call the API with {VERIFY}")),
         lang: Some("en".to_owned()),
     }
 }
@@ -85,28 +90,38 @@ fn no_sentinel_of_a_stored_handoff_appears_anywhere_in_the_database() {
     // user typed may quote a value as well. Both are text the log cannot look inside, and
     // both are swept.
     row.state_json = format!(
-        "{{\"spec\":{{\"values\":{{\"api_key\":\"{}\"}}}},\"undelivered\":[\"{}\"]}}",
-        sentinel(1),
-        sentinel(9)
+        "{{\"spec\":{{\"values\":{{\"api_key\":\"{VALUE}\"}}}},\"undelivered\":[\"{STATE}\"]}}"
     );
-    row.request_text = Some(format!("rotate {} for me", sentinel(10)));
+    row.request_text = Some(format!("rotate {REQUEST} for me"));
     handoffs::upsert(&db, &row).expect("a handoff");
 
     let dump = dump_all_text(&db).expect("a dump");
-    for index in 1..=10 {
-        assert!(
-            !dump.contains(&sentinel(index)),
-            "sentinel {index} reached the database:\n{dump}"
-        );
-    }
+    let leaks = forbidden::leaks(&dump, forbidden::forbidden());
     // The masking has to have happened rather than the fields having been dropped: an
-    // empty log would pass the assertion above.
-    assert!(dump.contains("[treated as secret: api_key]"), "{dump}");
-    assert!(
-        dump.contains("paste [treated as secret: api_key] into .env"),
-        "{dump}"
+    // empty log would satisfy the absence on its own.
+    let masked = dump.contains("[treated as secret: api_key]")
+        && dump.contains("paste [treated as secret: api_key] into .env");
+    let ordinary_kept = dump.contains("an ordinary item");
+    report::record(
+        "log_invariants",
+        json!({
+            "status": report::status(leaks.is_empty() && masked && ordinary_kept),
+            "values_searched": forbidden::forbidden().len(),
+            "values_found": leaks.len(),
+            "masked_in_place": masked,
+            "ordinary_value_kept": ordinary_kept,
+        }),
     );
-    assert!(dump.contains("an ordinary item"), "{dump}");
+    assert!(
+        leaks.is_empty(),
+        "a value reached the database:\n{}\n\n{dump}",
+        leaks.join("\n")
+    );
+    assert!(
+        masked,
+        "the values were dropped rather than masked:\n{dump}"
+    );
+    assert!(ordinary_kept, "an ordinary value was not stored:\n{dump}");
 }
 
 #[test]

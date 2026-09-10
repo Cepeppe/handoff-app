@@ -14,7 +14,7 @@
 //! the arithmetic is bit-identical on x86-64 and on aarch64.
 //!
 //! It is a plain sans-serif and it is meant to be read: the corpus exists to be OCRed, and
-//! `tests/redaction_corpus.rs` prints how much of it the engine of the machine actually
+//! `tests/security/redaction.rs` prints how much of it the engine of the machine actually
 //! read rather than assuming.
 
 use image::{Rgba, RgbaImage};

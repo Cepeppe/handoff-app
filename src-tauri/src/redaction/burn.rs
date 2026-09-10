@@ -14,8 +14,8 @@
 //! reads the pixels around each output pixel, so a black rectangle laid on the original is
 //! averaged with the glyphs at its edge and the reduced image carries a grey halo in the
 //! shape of the letters. That halo is legible — to a person and to an OCR engine — which is
-//! what the glyph-leak test of §11.2 exists to catch. `tests/redaction_corpus.rs` runs both
-//! orders over the corpus and asserts the difference rather than trusting this comment.
+//! what the glyph-leak test of §11.2 exists to catch. `tests/security/redaction.rs` runs
+//! both orders over the corpus and asserts the difference rather than trusting this comment.
 //!
 //! # Text mode
 //!

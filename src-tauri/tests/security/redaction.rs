@@ -25,14 +25,15 @@
 //!    all 46 images on every platform. An installation with no engine *available* at all
 //!    is a different thing and still fails.
 //!
-//! The numbers are printed rather than only asserted, so CI runs this binary a second time
-//! with the capture off (`cargo test --test redaction_corpus -- --nocapture`): §11.7 asks
-//! for the suspected false-positive rate per release, and the glyph-leak summary says how
-//! many planted keys the engine of that machine read back and how many bands outstayed the
-//! budget — a run that read none would otherwise pass in silence.
-
-#[path = "corpus/mod.rs"]
-mod corpus;
+//! The numbers are printed rather than only asserted, and they go into
+//! `target/security-report.json` as well (`report.rs`): §11.7 asks for the suspected
+//! false-positive rate per release, and the glyph-leak summary says how many planted keys the
+//! engine of that machine read back and how many bands outstayed the budget — a run that read
+//! none would otherwise pass in silence. The `security` job of CI runs the suite with the
+//! capture off (`cargo test --test security -- --nocapture`) and keeps the report.
+//!
+//! This file was `tests/redaction_corpus.rs` until T-053 gathered the checks of §11.7 into one
+//! suite; the corpus it reads, `tests/corpus/`, is shared with `tests/gen_corpus.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,8 +48,10 @@ use handoff_app_lib::redaction::burn::{
 use handoff_app_lib::redaction::certain::scan_text as scan_certain;
 use handoff_app_lib::redaction::suspected::Exemptions;
 use image::RgbaImage;
+use serde_json::json;
 
-use corpus::{Expect, ImageLabels, Labels};
+use crate::corpus::{self, Expect, ImageLabels, Labels};
+use crate::report;
 
 /// §11.7: the certain detector must find every planted key.
 const CERTAIN_RECALL: f64 = 1.0;
@@ -267,6 +270,51 @@ fn metrics_over_the_corpus() {
         println!("  flagged clean line: {line}");
     }
     println!("--- end of metrics ---");
+
+    // Recorded before the gates are asserted, so a failing one is in the report with its
+    // numbers rather than missing from it.
+    let certain_passed = certain.missed.is_empty()
+        && certain.wrong_kind.is_empty()
+        && certain.spurious.is_empty()
+        && certain.recall() >= CERTAIN_RECALL
+        && certain.precision() >= CERTAIN_PRECISION;
+    let suspected_passed =
+        suspected.recall() >= SUSPECTED_RECALL && suspected.wrong_kind.is_empty();
+    report::record(
+        "corpus_metrics",
+        json!({
+            "status": report::status(certain_passed && suspected_passed),
+            "images": labels.images.len(),
+            "lines": labels.images.iter().map(|it| it.lines.len()).sum::<usize>(),
+            "certain": {
+                "declared": certain.declared,
+                "found": certain.found,
+                "fired": certain.fired,
+                "recall": certain.recall(),
+                "precision": certain.precision(),
+                "recall_threshold": CERTAIN_RECALL,
+                "precision_threshold": CERTAIN_PRECISION,
+                "missed": certain.missed,
+                "wrong_family": certain.wrong_kind,
+                "fired_on_clean_lines": certain.spurious,
+            },
+            "suspected": {
+                "declared": suspected.declared,
+                "found": suspected.found,
+                "fired": suspected.fired,
+                "recall": suspected.recall(),
+                "precision": suspected.precision(),
+                "recall_threshold": SUSPECTED_RECALL,
+                "missed": suspected.missed,
+                "wrong_rule": suspected.wrong_kind,
+                // R-07: reported per release rather than bounded (§11.7).
+                "false_positives": clean_flagged,
+                "clean_lines": clean_lines,
+                "false_positive_rate": false_positive_rate,
+                "flagged_clean_lines": suspected.spurious,
+            },
+        }),
+    );
 
     assert!(
         certain.missed.is_empty(),
@@ -613,6 +661,9 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
     let mut silent = 0_usize;
     let mut limit = usize::MAX;
     let mut engine = String::new();
+    // Collected rather than asserted on the spot, so the report names every band that still
+    // reads as a secret, not only the first.
+    let mut leaked: Vec<String> = Vec::new();
 
     'pages: for entry in &labels.images {
         let planted: Vec<usize> = entry
@@ -672,13 +723,9 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
                 silent += 1;
                 continue;
             };
-            let leaked = scan_certain(&after);
-            assert!(
-                leaked.is_empty(),
-                "{} line {index}: the redacted band still reads as a certain secret ({:?})",
-                entry.file,
-                after
-            );
+            if !scan_certain(&after).is_empty() {
+                leaked.push(format!("{} line {index}: {after:?}", entry.file));
+            }
         }
     }
 
@@ -691,11 +738,38 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
     };
     println!(
         "--- glyph leak: {engine} read {read_back} of {answered} planted keys before \
-         redaction ({rate:.2}) and none after; {silent} bands outstayed the 10 s budget; \
+         redaction ({rate:.2}) and {} after; {silent} bands outstayed the 10 s budget; \
          {:?} ---",
+        leaked.len(),
         started.elapsed()
     );
-    if answered == 0 {
+    let performed = answered > 0;
+    report::record(
+        "glyph_leak",
+        json!({
+            "status": match (leaked.is_empty(), performed) {
+                (false, _) => "failed",
+                (true, false) => "not_performed",
+                (true, true) => report::status(rate >= OCR_CONTROL_FLOOR),
+            },
+            "engine": engine,
+            "planted_keys_attempted": controls,
+            "answered_inside_the_budget": answered,
+            "bands_over_the_budget": silent,
+            "read_before_redaction": read_back,
+            "read_rate_before_redaction": rate,
+            "control_floor": OCR_CONTROL_FLOOR,
+            "read_after_redaction": leaked,
+            // The bundled engine reads a sample, the platform's own every planted key
+            // (`DEVIATIONS.md`, 2026-09-10).
+            "sampled": limit != usize::MAX,
+        }),
+    );
+    assert!(
+        leaked.is_empty(),
+        "a redacted band still reads as a certain secret: {leaked:#?}"
+    );
+    if !performed {
         // Every band outstayed `OCR_ENGINE_TIMEOUT_MS` with warm weights, so this machine
         // reads no capture at all within the product's own budget (FM-16) and there is
         // nothing here for a redaction to hide from. Said out loud rather than asserted:

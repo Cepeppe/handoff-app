@@ -14,8 +14,8 @@
  *
  * What it deliberately does not cover is `sends.text_as_sent` and `events.payload_json`:
  * LOG-03 requires the send text to be what actually left, after redaction, because it is the
- * answer to "what did the agent see". The Rust suite `tests/log_invariants.rs` says the same
- * and this is the same rule read from the other side.
+ * answer to "what did the agent see". The Rust suite `src-tauri/tests/security/log_invariants.rs`
+ * says the same and this is the same rule read from the other side.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';

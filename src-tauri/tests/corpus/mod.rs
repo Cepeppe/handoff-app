@@ -1126,7 +1126,7 @@ struct Drawn {
 /// glyph of the font reaches eight units above the cap line and the lowest eight below the
 /// descender, so the box is the cap height stretched by those two and by the pen's radius.
 /// It is what a well-behaved OCR engine would report for the line, and it is what the
-/// geometry test of `redaction_corpus.rs` requires the burn to cover.
+/// geometry test of `tests/security/redaction.rs` requires the burn to cover.
 fn line(
     image: &mut RgbaImage,
     text: &str,
