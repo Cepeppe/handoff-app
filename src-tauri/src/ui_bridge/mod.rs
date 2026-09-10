@@ -80,6 +80,28 @@ pub use requests::RequestDelivery;
 /// The label of the overlay window, as `tauri.conf.json` declares it.
 pub const MAIN_WINDOW: &str = "main";
 
+/// The arguments every webview of this application gives the WebView2 browser process
+/// (§7.13, NET-02, PRIN-05).
+///
+/// wry passes `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection` when nobody
+/// asks for anything and *replaces* it with whatever is asked, so the string starts with
+/// that default. The rest switches off the runtime's own background traffic — configuration
+/// and field-trial fetches, component updates, domain-reliability reports, hyperlink-auditing
+/// pings — which Baton's code never asks for and `net::egress` cannot see, because the
+/// process that sends it is `msedgewebview2.exe` and not this one. Measured on 2026-09-10:
+/// without these switches the webview of an idle Baton connected to Microsoft addresses
+/// within seconds of the launch (`docs/verify-trust.md` has what remains).
+///
+/// It is written twice, here and as the main window's `additionalBrowserArgs` in
+/// `tauri.conf.json`, and the two must be identical: WebView2 runs one browser process per
+/// profile and refuses a second webview in the same profile with different arguments, so a
+/// selection overlay of [`capture`] would fail to open. `tests/egress_boundary.rs` holds the
+/// two together.
+pub const WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+     --disable-background-networking --disable-component-update --disable-domain-reliability \
+     --no-pings";
+
 /// The event that asks the frontend to bring a view forward (§7.6).
 ///
 /// The tray menu is outside the component tree, so `New request` and `Settings` cannot

@@ -43,7 +43,7 @@ use crate::capture::permission::{self, Permission};
 use crate::capture::{self, Backend, Capture, CaptureError, MonitorId, Point, Selection};
 use crate::log::settings;
 
-use super::{Ui, MAIN_WINDOW};
+use super::{Ui, MAIN_WINDOW, WEBVIEW2_BROWSER_ARGS};
 
 /// A capture is ready to be previewed, or could not be taken (§7.8, FM-17).
 pub const EVENT_CAPTURE_READY: &str = "ui://capture-ready";
@@ -368,7 +368,11 @@ pub async fn start_region_capture(app: AppHandle) -> Result<(), String> {
             .skip_taskbar(true)
             .resizable(false)
             .shadow(false)
-            .visible(false);
+            .visible(false)
+            // The panel's arguments, to the letter: WebView2 refuses a second webview in the
+            // same profile whose arguments differ, and the panel is always the first (§7.13).
+            // Ignored where the webview is not WebView2.
+            .additional_browser_args(WEBVIEW2_BROWSER_ARGS);
         // The transparency DD-29 asks for. On macOS `transparent` exists only when Tauri is
         // built with `macos-private-api`, which also has to be declared in the
         // configuration — and turning it on decides that the bundle can never go to the App

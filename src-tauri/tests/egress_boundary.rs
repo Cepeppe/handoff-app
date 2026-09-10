@@ -14,6 +14,9 @@
 //! - the types it scans for are the ones `clippy.toml` actually disallows, so the two lists
 //!   cannot drift apart;
 //! - `tauri.conf.json` keeps `default-src 'self'` and no `connect-src`;
+//! - every webview — the configured window and the ones built in code — starts the WebView2
+//!   runtime with the same arguments, and they switch the runtime's own background traffic
+//!   off (T-052: the runtime is another program, so nothing above can see what it sends);
 //! - **nothing calls `egress::get`**, which is §0.4 item 8's "zero network connections" as a
 //!   fact about the sources rather than a sentence in a document.
 //!
@@ -27,6 +30,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use handoff_app_lib::ui_bridge::WEBVIEW2_BROWSER_ARGS;
 
 /// The one file allowed to name a client or a socket.
 const EGRESS: &str = "src/net/egress.rs";
@@ -250,6 +255,72 @@ fn the_webview_cannot_reach_the_network_either() {
     assert!(
         !csp.contains("connect-src"),
         "the CSP names `connect-src`, so the webview may open a connection: `{csp}`"
+    );
+}
+
+#[test]
+fn every_configured_window_starts_the_runtime_with_its_background_traffic_off() {
+    // The CSP above keeps the *page* off the network and says nothing about the WebView2
+    // runtime under it, which is another program (`msedgewebview2.exe`) with requests of its
+    // own: measured on 2026-09-10, an idle Baton's webview reached Microsoft addresses within
+    // seconds. The switches are what the owner decided in T-052 (`docs/verify-trust.md`).
+    const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(TAURI_CONF).expect("tauri.conf.json is valid JSON");
+    let windows = config["app"]["windows"]
+        .as_array()
+        .expect("the configuration declares windows");
+    assert!(!windows.is_empty(), "the configuration declares no window");
+    for window in windows {
+        // One string for every webview of the profile: WebView2 refuses a second one whose
+        // arguments differ, so a drift is a selection overlay that cannot open.
+        assert_eq!(
+            window["additionalBrowserArgs"].as_str(),
+            Some(WEBVIEW2_BROWSER_ARGS),
+            "window {} does not start the runtime with ui_bridge::WEBVIEW2_BROWSER_ARGS",
+            window["label"]
+        );
+    }
+    // wry *replaces* its own default with any value given, so the value has to carry it on.
+    assert!(
+        WEBVIEW2_BROWSER_ARGS
+            .starts_with("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection "),
+        "wry's default switches are lost: `{WEBVIEW2_BROWSER_ARGS}`"
+    );
+    let args: Vec<&str> = WEBVIEW2_BROWSER_ARGS.split_whitespace().collect();
+    for switch in [
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--disable-domain-reliability",
+        "--no-pings",
+    ] {
+        assert!(args.contains(&switch), "{switch} is not among {args:?}");
+    }
+}
+
+#[test]
+fn every_webview_built_in_code_is_given_the_same_arguments() {
+    // A window made by a builder rather than by the configuration gets wry's default unless
+    // it is told otherwise, and WebView2 then refuses to create it. Count the builders and
+    // the arguments file by file; the control is that at least one builder exists.
+    let root = crate_root();
+    let mut builders = 0;
+    for file in sources() {
+        let text = fs::read_to_string(root.join(&file)).expect("a source file reads");
+        let code = shipped_code(&text).join("\n");
+        let built = code.matches("WebviewWindowBuilder::new(").count();
+        let given = code
+            .matches(".additional_browser_args(WEBVIEW2_BROWSER_ARGS)")
+            .count();
+        assert_eq!(
+            built, given,
+            "{file} builds {built} webview(s) and gives {given} of them WEBVIEW2_BROWSER_ARGS"
+        );
+        builders += built;
+    }
+    assert!(
+        builders > 0,
+        "no webview builder was found, so the scan above proves nothing"
     );
 }
 
