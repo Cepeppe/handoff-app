@@ -151,6 +151,15 @@ jobs:
       - name: The check can still fail
         run: node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-app.exe
 
+      # The installer's own code (T-054, FM-24): `installer/windows/hooks.nsh` compiled by the
+      # makensis the bundle above has just downloaded, and run against folders of its own with
+      # a live process holding the server. `pnpm test` above skipped that half for want of
+      # makensis; here the variable makes a missing one a failure instead of a skip.
+      - name: Installer hooks
+        env:
+          BATON_REQUIRE_MAKENSIS: '1'
+        run: pnpm test src/__tests__/installer-hooks.test.ts
+
   # The security suite of §11.7 as a job of its own (T-053). It runs the suite alone with its
   # output shown, so the numbers §11.7 asks to be reported per release — the corpus gates
   # and the suspected false-positive rate of R-07 — are in the log of every run, and it keeps

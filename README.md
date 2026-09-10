@@ -92,6 +92,27 @@ it drives is compiled only with `--features e2e`; `scripts/check-no-automation.m
 build without the feature carries none of it, on every push in CI and on the binary the
 release workflow publishes.
 
+### Releasing
+
+A release is a tag. Bump the version in `src-tauri/Cargo.toml` and `package.json` (cargo
+rewrites `src-tauri/Cargo.lock` on the next build), write its `## [<version>] - <date>`
+section in `CHANGELOG.md`, commit, and push the tag `v<version>`.
+`.github/workflows/release.yml` then:
+
+- refuses a tag that is not that version, or a version with no changelog section, before
+  building anything (`node scripts/release-version.mjs <tag>` and
+  `node scripts/changelog-section.mjs <version>` are the same two checks, by hand);
+- builds the unsigned per-user setup from the pinned server, with the hooks of
+  `installer/windows/hooks.nsh` inside it — the in-place server update of FM-24;
+- runs the automation-channel gate on the binary it packed, and its positive control;
+- runs the security suite on the tagged commit;
+- leaves a **draft** release carrying `Baton-<version>-win32-x64-setup.exe`,
+  `Baton-<version>-security-report.json` and `SHA256SUMS`, with the changelog section as its
+  notes.
+
+Publishing the draft is done by hand. Code signing is deferred, so the setup meets
+SmartScreen: `docs/install-windows.md` is what a user reads about it.
+
 ### Layout
 
 ```
@@ -109,7 +130,10 @@ src-tauri/src/       Rust core, one module per area:
                        license  crash  i18n  ui_bridge  paths
 src-tauri/binaries/  the pinned server, named for Tauri (git-ignored)
 vendor/handoff-mcp/  the unpacked release artifact: binary and format files (git-ignored)
-scripts/             fetch-server and the pinning documentation, the link check, the notices
+installer/windows/   the NSIS hooks Tauri's Windows installer runs (FM-24), and their test driver
+scripts/             fetch-server and the pinning documentation, the link check, the notices,
+                       the two release checks
+CHANGELOG.md         one section per release; the release workflow reads its notes from it
 docs/                the user documentation (English, Italian in it/); dev/ the test harnesses
 ```
 

@@ -31,6 +31,8 @@ Every Rust suite runs from `src-tauri/`, after `node scripts/fetch-server.mjs` h
 | Automation channel | `cargo test --features e2e --test e2e_channel` | The transport of the e2e channel, which exists only with the feature; CI runs it in a step of its own. |
 | **Security** | `cargo test --test security -- --nocapture` | What the design's §11.7 asks for: [below](#the-security-suite). |
 | Frontend | `pnpm test` (repository root) | The components and the TypeScript in jsdom, the locale parity, the user documentation and its links. |
+| Installer hooks | `pnpm test src/__tests__/installer-hooks.test.ts` | `installer/windows/hooks.nsh` compiled with the real `makensis` and run against folders of its own, with a live process standing in for an agent's server: the in-place rename of FM-24, the uninstaller's cleanup, the application-data box, the login marker. Part of `pnpm test`, where it is skipped with a warning until the first `pnpm tauri build` has downloaded `makensis`; the `windows` job of CI runs it again after its bundle, and there a missing `makensis` fails. |
+| Release pipeline | `pnpm test src/__tests__/release.test.ts` | The two checks the release workflow starts with (the tag is the version, the changelog has its section), through their command line, and the decisions written in `release.yml`: the gate on the binary the setup was packed from, the report attached, only the drafting job allowed to write. |
 | End to end | `scripts\e2e.ps1` (workspace root) | Ten scenarios with a real Claude Code and a real build of the app, run by hand and not in CI: [e2e.md](e2e.md). |
 
 ## The security suite
@@ -78,6 +80,9 @@ finish. The corpus section is the one §11.7 asks to be kept per release:
 In CI the `security` job runs the suite on Windows on every push, prints the report and keeps
 it as the artifact `security-report-windows`. The macOS leg is dispatch-only while macOS is
 deferred, and its `macos` job runs the suite as a step and keeps `security-report-macos`.
+The release workflow runs the suite once more on the tagged commit and attaches the report to
+the draft release as `Baton-<version>-security-report.json`, so every release carries its own
+numbers.
 
 ## What the security suite leaves to others
 

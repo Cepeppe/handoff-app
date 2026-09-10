@@ -47,6 +47,12 @@
     "resources": {
       "../vendor/handoff-mcp/format/patterns/certain-secrets.v1.json": "patterns/certain-secrets.v1.json",
       "models/ocrs/*": "models/ocrs/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "../installer/windows/hooks.nsh"
+      }
     }
   }
 }

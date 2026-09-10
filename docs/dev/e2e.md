@@ -163,9 +163,16 @@ node scripts/check-no-automation.mjs --present src-tauri/target/debug/handoff-ap
 
 `ci.yml` runs both on every push to `main`: the first on the debug bundle it has just built
 without the feature, which the `cfg` gate makes as clean as a release binary, the second on a
-debug build made with the feature. The release workflow runs the first again on the binary it
-publishes. The second is the positive control and it is not decoration: a grep for a string
-nobody writes passes for ever, including on the day the grep itself breaks.
+debug build made with the feature. The second is the positive control and it is not
+decoration: a grep for a string nobody writes passes for ever, including on the day the grep
+itself breaks.
+
+`ci.yml` builds no release binary, so the release binary meets the check in the release
+workflow (`.github/workflows/release.yml`), and both halves run there too: the first on the
+`src-tauri/target/release/handoff-app.exe` the bundler has just packed into the setup, before
+anything else is built over it, the second on a release build made afterwards with
+`pnpm tauri build --features e2e --no-bundle`, which overwrites that same path. Either one
+failing fails the release.
 
 ## Reading a failure
 

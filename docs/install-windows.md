@@ -46,13 +46,18 @@ To install Baton anyway:
 The warning is about the missing signature, not about anything the setup does. A later build
 will be signed, and the warning will go away with it.
 
-There are two cases where the window offers no **Run anyway**:
+Two cases are different:
 
 - **Smart App Control is on** (Windows Security → App & browser control → Smart App Control).
-  It blocks unsigned programs outright and has no exception for a single program, so Baton
-  cannot be installed on that PC until it is signed. Do not turn Smart App Control off for one
-  program: Windows only turns it back on by resetting the PC.
-- **Your organisation manages the PC** and does not allow unsigned programs.
+  Windows then judges each program itself, and the window above does not appear. It may run
+  the setup with no warning at all, or block it with a notification that offers no **Run
+  anyway**; there is no exception for a single program, so where it blocks the setup, Baton
+  cannot be installed on that PC until it is signed. The uninstaller is not signed either and
+  can be blocked the same way: starting it again is worth one try, because on the PC Baton is
+  built on the same uninstaller was blocked once and ran the second time. Do not turn Smart
+  App Control off for one program: Windows only turns it back on by resetting the PC.
+- **Your organisation manages the PC** and does not allow unsigned programs: the window
+  offers no **Run anyway**.
 
 A setup you built on the same computer usually shows no SmartScreen warning at all, because
 the file was not downloaded.
@@ -102,20 +107,30 @@ Then restart your agent sessions: Claude Code reads its settings when a session 
 ## Update
 
 This build does not check for updates (Settings → Updates says so). To update, run the setup
-of the newer version over the installed one. Your agents' settings do not change: they point
-at `%LOCALAPPDATA%\Baton\handoff-mcp.exe`, and that path stays the same. Agent sessions that
-were already running keep the server they started with until you restart them.
+of the newer version over the installed one; if it asks whether to uninstall the installed
+version first, **Do not uninstall** replaces the files in place. The setup closes Baton if it
+is running: start it again afterwards if the setup did not.
+
+Your agents' settings do not change: they point at `%LOCALAPPDATA%\Baton\handoff-mcp.exe`,
+and that path stays the same. Agent sessions that were already running keep the server they
+started with until you restart them: Windows cannot overwrite a program in use, so the setup
+renames that file to `handoff-mcp.<old version>.old.exe` and puts the new server at the usual
+path, where every session you start from then on finds it. Baton deletes the old file the
+first time it starts after those sessions have ended.
 
 ## Uninstall
 
 1. **First take Baton out of your agents.** In Baton, open Settings → Agents and press
    **Remove** for each registered agent. That deletes exactly the lines Baton added and
    nothing else (see [The consent screen](consent-screen.md)).
-2. Quit Baton from its tray icon: **Quit**.
+2. Close your agent sessions, then quit Baton from its tray icon: **Quit**. A session that is
+   still running keeps its server file open, Windows cannot delete a program in use, and the
+   file would stay behind in `%LOCALAPPDATA%\Baton\`.
 3. Uninstall it from Windows Settings → Apps → Installed apps → Baton → **Uninstall**.
 
-The uninstaller removes the program, the shortcuts and the login entry. It asks whether to
-**Delete the application data**, unticked: tick it to remove everything Baton wrote itself —
+The uninstaller removes the program, including any `handoff-mcp.<version>.old.exe` an update
+left behind, the shortcuts and the login entry. It asks whether to **Delete the application
+data**, unticked: tick it to remove everything Baton wrote itself —
 `%APPDATA%\Baton\` (the log and the crash files) and the two `com.cepeppe.baton` folders. It
 never removes `%USERPROFILE%\.handoff\`, because your runbooks live there and the MCP server
 uses that folder too, and it never edits your agents' settings.

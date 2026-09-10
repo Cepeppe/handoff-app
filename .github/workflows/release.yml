@@ -1,0 +1,249 @@
+name: Release
+
+# Turns a tag into a draft release of Baton for Windows (T-054): the unsigned NSIS setup,
+# `SHA256SUMS`, and the report of the security suite of §11.7, with the CHANGELOG section as
+# the notes. Nothing here publishes: the owner reads the draft and publishes it by hand.
+#
+# Four things are deliberate.
+#
+#   * The tag is not trusted. `guard` refuses to release unless the tag is exactly
+#     `v<version>` of `src-tauri/Cargo.toml` — the version Tauri writes into the installer,
+#     since `tauri.conf.json` names none — with `package.json` agreeing, and unless the
+#     changelog has a section for it, all before a Windows minute is spent. A setup whose
+#     number is not its release's cannot be corrected once it has been downloaded.
+#   * The binary checked is the binary shipped. The DD-33 gate of §11.5 reads the
+#     `handoff-app.exe` the bundler has just packed into the setup, before anything else is
+#     built into `target/release/`; its positive control is built afterwards, with the setup
+#     already set aside, because the control overwrites that same path (the T-043 lesson).
+#     `ci.yml` builds no release binary, so this is the only place the gate meets one.
+#   * Every release carries its own security numbers (§11.7, T-053): the suite runs on the
+#     tagged commit and its report is an asset of the release.
+#   * Unsigned. Windows code signing is deferred (TASKS.md §0.4 item 8, T-076/T-077), and
+#     `docs/install-windows.md` tells the user what SmartScreen says about it.
+#
+# TASK: T-060 — the macOS job (signed, notarized DMG) arrives with the macOS release.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# A release is never cancelled half way: an interrupted run can leave a tag with a draft that
+# has some of its assets, and the next attempt would have to clean up after it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: The tag is the version of the application
+        id: version
+        run: |
+          version="$(node scripts/release-version.mjs "$GITHUB_REF_NAME")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releasing $version from $GITHUB_REF_NAME"
+
+      - name: The changelog has a section for it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/changelog-section.mjs "$VERSION"
+
+  # The security suite of §11.7 on the tagged commit, exactly as the `security` job of
+  # `ci.yml` runs it on every push, for the report the release carries. It restores that
+  # job's Rust cache of `main` read-only, so what it compiles is this crate and not its
+  # dependencies.
+  security:
+    name: security (windows-latest)
+    needs: guard
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Rust toolchain
+        run: rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows
+          save-if: false
+
+      - name: Fetch the pinned server
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      - name: Security suite
+        working-directory: src-tauri
+        run: cargo test --test security -- --nocapture
+
+      - name: Security report
+        if: always()
+        run: cat src-tauri/target/security-report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: src-tauri/target/security-report.json
+          if-no-files-found: error
+
+  windows:
+    name: windows-latest
+    needs: guard
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Rust toolchain
+        run: rustc --version
+
+      - run: pnpm install --frozen-lockfile
+
+      # The pinned server artifact (§3.5). `handoff-mcp` is private, so this needs the
+      # cross-repository read token of T-010; it expires on 2027-09-07.
+      - name: Fetch the pinned server
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      # The build gate of §3.5. With `CI` set it also refuses a `dev-link`ed vendor, so the
+      # server inside the setup is the pinned release and nothing else.
+      - name: Check the pinned server
+        run: node scripts/fetch-server.mjs --check
+
+      # A release build, bundled: the per-user NSIS setup of `tauri.conf.json`, with the
+      # hooks of `installer/windows/hooks.nsh` (FM-24) inside it.
+      - name: Build the setup
+        run: pnpm tauri build
+
+      # DD-33, §11.5: the automation channel "does not exist in release builds ... CI asserts
+      # the symbol is absent from release binaries". This is the file the setup was just
+      # packed from, and nothing has been built over it yet.
+      - name: The published binary carries no automation channel
+        run: node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe
+
+      - name: Set the setup aside under its release name
+        run: |
+          setup="src-tauri/target/release/bundle/nsis/Baton_${VERSION}_x64-setup.exe"
+          if [ ! -f "$setup" ]; then
+            ls -l src-tauri/target/release/bundle/nsis
+            echo "::error::the bundle produced no $setup"
+            exit 1
+          fi
+          mkdir -p dist/release
+          cp "$setup" "dist/release/Baton-${VERSION}-win32-x64-setup.exe"
+          sha256sum src-tauri/target/release/handoff-app.exe dist/release/*
+
+      # The positive control, and it is not decoration: a grep for a string nobody writes
+      # passes for ever, including on the day the grep breaks. It needs a release binary that
+      # *has* the channel. The dependencies are compiled with the same features as the
+      # setup's, so this rebuilds the application crate alone, and `--no-bundle` leaves the
+      # setup above untouched; it overwrites `target/release/handoff-app.exe`, which is why
+      # the gate above read that file first.
+      - name: A build that does carry the automation channel
+        run: pnpm tauri build --features e2e --no-bundle
+
+      - name: The check can still fail
+        run: node scripts/check-no-automation.mjs --present src-tauri/target/release/handoff-app.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup
+          path: dist/release/*-win32-x64-setup.exe
+          if-no-files-found: error
+
+  publish:
+    name: draft release
+    needs: [guard, security, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup
+          path: dist/assets
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-report
+          path: dist/report
+
+      - name: Name the security report after the release
+        run: mv dist/report/security-report.json "dist/assets/Baton-${VERSION}-security-report.json"
+
+      - name: Checksum every asset
+        working-directory: dist/assets
+        run: |
+          sha256sum Baton-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes from the changelog
+        run: node scripts/changelog-section.mjs "$VERSION" > dist/notes.md
+
+      # A draft, so nothing is announced until the owner has read it; a version with a
+      # pre-release part (`1.0.0-rc.1`) is marked as one.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "v$VERSION" --draft $prerelease --verify-tag \
+            --title "Baton $VERSION" --notes-file dist/notes.md dist/assets/*
+
+      # Read back through the list endpoint, which is the one that shows drafts: every asset
+      # made it, and nothing else is there.
+      - name: The draft carries every asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"v$VERSION\" and .draft) | .assets[].name" | sort)"
+          expected="$(ls dist/assets | sort)"
+          echo "$published"
+          if [ "$published" != "$expected" ]; then
+            echo "::error::the draft of v$VERSION carries a different set of assets"
+            echo "expected:"; echo "$expected"
+            exit 1
+          fi

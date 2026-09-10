@@ -48,14 +48,20 @@ Per installare comunque Baton:
 L'avviso riguarda la firma che manca, non qualcosa che il programma di installazione fa. Una
 versione successiva sarà firmata, e l'avviso sparirà con lei.
 
-In due casi la finestra non offre **Esegui comunque**:
+Due casi sono diversi:
 
 - **Smart App Control è attivo** (Sicurezza di Windows → Controllo delle app e del browser →
-  Smart App Control). Blocca del tutto i programmi non firmati e non ha eccezioni per un
-  singolo programma, quindi su quel PC Baton non si può installare finché non sarà firmato.
-  Non disattivare Smart App Control per un programma: Windows lo riattiva solo reimpostando
-  il PC.
-- **Il PC è gestito dalla tua organizzazione** e non consente programmi non firmati.
+  Smart App Control). Allora Windows giudica da sé ogni programma, e la finestra qui sopra non
+  compare. Può eseguire il programma di installazione senza nessun avviso, oppure bloccarlo
+  con una notifica che non offre **Esegui comunque**; non ha eccezioni per un singolo
+  programma, quindi dove blocca il programma di installazione Baton non si può installare su
+  quel PC finché non sarà firmato. Nemmeno il programma di disinstallazione è firmato, e può
+  essere bloccato allo stesso modo: vale la pena avviarlo una seconda volta, perché sul PC su
+  cui Baton è costruito lo stesso programma di disinstallazione è stato bloccato una volta ed
+  è partito la seconda. Non disattivare Smart App Control per un programma: Windows lo
+  riattiva solo reimpostando il PC.
+- **Il PC è gestito dalla tua organizzazione** e non consente programmi non firmati: la
+  finestra non offre **Esegui comunque**.
 
 Un programma di installazione costruito sullo stesso computer di solito non mostra nessun
 avviso di SmartScreen, perché il file non è stato scaricato.
@@ -107,20 +113,31 @@ sessione parte.
 
 Questa versione non controlla gli aggiornamenti (lo dice Impostazioni → Aggiornamenti). Per
 aggiornare, esegui il programma di installazione della nuova versione sopra quella
-installata. Le impostazioni dei tuoi agenti non cambiano: puntano a
+installata; se chiede se disinstallare prima la versione installata, **Do not uninstall**
+sostituisce i file sul posto. Il programma di installazione chiude Baton se è in esecuzione:
+dopo, riavvialo tu se non l'ha fatto lui.
+
+Le impostazioni dei tuoi agenti non cambiano: puntano a
 `%LOCALAPPDATA%\Baton\handoff-mcp.exe`, e quel percorso resta lo stesso. Le sessioni degli
-agenti già avviate continuano a usare il server con cui sono partite finché non le riavvii.
+agenti già avviate continuano a usare il server con cui sono partite finché non le riavvii:
+Windows non può sovrascrivere un programma in uso, quindi il programma di installazione
+rinomina quel file in `handoff-mcp.<versione precedente>.old.exe` e mette il nuovo server al
+solito percorso, dove lo trova ogni sessione che avvii da lì in poi. Baton cancella il
+vecchio file la prima volta che si avvia dopo che quelle sessioni sono finite.
 
 ## Disinstallare
 
 1. **Per prima cosa togli Baton dai tuoi agenti.** In Baton apri Impostazioni → Agenti e
    premi **Rimuovi** per ogni agente registrato. Cancella esattamente le righe che Baton ha
    aggiunto e nient'altro (vedi [La schermata di consenso](consent-screen.md)).
-2. Chiudi Baton dalla sua icona nella barra: **Esci**.
+2. Chiudi le sessioni dei tuoi agenti, poi esci da Baton dalla sua icona nella barra:
+   **Esci**. Una sessione ancora in corso tiene aperto il file del suo server, Windows non può
+   cancellare un programma in uso, e il file resterebbe in `%LOCALAPPDATA%\Baton\`.
 3. Disinstallalo da Impostazioni di Windows → App → App installate → Baton → **Disinstalla**.
 
-La disinstallazione rimuove il programma, i collegamenti e l'avvio all'accesso. Il programma
-di disinstallazione (in inglese) chiede se eseguire **Delete the application data**, senza
+La disinstallazione rimuove il programma, compreso ogni `handoff-mcp.<versione>.old.exe`
+lasciato da un aggiornamento, i collegamenti e l'avvio all'accesso. Il programma di
+disinstallazione (in inglese) chiede se eseguire **Delete the application data**, senza
 spunta: spuntala per rimuovere tutto quello che Baton ha scritto da sé — `%APPDATA%\Baton\`
 (lo storico e i rapporti di crash) e le due cartelle `com.cepeppe.baton`. Non rimuove mai
 `%USERPROFILE%\.handoff\`, perché lì ci sono i tuoi runbook e il server MCP usa anche lui
