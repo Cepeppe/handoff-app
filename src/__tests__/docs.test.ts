@@ -39,6 +39,9 @@ const PAGES = [
   'third-party-notices.md',
 ] as const;
 
+/** The pages about one agent each, under `agents/` in both languages (T-067). */
+const AGENT_PAGES = ['agents/codex.md'] as const;
+
 /** A page, with its line endings normalised: the check is about the words. */
 function read(...path: string[]): string {
   return readFileSync(join(DOCS, ...path), 'utf8').replace(/\r\n/g, '\n');
@@ -134,6 +137,13 @@ describe('the documentation of this repository', () => {
   it('is linked from the README', () => {
     expect(readFileSync(join(ROOT, 'README.md'), 'utf8')).toContain('](docs/index.md)');
   });
+
+  it.each(AGENT_PAGES)('has %s in both languages, linked from both index pages', (page) => {
+    expect(read(page)).toMatch(/^# /u);
+    expect(read('it', page)).toMatch(/^# /u);
+    expect(read('index.md')).toContain(`](${page})`);
+    expect(read('it', 'index.md')).toContain(`](${page})`);
+  });
 });
 
 describe('what the pages must say', () => {
@@ -192,6 +202,20 @@ describe('what the pages must say', () => {
       .trim();
     expect(read('third-party-notices.md')).toContain(licence);
     expect(read('it', 'third-party-notices.md')).toContain(licence);
+  });
+
+  it('tells a Codex user what Baton writes and what Codex does not do (T-067)', () => {
+    for (const page of [read('agents', 'codex.md'), read('it', 'agents', 'codex.md')]) {
+      // The permission Codex is given, and the one command that shows it was given.
+      expect(page).toContain('default_tools_approval_mode');
+      expect(page).toContain('codex mcp get handoff');
+      // The project file, which Codex reads only for a project it trusts (measured).
+      expect(page).toContain('.codex\\config.toml');
+    }
+    for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
+      expect(page).toContain('default_tools_approval_mode = "approve"');
+      expect(page).toContain('tool_timeout_sec = 1800');
+    }
   });
 
   it('lists the crates of the shipped build in both notices', () => {

@@ -377,6 +377,7 @@ di ogni crate, con la riga del copyright, è nel pacchetto sorgente della crate 
 | tokio-macros | 2.7.2 | MIT |
 | toml | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_edit | 0.25.13+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_parser | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_writer | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
 | tracing | 0.1.44 | MIT |

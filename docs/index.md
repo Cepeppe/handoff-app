@@ -15,6 +15,8 @@ yet. [Italiano](it/index.md)
 - [Install on macOS](install-macos.md) — not available yet.
 - [The consent screen](consent-screen.md) — exactly what Baton writes into your agent's
   settings, and how to take it back.
+- [Codex CLI](agents/codex.md) — what works with Codex, what changes without an end-of-turn
+  hook, and how to check the registration.
 
 ## Using it
 

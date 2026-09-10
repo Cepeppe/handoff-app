@@ -1,6 +1,6 @@
 [package]
 name = "handoff-app"
-version = "0.1.0"
+version = "1.1.0"
 description = "Baton: the contextual handoff overlay"
 authors = ["Cepeppe"]
 edition = "2021"
@@ -121,6 +121,13 @@ tauri-plugin-single-instance = "2.4.4"
 tauri-plugin-window-state = "2.4.1"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
+# The TOML of Codex's `config.toml`, edited in place (§7.15, T-067). `toml_edit` and not
+# `toml`: the file is the user's, written by hand and commented, and INST-04 promises that
+# registering Baton leaves every other line of it as it was. `toml_edit` keeps comments, blank
+# lines and the spelling of every value it is not asked to change, where a parse into values
+# and back would lose all three. The same version is already in the tree under a proc-macro,
+# so this line adds an edge to the graph and not a crate.
+toml_edit = "0.25.13"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 # The OS trash, for **Delete** on the Runbooks page (§7.12). A runbook is a recipe the user

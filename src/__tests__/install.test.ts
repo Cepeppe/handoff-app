@@ -63,6 +63,32 @@ function plan(overrides: Partial<ConsentView> = {}): ConsentView {
   };
 }
 
+const CODEX_DIFF =
+  '--- config.toml · mcp_servers.handoff (absent)\n+++ config.toml · mcp_servers.handoff\n' +
+  '+[mcp_servers.handoff]\n+default_tools_approval_mode = "approve"\n';
+
+/** Codex's plan on an empty machine: one modification on one row, and no hook (T-067). */
+function codexPlan(): ConsentView {
+  return {
+    agentId: 'codex',
+    nameKey: 'agent.codex',
+    modificationCount: 1,
+    digest: 'c1',
+    alreadyInOrder: false,
+    lines: [
+      {
+        description: {
+          key: 'install.codex.mcpEntry',
+          args: { file: 'config.toml', server: '/apps/Baton/handoff-mcp', minutes: '30' },
+        },
+        locations: ['config.toml · mcp_servers.handoff'],
+        diff: CODEX_DIFF,
+        isNoop: false,
+      },
+    ],
+  };
+}
+
 function agent(overrides: Partial<AgentStatus> = {}): AgentStatus {
   return {
     agentId: 'claude-code',
@@ -196,6 +222,65 @@ describe('the consent screen (INST-01, INST-02)', () => {
         expect(value.toLowerCase(), `${language}.${key}`).not.toContain('mcp_tool_timeout');
         expect(value.toLowerCase(), `${language}.${key}`).not.toContain('all mcp servers');
         expect(value.toLowerCase(), `${language}.${key}`).not.toContain('tutti i server mcp');
+      }
+    }
+  });
+
+  it('lists Codex as one change on one row, in the singular (T-067)', async () => {
+    setBridge(
+      fakeBridge({
+        agents: vi.fn(async () => [
+          agent({
+            agentId: 'codex',
+            nameKey: 'agent.codex',
+            configFiles: ['/home/x/.codex/config.toml'],
+          }),
+        ]),
+        consentPlan: vi.fn(async () => codexPlan()),
+      }),
+    );
+    render(AgentsSettings);
+
+    fireEvent.click(await screen.findByText(t('install.register')));
+
+    // "1 changes to Codex CLI" is the sentence a person would notice; the catalogue has no
+    // plural forms, so the one-modification case has a key of its own.
+    await screen.findByText(t('install.consentIntroOne', { agent: t('agent.codex') }));
+    expect(screen.getAllByText(t('install.show'))).toHaveLength(1);
+    expect(
+      screen.getByText(
+        t('install.codex.mcpEntry', {
+          file: 'config.toml',
+          server: '/apps/Baton/handoff-mcp',
+          minutes: '30',
+        }),
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText(t('install.show')));
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('default_tools_approval_mode = "approve"'),
+    );
+  });
+
+  it('names the approval Codex is given in the sentence itself, in both languages', () => {
+    // `default_tools_approval_mode = "approve"` is a permission: Codex stops asking before
+    // Baton's tools run. INST-01 is about showing what is granted, so the line says it in
+    // words and does not leave it to the diff behind Show.
+    expect(catalogue('en')['install.codex.mcpEntry']).toContain('approved in advance');
+    expect(catalogue('it')['install.codex.mcpEntry']).toContain('approvati in anticipo');
+  });
+
+  it('promises no hook in any text an agent without one could meet (ADPT-04, T-067)', () => {
+    // Codex runs no end-of-turn hook (its capability row says `stop_hook: false`), so no
+    // sentence the window can show about a Codex session may say that a hook will remind
+    // the agent or deliver anything. Two families may name a hook: the Claude Code consent
+    // lines, which describe the hooks being written, and the FM-22 picker, which only a hook
+    // that actually ran can open.
+    for (const language of LANGUAGES) {
+      for (const [key, value] of Object.entries(catalogue(language))) {
+        if (key.startsWith('install.claudeCode.') || key.startsWith('picker.')) continue;
+        expect(value.toLowerCase(), `${language}.${key}`).not.toContain('hook');
       }
     }
   });

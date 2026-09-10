@@ -112,7 +112,8 @@ pub struct ConsentView {
     pub agent_id: String,
     /// Its name, as a catalogue key.
     pub name_key: &'static str,
-    /// How many modifications: the number INST-02 fixes at three for Claude Code.
+    /// How many modifications: the number INST-02 fixes at three for Claude Code, and one for
+    /// Codex (T-067).
     pub modification_count: usize,
     /// The rows the user reads. Fewer than the modifications when an adapter groups some.
     pub lines: Vec<ConsentLine>,
@@ -290,7 +291,8 @@ pub fn scan_agents(app: AppHandle) -> ScanReport {
 ///
 /// # Errors
 ///
-/// When the agent is not one of ours, or a configuration file cannot be read or is not JSON.
+/// When the agent is not one of ours, or a configuration file cannot be read or is not one its
+/// adapter can edit.
 #[tauri::command]
 pub fn consent_plan(agent_id: String, scope: Scope) -> Result<ConsentView, String> {
     let adapter = adapter_for(&agent_id)?;

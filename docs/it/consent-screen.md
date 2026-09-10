@@ -1,8 +1,8 @@
 # La schermata di consenso
 
 Baton funziona aggiungendo poche righe alle impostazioni del tuo agente: il server MCP che
-l'agente avvia, e un hook che parte quando l'agente finisce un turno. Non le scrive mai senza
-mostrartele prima. Questa pagina spiega ogni riga.
+l'agente avvia e, per Claude Code, un hook che parte quando l'agente finisce un turno. Non le
+scrive mai senza mostrartele prima. Questa pagina spiega ogni riga.
 
 ## Quando la vedi
 
@@ -73,6 +73,39 @@ all'agente una volta. Se Baton non risponde, o qualcosa non è chiaro, l'hook no
 l'agente si ferma come sempre. Gli hook che avevi restano dove sono; quello di Baton si
 aggiunge accanto.
 
+## La modifica per Codex
+
+È una sola, perché Codex non esegue nessun hook alla fine di un turno; [Codex CLI](agents/codex.md)
+spiega che cosa cambia.
+
+### La voce del server MCP, in `%USERPROFILE%\.codex\config.toml`
+
+> La voce del server MCP “handoff” in `config.toml`, che esegue
+> `C:\Users\tu\AppData\Local\Baton\handoff-mcp.exe` con un timeout degli strumenti di 30
+> minuti; i suoi strumenti sono approvati in anticipo, così Codex non chiede il permesso a ogni
+> chiamata
+
+Baton aggiunge questa sezione al file, o crea il file con questa sezione:
+
+```toml
+[mcp_servers.handoff]
+command = 'C:\Users\you\AppData\Local\Baton\handoff-mcp.exe'
+args = []
+env = { HANDOFF_AGENT = "codex", HANDOFF_TOOL_TIMEOUT_MS = "1800000" }
+default_tools_approval_mode = "approve"
+tool_timeout_sec = 1800
+```
+
+- `command`, `HANDOFF_AGENT` e `HANDOFF_TOOL_TIMEOUT_MS` fanno quello che fanno per Claude
+  Code, sopra.
+- `default_tools_approval_mode = "approve"` permette a Codex di usare gli strumenti **di Baton**
+  senza chiederti il permesso prima di ogni chiamata. Senza questa riga Codex si ferma a
+  chiedere ogni volta, e una sessione avviata con `codex exec` li rifiuta del tutto. Vale solo
+  per questo server: ogni altro server e ogni comando mantengono le regole di approvazione che
+  hai impostato tu.
+- `tool_timeout_sec` sono gli stessi 30 minuti del `timeout` di Claude Code, in secondi, che è
+  l'unità in cui conta Codex.
+
 ## Il timeout
 
 Un handoff può richiederti minuti, e l'agente lo aspetta. Claude Code dà a ogni chiamata di
@@ -91,16 +124,20 @@ com'è, all'installazione e alla rimozione.
 - Prima di modificare un file, Baton ne salva una copia accanto, chiamata
   `<file>.handoff-backup-<data e ora>`.
 - Tutto il resto del file rimane: ogni chiave e ogni valore che avevi, nello stesso ordine e
-  con la stessa indentazione. Le righe vuote tra una voce e l'altra non vengono conservate.
-- Claude Code legge le sue impostazioni quando una sessione parte, quindi riavvia le sessioni
-  che erano già aperte.
+  con la stessa indentazione. Le righe vuote tra una voce e l'altra non vengono conservate. Nel
+  `config.toml` di Codex restano anche i commenti e le righe vuote, e il modo in cui è scritto
+  ogni valore.
+- Claude Code e Codex leggono le loro impostazioni quando una sessione parte, quindi riavvia le
+  sessioni che erano già aperte.
 
 ## Dove: questo utente o un progetto
 
 Di norma Baton si registra per il tuo utente di Windows, così lo vede ogni sessione di Claude
 Code. In Impostazioni → Agenti → **Dove** puoi scegliere invece **Un progetto** e indicare una
 cartella: Baton scrive allora `.mcp.json` e `.claude\settings.json` dentro quella cartella,
-con lo stesso contenuto, e lo vedono solo le sessioni che lavorano lì.
+con lo stesso contenuto, e lo vedono solo le sessioni che lavorano lì. Per Codex scrive lì
+`.codex\config.toml`, che Codex legge solo per un progetto che hai segnato come attendibile in
+Codex; Baton non ne segna mai uno al posto tuo.
 
 ## Tornare indietro
 
@@ -108,7 +145,9 @@ In Impostazioni → Agenti, **Rimuovi** cancella esattamente le righe di Baton: 
 server `"handoff"` e le due voci degli hook, riconosciute dal percorso del server di Baton nel
 loro comando. Nient'altro viene toccato — gli altri server e hook restano, e `MCP_TOOL_TIMEOUT`
 non è mai di Baton da ripristinare. Se la voce di Baton era l'unica dentro `"mcpServers"` o
-`"hooks"`, anche la chiave rimasta vuota viene tolta. Le copie di backup restano dove sono.
+`"hooks"`, anche la chiave rimasta vuota viene tolta. Per Codex, **Rimuovi** cancella la
+sezione `[mcp_servers.handoff]`, riconosciuta allo stesso modo, e nient'altro del
+`config.toml`. Le copie di backup restano dove sono.
 
 ## Lo stato di ogni agente
 

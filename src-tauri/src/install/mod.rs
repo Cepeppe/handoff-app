@@ -2,12 +2,14 @@
 //!
 //! One [`InstallAdapter`] per agent — detect, plan, apply, verify, uninstall — over that
 //! agent's own configuration files. The plan is what the consent screen renders, so it has
-//! to name the exact file and the exact change; [`apply`] writes a backup, edits the JSON
-//! keeping unrelated keys, and re-reads to verify.
+//! to name the exact file and the exact change; [`apply`] writes a backup, edits the file
+//! keeping everything unrelated, and re-reads to verify.
 //!
 //! Claude Code writes three modifications (T-026, Option B): the MCP entry with the fixed
 //! launcher path and the per-server `timeout`, and the Stop and SubagentStop hooks.
-//! `env.MCP_TOOL_TIMEOUT` is never written and never restored.
+//! `env.MCP_TOOL_TIMEOUT` is never written and never restored. Codex writes one (T-067): its
+//! `[mcp_servers.handoff]` section in `config.toml`, with the approval mode and the timeout in
+//! seconds, and no hook, because `codex exec` runs none.
 //!
 //! # Three rules that shape everything below
 //!
@@ -16,14 +18,15 @@
 //!   that and refuses a file that moved on in between ([`InstallError::Stale`]). There is
 //!   no path from a decision to a file that does not go through a [`Modification`].
 //! - **Existing configuration is never replaced** (INST-04). The document helpers of
-//!   [`json`] preserve key order, unrelated keys and the file's own indentation; the hook
-//!   arrays keep every entry that is not ours, in place; `uninstall` removes our entries
-//!   and the objects it emptied, and nothing else.
-//! - **The plan always lists the three modifications of INST-02**, even where a location is
-//!   already correct. A modification whose `before` equals its `after` is a no-op
-//!   ([`Modification::is_noop`]): the consent screen still shows three lines, `apply`
-//!   touches only the files that really change, and a second `apply` therefore writes
-//!   nothing at all.
+//!   [`json`] preserve key order, unrelated keys and the file's own indentation, and those of
+//!   [`toml`] every comment and spelling besides; the hook arrays keep every entry that is not
+//!   ours, in place; `uninstall` removes our entries and the parents it emptied, and nothing
+//!   else.
+//! - **The plan always lists every modification of the agent**, even where a location is
+//!   already correct — the three of INST-02 for Claude Code. A modification whose `before`
+//!   equals its `after` is a no-op ([`Modification::is_noop`]): the consent screen still shows
+//!   every line, `apply` touches only the files that really change, and a second `apply`
+//!   therefore writes nothing at all.
 //!
 //! # Where the texts are
 //!
@@ -33,11 +36,13 @@
 
 pub mod claude_code;
 pub mod cleanup;
+pub mod codex;
 pub mod diff;
 pub mod error;
 pub mod fixed_path;
 pub mod json;
 pub mod scan;
+pub mod toml;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -47,6 +52,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
 pub use claude_code::ClaudeCode;
+pub use codex::Codex;
 pub use error::{InstallError, Result};
 pub use scan::{scan, AgentStatus, MovedRegistration};
 
@@ -181,6 +187,20 @@ impl Description {
     }
 }
 
+/// The syntax of the file a modification is written into.
+///
+/// Claude Code's configuration is JSON and Codex's is TOML (§7.15). A plan never mixes the two
+/// inside one file, and [`apply`] reads, edits and verifies each file in its own syntax, so the
+/// rules around the edit — the stale check, the backup, the re-read — stay one piece of code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    /// `serde_json` with `preserve_order`, through [`json::Document`].
+    Json,
+    /// `toml_edit`, through [`toml::Document`].
+    Toml,
+}
+
 /// One exact change to one exact place of one file (§7.15, INST-01).
 ///
 /// `before` and `after` are the value *at that place*, rendered as it appears in the file,
@@ -190,6 +210,8 @@ impl Description {
 pub struct Modification {
     /// The file that changes.
     pub file: PathBuf,
+    /// The syntax `file` is written in, which is how [`apply`] reads it back.
+    pub format: Format,
     /// Where inside the document, from the root: `["mcpServers", "handoff"]`.
     ///
     /// Not in the task's field list and needed by two callers: the consent screen says
@@ -207,7 +229,7 @@ pub struct Modification {
 }
 
 impl Modification {
-    /// Builds the modification that puts `after` at `path` in `file`.
+    /// Builds the modification that puts the JSON value `after` at `path` in `file`.
     fn new(
         file: &Path,
         path: Vec<&'static str>,
@@ -224,6 +246,34 @@ impl Modification {
         let diff = diff::render(&location, before.as_deref(), &after);
         Self {
             file: file.to_path_buf(),
+            format: Format::Json,
+            path,
+            description,
+            before,
+            after,
+            diff,
+        }
+    }
+
+    /// Builds the modification that puts the TOML section `after` at `path` in `file`.
+    ///
+    /// `before` and `after` are both in the canonical rendering of [`toml::render_at`], so a
+    /// section that already holds our values is a no-op however the user spelled it, and the
+    /// diff behind **Show** is about values rather than about quotes and comments.
+    fn toml(
+        file: &Path,
+        path: Vec<&'static str>,
+        description: Description,
+        document: &toml::Document,
+        after: &toml_edit::Table,
+    ) -> Self {
+        let before = document.rendered_at(&path);
+        let after = toml::render_at(&path, &toml_edit::Item::Table(after.clone()));
+        let location = render_location(file, &path);
+        let diff = diff::render(&location, before.as_deref(), &after);
+        Self {
+            file: file.to_path_buf(),
+            format: Format::Toml,
             path,
             description,
             before,
@@ -234,8 +284,8 @@ impl Modification {
 
     /// Whether the value is already what it should be.
     ///
-    /// The plan lists all three modifications of INST-02 whatever the machine looks like,
-    /// so this is what tells `apply` there is nothing to write and the repair screen which
+    /// The plan lists every modification of the agent whatever the machine looks like, so
+    /// this is what tells `apply` there is nothing to write and the repair screen which
     /// lines are already in order.
     #[must_use]
     pub fn is_noop(&self) -> bool {
@@ -248,7 +298,7 @@ impl Modification {
         render_location(&self.file, &self.path)
     }
 
-    /// The value this modification writes, parsed back.
+    /// The JSON value this modification writes, parsed back.
     fn value(&self) -> Value {
         serde_json::from_str(&self.after).expect("the plan rendered this value itself")
     }
@@ -373,11 +423,12 @@ pub trait InstallAdapter {
     /// (INST-05).
     fn detect(&self, scope: &Scope) -> Detection;
 
-    /// The exact changes this scope needs, all three of them, no-ops included (INST-01).
+    /// The exact changes this scope needs, all of them, no-ops included (INST-01).
     ///
     /// # Errors
     ///
-    /// When a configuration file exists and cannot be read or is not a JSON object.
+    /// When a configuration file exists and cannot be read, or is not a configuration the
+    /// adapter can edit.
     fn plan(&self, scope: &Scope) -> Result<Vec<Modification>>;
 
     /// The plan as the consent screen lists it (INST-01, INST-02).
@@ -414,29 +465,29 @@ pub trait InstallAdapter {
 /// file in the order the plan gives them, skip the files nothing changes, check that each
 /// location still holds what the user was shown, back the file up, write, re-read and
 /// verify. A failure anywhere stops before the next file, so a plan is applied up to the
-/// file that failed and never half-applied inside one.
+/// file that failed and never half-applied inside one. Each file is read and written in the
+/// syntax its modifications name ([`Format`]).
 ///
 /// # Errors
 ///
 /// [`InstallError::Stale`] when a location no longer holds the plan's `before`,
 /// [`InstallError::NotVerified`] when the re-read does not find what was written, and the
-/// io and parse failures of [`json::Document`].
+/// io and parse failures of [`json::Document`] and [`toml::Document`].
 pub fn apply(plan: &[Modification]) -> Result<()> {
     for file in files_of(plan) {
         let changes: Vec<&Modification> = plan
             .iter()
             .filter(|modification| modification.file == file && !modification.is_noop())
             .collect();
-        if changes.is_empty() {
+        let Some(first) = changes.first() else {
             continue;
-        }
+        };
 
-        let mut document = Document::read(&file)?;
+        // One file is one syntax: the plan that made its first change made them all.
+        let format = first.format;
+        let mut document = Config::read(format, &file)?;
         for change in &changes {
-            let current = document
-                .get_at(&change.path)
-                .map(|value| json::render_with_indent(value, "  "));
-            if current != change.before {
+            if document.rendered_at(&change.path) != change.before {
                 return Err(InstallError::Stale {
                     path: file.clone(),
                     location: change.location(),
@@ -446,14 +497,14 @@ pub fn apply(plan: &[Modification]) -> Result<()> {
 
         back_up(&file)?;
         for change in &changes {
-            document.set_at(&change.path, change.value());
+            document.put(change);
         }
         document.write(&file)?;
 
-        // §7.15: re-read to verify. The file is Claude Code's own and it may be running.
-        let written = Document::read(&file)?;
+        // §7.15: re-read to verify. The file is the agent's own and the agent may be running.
+        let written = Config::read(format, &file)?;
         for change in &changes {
-            if written.get_at(&change.path) != Some(&change.value()) {
+            if !written.holds(change) {
                 return Err(InstallError::NotVerified {
                     path: file.clone(),
                     location: change.location(),
@@ -462,6 +513,62 @@ pub fn apply(plan: &[Modification]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// One configuration file as [`apply`] edits it, in the syntax its agent reads.
+enum Config {
+    /// Claude Code's `~/.claude.json`, `settings.json`, a project's `.mcp.json`.
+    Json(Document),
+    /// Codex's `config.toml`.
+    Toml(toml::Document),
+}
+
+impl Config {
+    /// The file at `path`, read in `format`.
+    fn read(format: Format, path: &Path) -> Result<Self> {
+        Ok(match format {
+            Format::Json => Self::Json(Document::read(path)?),
+            Format::Toml => Self::Toml(toml::Document::read(path)?),
+        })
+    }
+
+    /// The value at `path`, rendered the way a plan renders its `before`.
+    fn rendered_at(&self, path: &[&str]) -> Option<String> {
+        match self {
+            Self::Json(document) => document
+                .get_at(path)
+                .map(|value| json::render_with_indent(value, "  ")),
+            Self::Toml(document) => document.rendered_at(path),
+        }
+    }
+
+    /// Puts a modification's `after` where its `before` was.
+    fn put(&mut self, change: &Modification) {
+        match self {
+            Self::Json(document) => document.set_at(&change.path, change.value()),
+            Self::Toml(document) => {
+                document.set_at(&change.path, toml::table_of(&change.after, &change.path));
+            }
+        }
+    }
+
+    /// Whether the place a modification changes now holds what it wrote.
+    fn holds(&self, change: &Modification) -> bool {
+        match self {
+            Self::Json(document) => document.get_at(&change.path) == Some(&change.value()),
+            Self::Toml(document) => {
+                document.rendered_at(&change.path).as_deref() == Some(change.after.as_str())
+            }
+        }
+    }
+
+    /// Writes the file back.
+    fn write(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::Json(document) => document.write(path),
+            Self::Toml(document) => document.write(path),
+        }
+    }
 }
 
 /// The files a plan touches, in the order they first appear in it.
@@ -555,6 +662,7 @@ mod tests {
     fn modification(before: Option<&str>, after: &str) -> Modification {
         Modification {
             file: PathBuf::from("/home/x/.claude.json"),
+            format: Format::Json,
             path: vec!["mcpServers", "handoff"],
             description: Description::new("install.claudeCode.mcpEntry"),
             before: before.map(str::to_owned),

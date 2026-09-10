@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "handoff-app"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1994,6 +1994,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "thiserror 2.0.20",
  "tokio",
+ "toml_edit 0.25.13+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "trash",
@@ -5942,6 +5943,7 @@ dependencies = [
  "indexmap 2.14.2",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

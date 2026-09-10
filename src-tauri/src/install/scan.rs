@@ -14,29 +14,33 @@
 //!   §7.2 calls at launch, and the answer is what the settings page offers to repair.
 //!
 //! Everything here is written over the **list** of adapters rather than over the Claude Code
-//! one: T-067 and T-074 add Codex and OpenCode, and the scan, the notice, the settings page
-//! and the repair offer should take them without a line of change.
+//! one: Codex joined it with T-067 without a line of change to the scan, the notice, the
+//! settings page or the repair offer, and OpenCode (T-074) is meant to do the same.
 
 use std::path::PathBuf;
 
 use serde::Serialize;
 
 use super::error::Result;
-use super::{ClaudeCode, InstallAdapter, Registration, Scope};
+use super::{ClaudeCode, Codex, InstallAdapter, Registration, Scope};
 
 /// The setting holding the agent ids a notice was already shown for (INST-05).
 pub const KNOWN_AGENTS_KEY: &str = "known_agents";
 
 /// Every installation adapter this build carries (INST-08).
 ///
-/// One today. The order is the order the settings page lists them in.
+/// Claude Code, then Codex: the committed order of ADPT-06, which is also the order the
+/// settings page lists them in.
 ///
 /// # Errors
 ///
 /// [`super::InstallError::NoServer`] when the bundled server cannot be located, which is the
 /// one thing every adapter needs before it can name a command (SRV-25).
 pub fn adapters() -> Result<Vec<Box<dyn InstallAdapter>>> {
-    Ok(vec![Box::new(ClaudeCode::detected()?)])
+    Ok(vec![
+        Box::new(ClaudeCode::detected()?),
+        Box::new(Codex::detected()?),
+    ])
 }
 
 /// What one launch scan found about one agent (INST-05, §7.15).
@@ -171,6 +175,7 @@ pub fn record_known(statuses: &[AgentStatus], known: &[String]) -> Vec<String> {
 pub fn name_key(agent_id: &str) -> &'static str {
     match agent_id {
         super::claude_code::AGENT_ID => "agent.claudeCode",
+        super::codex::AGENT_ID => "agent.codex",
         _ => "agent.unknown",
     }
 }
@@ -215,7 +220,10 @@ mod tests {
         // The fallback exists for an id from somewhere else, never for one of ours: an
         // adapter added without its two catalogue entries would show `agent.unknown` in the
         // settings page, which is exactly the kind of thing nobody notices in review.
-        for agent_id in [super::super::claude_code::AGENT_ID] {
+        for agent_id in [
+            super::super::claude_code::AGENT_ID,
+            super::super::codex::AGENT_ID,
+        ] {
             let key = name_key(agent_id);
             assert_ne!(key, "agent.unknown", "{agent_id} has no name key");
             for language in [crate::i18n::Language::En, crate::i18n::Language::It] {

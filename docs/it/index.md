@@ -15,6 +15,8 @@ sono ancora disponibili. [English](../index.md)
 - [Installare su macOS](install-macos.md) — non ancora disponibile.
 - [La schermata di consenso](consent-screen.md) — che cosa scrive Baton, esattamente, nelle
   impostazioni del tuo agente, e come tornare indietro.
+- [Codex CLI](agents/codex.md) — che cosa funziona con Codex, che cosa cambia senza un hook di
+  fine turno, e come controllare la registrazione.
 
 ## Usarlo
 

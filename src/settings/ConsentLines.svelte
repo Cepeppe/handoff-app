@@ -10,6 +10,8 @@
   three for Claude Code. The rows are what the user reads: two, because the Stop and the
   SubagentStop hook are "the same command" and INST-02 asks for them on one line. The Rust
   side decides both (`install::InstallAdapter::consent_lines`); nothing here groups anything.
+  Codex has one modification on one row (T-067), and the intro says so in the singular: the
+  catalogue has no plural forms, and "1 changes" is the sentence a person would notice.
 
   **Show** is per row and closed by default. What it reveals is the diff of the places that
   row stands for — both hooks on the hooks row — so "same command" is something the user can
@@ -34,10 +36,12 @@
 </script>
 
 <p class="consent-intro">
-  {t('install.consentIntro', {
-    count: plan.modificationCount,
-    agent: t(plan.nameKey),
-  })}
+  {plan.modificationCount === 1
+    ? t('install.consentIntroOne', { agent: t(plan.nameKey) })
+    : t('install.consentIntro', {
+        count: plan.modificationCount,
+        agent: t(plan.nameKey),
+      })}
 </p>
 
 <ul class="consent-lines">

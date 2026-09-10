@@ -1,0 +1,23 @@
+# Codex settings, edited by hand.
+model = "gpt-5.6-luna"
+approval_policy = "on-request"   # ask before running a command
+
+[mcp_servers.docs]
+command = "npx"
+args = ["-y", "@example/docs-mcp"]
+env = { DOCS_ROOT = "C:/docs" }
+
+# The database server of the shop.
+[mcp_servers.shop-db]
+command = 'C:\tools\shop-db.exe'
+tool_timeout_sec = 60
+
+[mcp_servers.handoff]
+command = "/apps/Baton/handoff-mcp"
+args = []
+env = { HANDOFF_AGENT = "codex", HANDOFF_TOOL_TIMEOUT_MS = "1800000" }
+default_tools_approval_mode = "approve"
+tool_timeout_sec = 1800
+
+[profiles.fast]
+model_reasoning_effort = "low"

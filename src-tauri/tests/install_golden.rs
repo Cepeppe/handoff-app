@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    self, survives_project_scope, InstallAdapter, InstallError, Modification, Registration, Scope,
+    self, survives_project_scope, Codex, InstallAdapter, InstallError, Modification, Registration,
+    Scope,
 };
 use serde_json::Value;
 
@@ -71,6 +72,15 @@ impl TempHome {
     /// The adapter under test: this home, the fixed server path, a token inside the home.
     fn adapter(&self) -> ClaudeCode {
         ClaudeCode::with(&self.0, SERVER, self.join(".handoff/channel.token"))
+    }
+
+    /// The Codex adapter over the same home: Codex's own folder is `<home>/.codex`.
+    fn codex(&self) -> Codex {
+        Codex::with(
+            self.join(".codex"),
+            SERVER,
+            self.join(".handoff/channel.token"),
+        )
     }
 }
 
@@ -151,7 +161,7 @@ fn assert_matches(home: &TempHome, case: &str, side: &str) {
 }
 
 /// Runs the whole install: plan, then apply.
-fn install(adapter: &ClaudeCode, scope: &Scope) -> Vec<Modification> {
+fn install(adapter: &impl InstallAdapter, scope: &Scope) -> Vec<Modification> {
     let plan = adapter.plan(scope).expect("the plan is made");
     adapter.apply(&plan).expect("the plan is applied");
     plan
@@ -636,5 +646,292 @@ fn a_four_space_settings_file_stays_a_four_space_settings_file() {
     assert!(
         written.starts_with("{\n    \"env\": {\n        \"A\": \"b\"\n    },\n    \"hooks\": {"),
         "the file was reindented:\n{written}"
+    );
+}
+
+// ------------------------------------------------------------- the Codex adapter (T-067)
+//
+// The same promises over a TOML file: `<home>/.codex/config.toml`, one `[mcp_servers.handoff]`
+// section, and every comment, server and profile the user had still there, spelled as they
+// spelled it.
+
+/// Codex's configuration inside a temporary home.
+const CODEX_CONFIG: &str = ".codex/config.toml";
+
+#[test]
+fn codex_on_a_machine_with_no_configuration_at_all() {
+    let home = TempHome::from_case("codex-empty");
+    let plan = install(&home.codex(), &Scope::User);
+
+    // One modification and no hook: `codex exec` runs none (T-066).
+    assert_eq!(plan.len(), 1);
+    assert!(plan[0].before.is_none() && !plan[0].is_noop());
+    assert_matches(&home, "codex-empty", "out");
+
+    // INST-07 holds for every adapter: the first apply creates the token.
+    assert!(
+        home.join(".handoff/channel.token").is_file(),
+        "the channel token was not created"
+    );
+    assert!(backups_of(&home, CODEX_CONFIG).is_empty());
+}
+
+#[test]
+fn codex_keeps_every_comment_server_and_profile_the_user_had() {
+    let home = TempHome::from_case("codex-populated");
+    install(&home.codex(), &Scope::User);
+    assert_matches(&home, "codex-populated", "out");
+    assert_eq!(backups_of(&home, CODEX_CONFIG).len(), 1);
+}
+
+#[test]
+fn codex_uninstall_gives_the_file_back_byte_for_byte() {
+    let home = TempHome::from_case("codex-populated");
+    let adapter = home.codex();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    assert_matches(&home, "codex-populated", "in");
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+}
+
+#[test]
+fn codex_applying_twice_writes_nothing_the_second_time() {
+    let home = TempHome::from_case("codex-populated");
+    let adapter = home.codex();
+    install(&adapter, &Scope::User);
+    let after_first = fs::read_to_string(home.join(CODEX_CONFIG)).expect("written");
+
+    let second = adapter.plan(&Scope::User).expect("the plan is made");
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0].is_noop(),
+        "a second plan still wants to change something:\n{}",
+        second[0].diff
+    );
+    adapter.apply(&second).expect("the plan is applied");
+
+    assert_eq!(
+        fs::read_to_string(home.join(CODEX_CONFIG)).expect("written"),
+        after_first
+    );
+    assert_eq!(backups_of(&home, CODEX_CONFIG).len(), 1);
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn codex_uninstall_where_ours_was_the_only_server_leaves_nothing_of_ours() {
+    let home = TempHome::from_case("codex-empty");
+    let adapter = home.codex();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    // `mcp_servers` was ours to create and had no header of its own, so it goes with our
+    // section: an empty file is Codex's "no configuration".
+    assert_eq!(
+        fs::read_to_string(home.join(CODEX_CONFIG)).expect("written"),
+        ""
+    );
+}
+
+#[test]
+fn codex_project_scope_writes_the_projects_file_and_not_codexs_home() {
+    let home = TempHome::from_case("codex-project");
+    let project = home.path().to_path_buf();
+    let adapter = Codex::with(
+        home.join("elsewhere/.codex"),
+        SERVER,
+        home.join(".handoff/channel.token"),
+    );
+    let scope = Scope::project(&project);
+
+    let plan = install(&adapter, &scope);
+    assert_eq!(plan[0].file, project.join(".codex").join("config.toml"));
+    assert_matches(&home, "codex-project", "out");
+    assert!(
+        !home.join("elsewhere/.codex/config.toml").exists(),
+        "project scope wrote into Codex's home"
+    );
+    assert_eq!(adapter.verify(&scope), Registration::Registered);
+}
+
+#[test]
+fn codex_a_moved_bundle_is_a_path_mismatch_repaired_where_the_section_stands() {
+    // FM-23: the section is ours and names the old path. The repair rewrites it in place,
+    // with the comment above its header, and changes nothing else.
+    let home = TempHome::from_case("codex-moved");
+    let adapter = home.codex();
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::PathMismatch {
+            registered: PathBuf::from(OLD_SERVER),
+            current: PathBuf::from(SERVER),
+        }
+    );
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains(OLD_SERVER) && plan[0].diff.contains(SERVER),
+        "the diff does not show the old path being replaced:\n{}",
+        plan[0].diff
+    );
+    adapter.apply(&plan).expect("the repair is applied");
+
+    assert_matches(&home, "codex-moved", "out");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn codex_an_entry_somebody_wrote_by_hand_is_theirs_until_the_plan_shows_it_replaced() {
+    // `handoff-mcp`'s install-without-app page tells a person to write `[mcp_servers.handoff]`
+    // with `npx`. Its command is not our fixed path, so it is not our registration, an
+    // uninstall leaves it alone, and a plan replaces it only with its old lines in the diff.
+    let home = TempHome::from_case("codex-empty");
+    let file = home.join(CODEX_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let theirs =
+        "[mcp_servers.handoff]\ncommand = \"npx\"\nargs = [\"-y\", \"baton-handoff-mcp\"]\n";
+    fs::write(&file, theirs).expect("the file is written");
+    let adapter = home.codex();
+
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+    adapter.uninstall(&Scope::User).expect("nothing to remove");
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), theirs);
+
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains("-command = \"npx\""),
+        "the diff hides what it replaces:\n{}",
+        plan[0].diff
+    );
+}
+
+#[test]
+fn codex_a_plan_applied_against_a_file_that_moved_on_is_refused() {
+    let home = TempHome::from_case("codex-populated");
+    let adapter = home.codex();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+
+    fs::write(
+        home.join(CODEX_CONFIG),
+        "[mcp_servers.handoff]\ncommand = \"somewhere-else\"\n",
+    )
+    .expect("the file is rewritten");
+
+    match adapter.apply(&plan) {
+        Err(InstallError::Stale { location, .. }) => {
+            assert_eq!(location, "config.toml · mcp_servers.handoff");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn codex_a_configuration_that_is_not_toml_is_never_written_to() {
+    let home = TempHome::from_case("codex-populated");
+    let adapter = home.codex();
+    let broken = "[mcp_servers.handoff\ncommand = \n";
+    fs::write(home.join(CODEX_CONFIG), broken).expect("the file is rewritten");
+
+    assert!(matches!(
+        adapter.plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert!(matches!(
+        adapter.uninstall(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(home.join(CODEX_CONFIG)).expect("it is still there"),
+        broken
+    );
+}
+
+#[test]
+fn codex_an_inline_mcp_servers_table_is_refused_rather_than_rewritten() {
+    // Valid TOML, and the user's own spelling: adding a `[mcp_servers.handoff]` section to it
+    // would mean turning their inline table into sections first.
+    let home = TempHome::from_case("codex-empty");
+    let file = home.join(CODEX_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let inline = "mcp_servers = { other = { command = \"npx\" } }\n";
+    fs::write(&file, inline).expect("the file is written");
+
+    assert!(matches!(
+        home.codex().plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), inline);
+}
+
+#[test]
+fn codex_the_consent_path_shows_one_line_with_the_permission_behind_show() {
+    let home = TempHome::from_case("codex-empty");
+    let adapter = home.codex();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let shown = install::digest(&plan);
+
+    let lines = adapter.consent_lines(&plan);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].description.key, "install.codex.mcpEntry");
+    assert_eq!(
+        lines[0].description.args.get("minutes").map(String::as_str),
+        Some("30")
+    );
+    for granted in [
+        "default_tools_approval_mode = \"approve\"",
+        "tool_timeout_sec = 1800",
+    ] {
+        assert!(
+            lines[0].diff.contains(granted),
+            "Show does not reveal {granted}:\n{}",
+            lines[0].diff
+        );
+    }
+
+    adapter.apply(&plan).expect("the plan is applied");
+    assert_matches(&home, "codex-empty", "out");
+
+    let again = adapter.plan(&Scope::User).expect("the plan is made again");
+    assert!(again.iter().all(Modification::is_noop));
+    assert_ne!(install::digest(&again), shown);
+}
+
+#[test]
+fn codex_detect_names_the_file_of_the_scope_and_finds_codex_by_its_folder() {
+    let home = TempHome::from_case("codex-populated");
+    let detection = home.codex().detect(&Scope::User);
+
+    assert_eq!(detection.agent_id, "codex");
+    // `.codex/` exists in the fixture, which is enough on a runner with no `codex` on PATH.
+    assert!(detection.found);
+    assert_eq!(detection.config_files, vec![home.join(CODEX_CONFIG)]);
+    assert_eq!(detection.version, None);
+}
+
+#[test]
+fn claude_code_and_codex_in_one_home_do_not_touch_each_others_files() {
+    // One machine, two agents: each adapter writes its own files and nothing of the other's,
+    // so Claude Code's files are exactly its own goldens and Codex's are exactly its.
+    let home = TempHome::from_case("populated");
+    install(&home.adapter(), &Scope::User);
+    install(&home.codex(), &Scope::User);
+
+    assert_matches(&home, "populated", "out");
+    let codex_golden = fs::read_to_string(
+        fixture_dir("codex-empty")
+            .join("out")
+            .join(".codex")
+            .join("config.toml"),
+    )
+    .expect("the golden is readable")
+    .replace("\r\n", "\n");
+    assert_eq!(
+        fs::read_to_string(home.join(CODEX_CONFIG)).expect("written"),
+        codex_golden
     );
 }

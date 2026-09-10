@@ -1,0 +1,3 @@
+[mcp_servers.project-tool]
+command = "node"
+args = ["tools/mcp.js"]

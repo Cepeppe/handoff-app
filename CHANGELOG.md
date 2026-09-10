@@ -13,8 +13,9 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
-Nothing has been released yet. The first release is the application as it stands, for
-Windows.
+## [1.1.0] - 2026-09-11
+
+The first release: the application as it stands, for Windows.
 
 ### Added
 
@@ -32,6 +33,12 @@ Windows.
   Agents, Log, Runbooks and Network settings pages.
 - The Claude Code installation adapter with its consent screen, onboarding and the repair
   offer.
+- The Codex CLI installation adapter: one change to Codex's `config.toml`, the MCP server
+  entry with its tools approved in advance and a 30-minute tool timeout, shown on the consent
+  screen and removable from Settings → Agents, with every comment and setting of the file
+  kept. Codex sessions appear in the panel under their own name. Codex has base support, and
+  `docs/agents/codex.md` says what that changes: nothing reminds the agent at the end of a
+  turn, and your requests reach it by the clipboard.
 - The Windows installer: a per-user setup into `%LOCALAPPDATA%\Baton\` that updates the
   bundled server in place while agent sessions are still running it, and an uninstaller that
   keeps the runbooks and removes Baton's own data only when asked.
@@ -39,4 +46,4 @@ Windows.
   suite, as a draft release.
 - The user documentation, in English and Italian.
 
-Bundles `handoff-mcp` 0.2.0.
+Bundles `handoff-mcp` 1.1.0.

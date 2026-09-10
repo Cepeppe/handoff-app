@@ -828,6 +828,42 @@ mod tests {
     }
 
     #[test]
+    fn a_codex_session_is_named_by_the_row_the_server_resolved() {
+        // OPEN-02 and ADPT-03: the tab says which agent a session is, and the name comes from
+        // the server's capability table, never from a list this application keeps. The Codex
+        // row is the second one it knows (T-066), and nothing here had to learn about it.
+        let mut fixture = Fixture::new();
+        let table = one_machine();
+        let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        peer.agent_id = Some("codex".to_owned());
+        peer.client = Some(ClientInfo {
+            name: "codex-mcp-client".to_owned(),
+            version: "0.153.4".to_owned(),
+        });
+        peer.capability_row = Some(CapabilityRow {
+            agent_id: "codex".to_owned(),
+            support: SupportLevel::Base,
+            images_in_results: true,
+            stop_hook: false,
+            tool_timeout_ms: Some(1_800_000),
+            display_name: Some("Codex CLI".to_owned()),
+            subagent_stop_hook: Some(false),
+            session_identity: None,
+            user_request_delivery: None,
+            cancellation_notifications: Some(false),
+        });
+
+        let session_ref = fixture
+            .registry
+            .register(&fixture.db, &peer, &table)
+            .expect("a registration")
+            .expect("a server registers");
+        let session = fixture.registry.get(&session_ref).expect("the session");
+        assert_eq!(session.display_name(), "Codex CLI · baton");
+        assert_eq!(session.resumed_from().agent, "Codex CLI");
+    }
+
+    #[test]
     fn a_hook_registers_nothing() {
         let mut fixture = Fixture::new();
         let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
