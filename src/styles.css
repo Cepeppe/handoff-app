@@ -980,38 +980,45 @@ body {
 }
 
 /*
-  The Log and Runbooks pages (§7.11, §7.12). Both are lists of records read at the settings
-  width, so they share the row: a title line, muted metadata under it, and the buttons last.
-  Nothing here is interactive beyond those buttons — the log is something to read.
+  The Log, Runbooks and Network pages (§7.11, §7.12, §7.13). All three are lists of records
+  read at the settings width, so they share the row: a title line, muted metadata under it,
+  and the buttons last. Nothing here is interactive beyond those buttons — they are things to
+  read. The Network list has no buttons at all and no rows in this build (NET-01), so it
+  borrows the shape and adds only the monospace domain.
 */
-.log-list {
+.log-list,
+.net-list {
   margin: 0 0 var(--space);
   padding: 0;
   list-style: none;
 }
 
-.log-entry {
+.log-entry,
+.net-entry {
   margin-bottom: 8px;
   padding: 8px;
   background: var(--surface-raised);
   border-radius: 4px;
 }
 
-.log-goal {
+.log-goal,
+.net-domain {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 600;
 }
 
-.log-meta {
+.log-meta,
+.net-meta {
   margin: 2px 0;
   overflow-wrap: anywhere;
   font-size: 11px;
   color: var(--text-muted);
 }
 
-.log-file {
+.log-file,
+.net-domain {
   font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
 }
 

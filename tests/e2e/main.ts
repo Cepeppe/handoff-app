@@ -30,7 +30,7 @@ import { transcriptIds } from './agent.ts';
 import { cleanUp, makeWorkspace, startApp } from './app.ts';
 import { classify, failures, label, reported, shouldRetry, type Assertion, type RunVerdict } from './classify.ts';
 import { missingPrerequisites, REPO_ROOT } from './paths.ts';
-import { logInvariants, type Scenario } from './scenario.ts';
+import { logInvariants, zeroEgress, type Scenario } from './scenario.ts';
 import { SCENARIOS } from './scenarios/index.ts';
 
 /** Where the report is written. Git-ignored. */
@@ -68,7 +68,14 @@ async function within<T>(what: string, ms: number, work: Promise<T>): Promise<T>
   }
 }
 
-/** One attempt at one scenario: a fresh app, the scenario, the log invariants, cleanup. */
+/**
+ * One attempt at one scenario: a fresh app, the scenario, the two invariants, cleanup.
+ *
+ * The invariants are the log's (§11.2: no spec value, no fixture secret) and the network's
+ * (§11.7: no connection at all in this build). Both are properties of the product rather
+ * than of a flow, so both run after every scenario instead of in the one that seemed
+ * relevant, and both read the database after the app has stopped writing it.
+ */
 async function attempt(scenario: Scenario): Promise<{ assertions: Assertion[]; facts: Record<string, unknown> }> {
   const workspace = makeWorkspace(scenario.id.replace(/[^a-z0-9]/giu, ''));
   transcriptIds.length = 0;
@@ -107,6 +114,7 @@ async function attempt(scenario: Scenario): Promise<{ assertions: Assertion[]; f
   }
 
   assertions.push(logInvariants(workspace, forbidden, scenario.covers));
+  assertions.push(zeroEgress(workspace, scenario.covers));
   facts['transcript_ids'] = [...transcriptIds];
   facts['workspace'] = process.env['HANDOFF_E2E_KEEP'] === '1' ? workspace.root : undefined;
   cleanUp(workspace);

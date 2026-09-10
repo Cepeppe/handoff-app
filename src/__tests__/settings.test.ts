@@ -265,14 +265,21 @@ describe('the settings window (§7.6)', () => {
     await waitFor(() => expect(setWideLayout).toHaveBeenLastCalledWith(false));
   });
 
-  it('lists General first and offers the other sections beside it', async () => {
+  it('lists General first and the six sections of §7.6 in the order it names them', async () => {
     setBridge(fakeBridge({ generalSettings: vi.fn(async () => settings()) }));
     render(SettingsView);
 
     await screen.findByText(t('settings.startup'));
     const nav = screen.getByRole('navigation', { name: t('view.settings') });
     expect([...nav.querySelectorAll('button')].map((button) => button.textContent?.trim())).toEqual(
-      [t('settings.general'), t('install.agents'), t('settings.log'), t('settings.runbooks')],
+      [
+        t('settings.general'),
+        t('install.agents'),
+        t('settings.network'),
+        t('settings.log'),
+        t('settings.runbooks'),
+        t('settings.updates'),
+      ],
     );
   });
 });

@@ -45,6 +45,9 @@
 //! T-049 added [`preview`], which is the other half of it and the only way a screenshot
 //! leaves this machine: the OCR and the detectors over the capture, the boxes the user
 //! edits, and the burn-in that produces what the agent is given (PREV-01..05, PRIN-09).
+//!
+//! T-051 added [`network`]: the Network page of NET-01, which lists what `net::egress`
+//! recorded — nothing at all in this build, and the page says so (§0.4 item 8).
 
 pub mod capture;
 pub mod commands;
@@ -53,6 +56,7 @@ pub mod events;
 pub mod general;
 pub mod install;
 pub mod log;
+pub mod network;
 pub mod preview;
 pub mod requests;
 pub mod runbooks;

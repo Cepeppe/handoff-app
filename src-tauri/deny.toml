@@ -64,14 +64,26 @@ private = { ignore = true }
 multiple-versions = "allow"
 wildcards = "deny"
 # The other half of the network boundary of §7.13. `clippy.toml` forbids *using* an HTTP
-# client outside `net::egress`; this forbids one *entering the tree* at all, which is the
-# stronger statement while the update check is deferred (`TASKS.md` §0.4 item 8) and the
-# app makes zero network connections.
+# client outside `net::egress`; this says who is allowed to bring one into the tree.
 #
-# T-051 and T-078 are what may lift these entries, and only for `src/net/egress.rs`.
+# Until T-051 both crates were banned outright, because nothing here could open a
+# connection at all. `net::egress` now exists (with no caller: the update check is deferred,
+# `TASKS.md` §0.4 item 8), so the ban becomes the narrower statement cargo-deny can actually
+# make about a dependency: **`reqwest` may be in the tree only as a direct dependency of this
+# crate**, which is the `net` feature and nothing else, and `hyper` only because that one
+# client brought it. Anything else — an OCR crate that downloads its models, a plugin that
+# phones home, Tauri's own optional `reqwest` if a feature ever enabled it — is refused here
+# with the path that reached it, which is the failure this rule exists to catch. `reqwest`
+# itself stays optional and off by default, so the shipped binary links no client at all.
 deny = [
-  { name = "reqwest", reason = "network access belongs to net::egress only (§7.13); no caller exists while the update check is deferred" },
-  { name = "hyper", reason = "network access belongs to net::egress only (§7.13); no caller exists while the update check is deferred" },
+  { name = "reqwest", wrappers = [
+    "handoff-app",
+  ], reason = "an HTTP client may enter the tree only through the `net` feature of this crate (§7.13)" },
+  { name = "hyper", wrappers = [
+    "reqwest",
+    "hyper-rustls",
+    "hyper-util",
+  ], reason = "hyper may be here only because `net::egress`'s client brought it (§7.13)" },
 ]
 
 [sources]

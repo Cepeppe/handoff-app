@@ -273,5 +273,13 @@
   "runbooks.lastVerified": "Last verified {at}",
   "runbooks.lastRunFailed": "Last run failed {at}",
   "runbooks.trustVerified": "Verified",
-  "runbooks.trustConfirmedByUser": "Confirmed by you"
+  "runbooks.trustConfirmedByUser": "Confirmed by you",
+  "settings.network": "Network",
+  "settings.updates": "Updates",
+  "net.zero": "This build makes no network connections at all. Nothing here can reach the internet: there is one place in the code that could, and nothing calls it.",
+  "net.declaration": "This page is what Baton says about itself. The check is yours to run: block Baton with your firewall, use it normally, and nothing will be blocked — because nothing is sent. The manual has the steps.",
+  "net.empty": "No connection has been recorded.",
+  "net.bytes": "{bytes} bytes sent",
+  "net.purposeUpdateCheck": "Update check",
+  "updates.none": "This build does not check for updates."
 }

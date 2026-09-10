@@ -82,6 +82,7 @@ export function fakeBridge(overrides: Partial<Bridge> = {}): Bridge {
     deleteLogEntry: vi.fn(base.deleteLogEntry),
     deleteLog: vi.fn(base.deleteLog),
     exportLog: vi.fn(base.exportLog),
+    networkEvents: vi.fn(base.networkEvents),
     runbooks: vi.fn(base.runbooks),
     runbookProposals: vi.fn(base.runbookProposals),
     openRunbooksFolder: vi.fn(base.openRunbooksFolder),

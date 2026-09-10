@@ -81,6 +81,42 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
 }
 
 /**
+ * The zero-egress check of §11.7, run after **every** scenario (T-051).
+ *
+ * §11.7 asks for it with the firewall blocking the app; this is the half a suite can assert
+ * without a firewall, and it is the stronger half in one respect — a firewall says what was
+ * refused, this says what the app believes it did. The two writers of that belief are the
+ * same code path: `net::egress` records a connection **before** it opens one, so a row here
+ * would mean an attempt, and no row means no attempt was ever made.
+ *
+ * In this build the expected count is **zero on every scenario**: the update check that is
+ * the one intended caller is deferred (`TASKS.md` §0.4 item 8, T-078). The variant that
+ * expects exactly one row, with the check enabled, belongs to that task.
+ */
+export function zeroEgress(workspace: Workspace, id: string): Assertion {
+  let log: Log;
+  try {
+    log = new Log(workspace);
+  } catch (cause) {
+    return check(id, 'the log can be read', 'protocol', false, String(cause));
+  }
+  try {
+    const events = log.networkEvents();
+    return check(
+      id,
+      'the app opened no network connection (NET-01, §11.7)',
+      'protocol',
+      events.length === 0,
+      events.length === 0
+        ? 'network_events is empty'
+        : events.map((event) => `${event.domain} (${event.purpose})`).join(', '),
+    );
+  } finally {
+    log.close();
+  }
+}
+
+/**
  * The log-invariant check of §11.2, run after **every** scenario.
  *
  * It is here rather than in a scenario of its own because LOG-02 is a property of the log

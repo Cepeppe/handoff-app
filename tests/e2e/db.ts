@@ -122,6 +122,19 @@ export class Log {
     );
   }
 
+  /**
+   * The `network_events` table: every connection the app recorded (NET-01, §7.13).
+   *
+   * It has one writer, `net::egress`, which records a connection **before** making it, so an
+   * empty table after a whole scenario is the zero-egress statement of §11.7 read from the
+   * inside — the firewall test is the same statement read from the outside.
+   */
+  networkEvents(): { at: string; domain: string; bytes_sent: number; purpose: string }[] {
+    return this.rows(
+      'SELECT at, domain, bytes_sent, purpose FROM network_events ORDER BY id',
+    );
+  }
+
   /** The names of every table the migrations created. */
   tables(): string[] {
     return this.rows<{ name: string }>(

@@ -229,6 +229,7 @@ pub fn run() {
             ui_bridge::log::delete_log_entry,
             ui_bridge::log::delete_log,
             ui_bridge::log::export_log,
+            ui_bridge::network::network_events,
             ui_bridge::runbooks::runbooks,
             ui_bridge::runbooks::runbook_proposals,
             ui_bridge::runbooks::open_runbooks_folder,

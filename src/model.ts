@@ -678,6 +678,22 @@ export interface LogDetailView {
 }
 
 /**
+ * One row of Settings → Network: one outbound connection (NET-01, §7.13).
+ *
+ * There is exactly one writer of these rows, `net::egress`, and it records a connection
+ * **before** making it — so the page is a record and not a claim. It is empty in this build:
+ * the update check that would be its only caller is deferred (T-078).
+ */
+export interface NetworkEventView {
+  /** RFC 3339, as everything the core hands the window is; drawn through `datetime.ts`. */
+  at: string;
+  domain: string;
+  bytesSent: number;
+  /** The stable key the row was written with (`update-check`); the page names it. */
+  purpose: string;
+}
+
+/**
  * One row of Settings → Runbooks (§7.12).
  *
  * Two things that look like defects and are not (`DEVIATIONS.md`, T-044): a step text may

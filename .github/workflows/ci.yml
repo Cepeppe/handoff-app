@@ -100,12 +100,16 @@ jobs:
         working-directory: src-tauri
         run: cargo test --test redaction_corpus -- --nocapture
 
-      # The transport of the automation channel (DD-33) is behind a feature, so the suite
-      # above compiles it to nothing. Only this target is asked for: the rest of the crate
-      # is already covered by the run above and by the all-features clippy.
-      - name: cargo test (the automation channel)
+      # Two things are behind a feature and compile to nothing in the run above: the
+      # transport of the automation channel (DD-33) and the HTTP client of `net::egress`
+      # (§7.13, off by default while the update check is deferred). One invocation covers
+      # both, because one feature combination is one compilation of the crate: the library
+      # suite — which is where the egress tests live — and the automation channel's own
+      # target. The default `cargo test` above still runs the cases that are only true
+      # without the client, so neither build is left unasserted.
+      - name: cargo test (the feature-gated modules)
         working-directory: src-tauri
-        run: cargo test --features e2e --test e2e_channel
+        run: cargo test --features e2e,net --lib --test e2e_channel
 
       - name: cargo deny
         working-directory: src-tauri

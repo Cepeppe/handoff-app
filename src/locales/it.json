@@ -273,5 +273,13 @@
   "runbooks.lastVerified": "Verificato l'ultima volta {at}",
   "runbooks.lastRunFailed": "Ultima esecuzione fallita {at}",
   "runbooks.trustVerified": "Verificato",
-  "runbooks.trustConfirmedByUser": "Confermato da te"
+  "runbooks.trustConfirmedByUser": "Confermato da te",
+  "settings.network": "Rete",
+  "settings.updates": "Aggiornamenti",
+  "net.zero": "Questa versione non fa nessuna connessione di rete. Da qui non si raggiunge internet: c'è un solo punto nel codice che potrebbe farlo, e nessuno lo chiama.",
+  "net.declaration": "Questa pagina è quello che Baton dice di sé. La verifica la fai tu: blocca Baton con il firewall, usalo normalmente e non verrà bloccato niente — perché non esce niente. I passi sono nel manuale.",
+  "net.empty": "Nessuna connessione registrata.",
+  "net.bytes": "{bytes} byte inviati",
+  "net.purposeUpdateCheck": "Controllo aggiornamenti",
+  "updates.none": "Questa versione non controlla gli aggiornamenti."
 }

@@ -29,6 +29,16 @@ fake-capture = []
 # The v2 extension point of §12.2: writing secrets into `.env`-style files. Off in every
 # v1 build, and the module it gates is empty on purpose.
 secrets-write = []
+# The HTTP client of `net::egress`, and the only way an HTTP client enters this crate
+# (§7.13, DD-32). It is **off by default**, so the binary a person installs today links no
+# network stack at all: the update check that is its one intended caller is deferred with
+# the public release (`TASKS.md` §0.4 item 8, T-078), and NET-02's firewall test expects zero
+# domains until then. Everything else of the boundary is compiled unconditionally — the
+# module, the recording of `network_events`, the domain rule — so what the feature gates is
+# the client and nothing else. CI compiles and tests it (`cargo lint` is `--all-features`,
+# and a `cargo test --features net` step runs its suite), which is what keeps a gated module
+# from rotting. T-078 turns it on by adding it to `default` and writing the caller.
+net = ["dep:reqwest"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -72,6 +82,18 @@ jsonschema = { version = "0.55", default-features = false }
 ocrs = { version = "0.13.0", default-features = false, features = ["rten"] }
 rand = "0.10.2"
 regex = "1.13.1"
+# The one HTTP client of the application, reachable from `net::egress` alone (§7.13, DD-32),
+# and optional: without the `net` feature it is not in the build at all. `default-features`
+# would bring `native-tls` (schannel here, openssl elsewhere) and a cookie store; neither is
+# wanted, and UPD-01 is explicit that the check carries no identifier. `rustls-tls` uses the
+# `webpki-roots` trust anchors compiled into the binary rather than the platform store, so
+# the one connection this crate can make trusts the same roots on every machine and needs no
+# certificate code of its own. `blocking` because §7.13 gives `get` a synchronous signature
+# and §7.2 calls the update check from `run()`, which is outside a tokio runtime.
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+  "blocking",
+  "rustls-tls-native-roots",
+] }
 # The inference engine `ocrs` runs on, named here because loading a `.rten` file is
 # `rten::Model::load_file` and `ocrs` does not re-export it. The version tracks the one
 # `ocrs` resolves: two copies of `rten` in the tree would be two `Model` types with the same

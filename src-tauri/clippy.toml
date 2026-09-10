@@ -4,14 +4,17 @@
 # module". A promise nobody checks decays: this configuration is the check that runs on
 # every `cargo clippy -D warnings`, which is a CI gate.
 #
-# `allow-invalid` is needed because none of the HTTP crates is a dependency today (the
-# update check is deferred, TASKS.md §0.4 item 8, T-078). Without it clippy would refuse a
-# configuration naming a path it cannot resolve, and the rule could only be written on the
-# day it is already too late to write it. `deny.toml` refuses the same crates as
-# dependencies, so the two guards cover both "it entered the tree" and "it is being used".
+# The rule is lifted in exactly one file: `src/net/egress.rs` carries a module-level
+# `#![allow(clippy::disallowed_types)]` with the reason, and it is the single egress point of
+# DD-32. Nothing else in this crate may name one of these types, and
+# `tests/egress_boundary.rs` reads the sources to say the same thing a second way — a lint
+# can be silenced with an attribute, and that test is what notices the attribute.
 #
-# T-051 narrows this rule to allow the client inside `src/net/egress.rs` alone; until then
-# nothing anywhere may open a socket to the outside.
+# `allow-invalid` stays: `reqwest` is an **optional** dependency behind the `net` feature,
+# off by default while the update check is deferred (TASKS.md §0.4 item 8, T-078), so a plain
+# `cargo clippy` cannot resolve those two paths. Without it the rule would be refused in the
+# very build it matters most for. `cargo lint` is `--all-features`, so CI resolves them.
+# `deny.toml` covers the other half — who may bring a client into the tree at all.
 disallowed-types = [
   { path = "reqwest::Client", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },
   { path = "reqwest::blocking::Client", reason = "network access belongs to net::egress only (§7.13)", allow-invalid = true },

@@ -33,6 +33,7 @@ import type {
   HandoffView,
   LogDetailView,
   LogEntryView,
+  NetworkEventView,
   Notice,
   OnboardingView,
   PreviewAnalysis,
@@ -361,6 +362,14 @@ export interface Bridge {
    */
   exportLog(): Promise<string | null>;
 
+  /**
+   * Settings -> Network: every outbound connection since installation, newest first (NET-01).
+   *
+   * Empty in this build, and it is meant to be: `net::egress` is the only writer and the
+   * update check that would call it is deferred (T-078), so the app connects to nothing.
+   */
+  networkEvents(): Promise<NetworkEventView[]>;
+
   /** Settings -> Runbooks: what `~/.handoff/runbooks/` holds (§7.12). */
   runbooks(): Promise<RunbookEntryView[]>;
 
@@ -602,6 +611,9 @@ export function tauriBridge(): Bridge {
     async exportLog() {
       return (await invoke<string | null>('export_log')) ?? null;
     },
+    async networkEvents() {
+      return invoke<NetworkEventView[]>('network_events');
+    },
     async runbooks() {
       return invoke<RunbookEntryView[]>('runbooks');
     },
@@ -772,6 +784,9 @@ export function noopBridge(): Bridge {
       // Outside the webview there is no save dialog; "the user cancelled" is the honest
       // answer, and the page then says nothing rather than claiming a file was written.
       return null;
+    },
+    async networkEvents() {
+      return [];
     },
     async runbooks() {
       return [];
