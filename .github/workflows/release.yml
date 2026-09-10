@@ -154,6 +154,9 @@ jobs:
       - name: The published binary carries no automation channel
         run: node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe
 
+      # Not under `dist/`: that is Vite's output folder, and the control build below runs
+      # `beforeBuildCommand`, whose `vite build` empties it (`emptyOutDir`). The first run of
+      # this workflow lost the setup that way, between this step and its upload.
       - name: Set the setup aside under its release name
         run: |
           setup="src-tauri/target/release/bundle/nsis/Baton_${VERSION}_x64-setup.exe"
@@ -162,9 +165,9 @@ jobs:
             echo "::error::the bundle produced no $setup"
             exit 1
           fi
-          mkdir -p dist/release
-          cp "$setup" "dist/release/Baton-${VERSION}-win32-x64-setup.exe"
-          sha256sum src-tauri/target/release/handoff-app.exe dist/release/*
+          mkdir -p release-assets
+          cp "$setup" "release-assets/Baton-${VERSION}-win32-x64-setup.exe"
+          sha256sum src-tauri/target/release/handoff-app.exe release-assets/*
 
       # The positive control, and it is not decoration: a grep for a string nobody writes
       # passes for ever, including on the day the grep breaks. It needs a release binary that
@@ -181,7 +184,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: setup
-          path: dist/release/*-win32-x64-setup.exe
+          path: release-assets/*-win32-x64-setup.exe
           if-no-files-found: error
 
   publish:

@@ -205,7 +205,7 @@ describe('release.yml', () => {
     const order = [
       'run: pnpm tauri build\n',
       'run: node scripts/check-no-automation.mjs src-tauri/target/release/handoff-app.exe',
-      'cp "$setup" "dist/release/Baton-${VERSION}-win32-x64-setup.exe"',
+      'cp "$setup" "release-assets/Baton-${VERSION}-win32-x64-setup.exe"',
       'run: pnpm tauri build --features e2e --no-bundle',
       'run: node scripts/check-no-automation.mjs --present src-tauri/target/release/handoff-app.exe',
     ];
@@ -214,6 +214,19 @@ describe('release.yml', () => {
       expect(position, `${order[index]} is in the job`).toBeGreaterThan(-1);
     }
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('keeps the setup out of the folder the control build empties', () => {
+    // The control build runs `beforeBuildCommand`, and its `vite build` empties `dist/`
+    // (`emptyOutDir` in vite.config.ts): the first rehearsal of this workflow set the setup
+    // aside under `dist/` and had nothing left to upload.
+    // The steps only: the comment that explains the rule names the folder too.
+    const steps = between(release, '\n  windows:', '\n  publish:')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+    expect(steps).not.toMatch(/\bdist\//);
+    expect(steps).toContain('path: release-assets/*-win32-x64-setup.exe');
   });
 
   it('attaches the report of the security suite run on the tagged commit', () => {
