@@ -90,12 +90,15 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # §11.7 asks for the corpus metrics to be reported per release, and R-07 is a number
-      # to watch rather than a line to cross, so the one test that prints them is re-run with
-      # the capture off. The binary is already built by the step above; this costs a second.
+      # §11.7 asks for the corpus numbers to be reported per release, and R-07 is a number
+      # to watch rather than a line to cross, so the whole binary is re-run with the capture
+      # off. The glyph-leak test is in it on purpose: its summary says how many planted keys
+      # an engine of this runner read back and how many bands outstayed the 10 s budget, and
+      # a run where it read none would otherwise pass in silence. The binary is already
+      # built by the step above, so this costs its runtime and no compilation.
       - name: Redaction corpus metrics
         working-directory: src-tauri
-        run: cargo test --test redaction_corpus metrics -- --nocapture
+        run: cargo test --test redaction_corpus -- --nocapture
 
       # The transport of the automation channel (DD-33) is behind a feature, so the suite
       # above compiles it to nothing. Only this target is asked for: the rest of the crate
@@ -203,9 +206,12 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # §11.7 asks for the corpus metrics to be reported per release, and R-07 is a number
-      # to watch rather than a line to cross, so the one test that prints them is re-run with
-      # the capture off. The binary is already built by the step above; this costs a second.
+      # §11.7 asks for the corpus numbers to be reported per release, and R-07 is a number
+      # to watch rather than a line to cross, so the whole binary is re-run with the capture
+      # off. The glyph-leak test is in it on purpose: its summary says how many planted keys
+      # an engine of this runner read back and how many bands outstayed the 10 s budget, and
+      # a run where it read none would otherwise pass in silence. The binary is already
+      # built by the step above, so this costs its runtime and no compilation.
       - name: Redaction corpus metrics
         working-directory: src-tauri
-        run: cargo test --test redaction_corpus metrics -- --nocapture
+        run: cargo test --test redaction_corpus -- --nocapture
