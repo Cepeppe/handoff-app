@@ -25,8 +25,11 @@
 //!    all 46 images on every platform. An installation with no engine *available* at all
 //!    is a different thing and still fails.
 //!
-//! The metrics are printed, so CI runs this binary once with `--nocapture`
-//! (`cargo test --test redaction_corpus metrics -- --nocapture`).
+//! The numbers are printed rather than only asserted, so CI runs this binary a second time
+//! with the capture off (`cargo test --test redaction_corpus -- --nocapture`): §11.7 asks
+//! for the suspected false-positive rate per release, and the glyph-leak summary says how
+//! many planted keys the engine of that machine read back and how many bands outstayed the
+//! budget — a run that read none would otherwise pass in silence.
 
 #[path = "corpus/mod.rs"]
 mod corpus;
@@ -69,13 +72,25 @@ const BUNDLED_ENGINE: &str = "ocrs";
 
 /// How many planted keys are read when the **bundled** engine is the one answering.
 ///
-/// It is the engine of a machine with no OCR language pack, and today also of the macOS leg
-/// (`VisionOcr` is T-059's stub). Reading all twenty-three keys with it takes five minutes
-/// in a debug build, which on a runner billed at ten times the minute is a cost out of all
-/// proportion to what the extra images say: the assertion is the same one over and over,
-/// and the geometry tests above cover every image on every machine. Where the operating
-/// system's own engine answers — Windows, and macOS once T-059 lands — every key is read.
+/// It is the engine of a machine with no OCR language pack. Reading all twenty-three keys
+/// with it costs minutes in a debug build, which on a runner billed at ten times the minute
+/// is out of all proportion to what the extra images say: the assertion is the same one over
+/// and over, and the geometry tests above cover every image on every machine. Where the
+/// operating system's own engine answers — Windows, and macOS once T-059 lands — every key
+/// is read.
 const BUNDLED_ENGINE_KEYS: usize = 6;
+
+/// How many bands may outstay the budget before the pass gives up on this machine.
+///
+/// Measured on the macOS runner of `ci.yml`, where `VisionOcr` is still T-059's stub and the
+/// bundled engine is all there is: a **debug** `ocrs` needs 11 s just to read its weights and
+/// then more than 10 s per band, so every one of the twenty-three outstayed
+/// `OCR_ENGINE_TIMEOUT_MS` even after the warm-up. Attempting them all cost four minutes of a
+/// job billed at ten times the minute to establish one fact that two attempts establish just
+/// as well. It says nothing about the shipped product, which is a release build — and on a
+/// machine that really is this slow every capture is unread anyway (FM-16), which is the
+/// answer this test then prints.
+const SILENT_BANDS_BEFORE_GIVING_UP: usize = 2;
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -589,7 +604,7 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
     let mut limit = usize::MAX;
     let mut engine = String::new();
 
-    for entry in &labels.images {
+    'pages: for entry in &labels.images {
         let planted: Vec<usize> = entry
             .lines
             .iter()
@@ -629,6 +644,9 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
                 // whoever asks, so the band holds nothing for a redaction to leak; it is
                 // counted and the pass carries on rather than failing over the clock.
                 silent += 1;
+                if silent >= SILENT_BANDS_BEFORE_GIVING_UP && read_back == 0 {
+                    break 'pages;
+                }
                 continue;
             };
             if name == BUNDLED_ENGINE {
