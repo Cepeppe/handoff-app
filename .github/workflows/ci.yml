@@ -8,6 +8,13 @@ name: CI
 # deferred (TASKS.md §0.4 item 7). The push run of the same commit already has the Windows
 # result, so a dispatch skips the Windows job unless it is asked for; the input is the
 # escape hatch for re-running Windows by hand.
+#
+# A push or a pull request that changes only documentation leaves the three Windows jobs out
+# (T-079, TASKS.md §0.4 item 11): the `changes` job decides, on Linux, and `windows`,
+# `security` and `ui` wait for its answer. They show as *skipped*, so the run still exists and
+# concludes `success`. A workflow-level `paths-ignore` would create no run at all, and whoever
+# waits for the run of their commit would wait for ever. The `docs` job checks the pages on
+# every push and pull request, whatever the answer.
 on:
   push:
     branches: [main]
@@ -31,9 +38,135 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Does this push or pull request change anything but documentation? `code` is `false` only
+  # when every changed path is on the allow-list below *and* the commit it is compared with
+  # passed this workflow; anything the job cannot decide is code. `docs/dev/testing.md` has the
+  # table of what runs on which push, and `src/__tests__/ci.test.ts` runs this very script.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    # `actions: read` is for the one question a diff cannot answer: whether the commit it is
+    # compared with was itself checked.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      # The whole history, so that the commit before the push is here to compare with; the
+      # repository is about 15 MB. A dispatch has no diff and needs none of it.
+      - uses: actions/checkout@v4
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+
+      - name: Classify the changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ github.event.forced }}
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The first answer is the answer.
+          answer() {
+            echo "code=$1" >> "$GITHUB_OUTPUT"
+            echo "code=$1: $2"
+            exit 0
+          }
+
+          # The allow-list. A push or a pull request made only of paths it accepts leaves the
+          # Windows jobs out; every other path is code, a README below the root included.
+          documentation() {
+            case "$1" in
+              # Both notices pages are generated from `Cargo.lock` and compared with the graph
+              # by the "Third-party notices are current" step of the `windows` job, so a change
+              # to either page alone has to run that job: a hand edit of the crate list is the
+              # thing that step exists to refuse.
+              docs/third-party-notices.md | docs/it/third-party-notices.md) return 1 ;;
+              docs/* | README.md | CHANGELOG.md | LICENSE*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          case "$EVENT" in
+            push | pull_request) ;;
+            *) answer true "a $EVENT has no diff to read" ;;
+          esac
+          case "$BEFORE" in
+            '' | 0000000000000000000000000000000000000000)
+              answer true "there is no earlier commit to compare with" ;;
+          esac
+          if [ "$FORCED" = true ]; then
+            answer true "a force push: the commit before it is not in this history"
+          fi
+
+          # `--no-renames` lists a moved file under both of its paths. With rename detection a
+          # file moved into `docs/` is listed under its new path alone, and the code it was
+          # taken out of does not count.
+          if [ "$EVENT" = pull_request ]; then
+            changed=$(git diff --name-only --no-renames "$BEFORE...$AFTER") ||
+              answer true "the diff could not be read"
+          else
+            changed=$(git diff --name-only --no-renames "$BEFORE" "$AFTER") ||
+              answer true "the diff could not be read"
+          fi
+          [ -n "$changed" ] || answer true "the diff lists no file"
+          while IFS= read -r path; do
+            documentation "$path" || answer true "$path is not documentation"
+          done <<< "$changed"
+
+          # What changed since BEFORE says nothing of whether BEFORE was checked: a newer push
+          # cancels the run of the one before it (the concurrency group above), and a run can
+          # be red. A documentation push on top of either would turn `main` green over code no
+          # Windows job has passed, so the diff is trusted only on top of a commit whose own
+          # push run succeeded, which by this same rule vouches for every commit before it.
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push \
+            --commit "$BEFORE" --json conclusion \
+            --jq 'map(select(.conclusion == "success")) | length') || passed=0
+          [ "${passed:-0}" -gt 0 ] 2>/dev/null ||
+            answer true "no push run of this workflow succeeded on $BEFORE"
+          answer false "documentation only, on top of a commit that passed"
+
+  # The documentation, on every push and pull request whatever `changes` answered: on a
+  # documentation-only push this is the whole of the check, on Linux at the single rate. Every
+  # relative link and `#anchor` resolves (moved here from the `windows` job, so that it lives in
+  # one place), and the two suites that read a file on the allow-list run: `docs.test.ts`
+  # (`docs/`, the README) and `release.test.ts` (`CHANGELOG.md`, which the release workflow
+  # takes its notes from). A dispatch skips it as it skips the Windows jobs: the push of the
+  # same commit has already run it.
+  docs:
+    name: docs
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Documentation links
+        run: pnpm check:links
+
+      - name: Documentation and changelog tests
+        run: pnpm test src/__tests__/docs.test.ts src/__tests__/release.test.ts
+
+  # The three Windows jobs below share this condition. A push or a pull request runs them when
+  # `changes` found code in it; a dispatch runs them when its `windows` input asks, whatever
+  # `changes` answered, because the push of the same commit has already run them.
   windows:
     name: windows-latest
-    if: github.event_name != 'workflow_dispatch' || inputs.windows
+    needs: changes
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.windows) ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true')
     runs-on: windows-latest
     defaults:
       run:
@@ -64,11 +197,6 @@ jobs:
           tool: cargo-deny
 
       - run: pnpm install --frozen-lockfile
-
-      # The user documentation (T-052): every relative link and `#anchor` of every Markdown
-      # file resolves. Dependency-free and about a second, so it runs before anything builds.
-      - name: Documentation links
-        run: pnpm check:links
 
       # The pinned server artifact (§3.5). `handoff-mcp` is private, so this needs the
       # cross-repository read token of T-010; it expires on 2027-09-07.
@@ -170,7 +298,10 @@ jobs:
   # push already ran it for the commit.
   security:
     name: security (windows-latest)
-    if: github.event_name != 'workflow_dispatch' || inputs.windows
+    needs: changes
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.windows) ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true')
     runs-on: windows-latest
     defaults:
       run:
@@ -224,7 +355,10 @@ jobs:
   # crate and not its dependencies. `docs/dev/ui.md` is the harness.
   ui:
     name: ui (windows-latest)
-    if: github.event_name != 'workflow_dispatch' || inputs.windows
+    needs: changes
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.windows) ||
+      (github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true')
     runs-on: windows-latest
     # Every attempt of every scenario is bounded by the suite; this bounds the job around it,
     # so a driver that hangs costs forty minutes rather than the six hours GitHub allows.

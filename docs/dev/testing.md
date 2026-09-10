@@ -7,6 +7,7 @@ to run it, and what stays a manual check. The commands CI runs are in the
 hand, [smoke.md](smoke.md).
 
 - [The suites](#the-suites)
+- [What runs on which push](#what-runs-on-which-push)
 - [The security suite](#the-security-suite)
 - [The report](#the-report)
 - [What the security suite leaves to others](#what-the-security-suite-leaves-to-others)
@@ -32,10 +33,41 @@ Every Rust suite runs from `src-tauri/`, after `node scripts/fetch-server.mjs` h
 | Automation channel | `cargo test --features e2e --test e2e_channel` | The transport of the e2e channel, which exists only with the feature; CI runs it in a step of its own. |
 | **Security** | `cargo test --test security -- --nocapture` | What the design's §11.7 asks for: [below](#the-security-suite). |
 | Frontend | `pnpm test` (repository root) | The components and the TypeScript in jsdom, the locale parity, the user documentation and its links. |
+| Documentation | `pnpm check:links` and `pnpm test src/__tests__/docs.test.ts` (repository root) | Every relative link and `#anchor` of every Markdown file resolves; `docs/` holds the user pages in both languages and both indexes link them; the pages say what the product promises (the firewall test, the process-tree watch, the WebView2 switches, the `ocrs` attribution, the crate notices). Part of `pnpm test`, and a job of its own in CI, `docs`, which runs on every push: [below](#what-runs-on-which-push). |
+| CI classifier | `pnpm test src/__tests__/ci.test.ts` | The script of the `changes` job of `ci.yml`, run under bash with `git` and `gh` faked: which pushes may leave the Windows jobs out, and the jobs that wait for its answer. |
 | UI (WebDriver) | `pnpm test:ui` (repository root) | The real window of a debug build with `--features e2e`, driven through `tauri-driver` and `msedgedriver` against fake server sessions and the fixture capture backend: the step view, collapse and expand, the request sheet, the preview, the settings pages, the consent screen. Its own job in CI; [ui.md](ui.md) is the harness. |
 | Installer hooks | `pnpm test src/__tests__/installer-hooks.test.ts` | `installer/windows/hooks.nsh` compiled with the real `makensis` and run against folders of its own, with a live process standing in for an agent's server: the in-place rename of FM-24, the uninstaller's cleanup, the application-data box, the login marker. Part of `pnpm test`, where it is skipped with a warning until the first `pnpm tauri build` has downloaded `makensis`; the `windows` job of CI runs it again after its bundle, and there a missing `makensis` fails. |
 | Release pipeline | `pnpm test src/__tests__/release.test.ts` | The two checks the release workflow starts with (the tag is the version, the changelog has its section), through their command line, and the decisions written in `release.yml`: the gate on the binary the setup was packed from, the report attached, only the drafting job allowed to write. |
 | End to end | `scripts\e2e.ps1` (workspace root) | Ten scenarios with a real Claude Code and a real build of the app, run by hand and not in CI: [e2e.md](e2e.md). |
+
+## What runs on which push
+
+`ci.yml` asks one question first, in a job of its own on Linux: did this push change anything
+but documentation? The job is `changes`, and `windows`, `security` and `ui` wait for its
+answer.
+
+| Event | Jobs |
+|---|---|
+| Push or pull request that changes documentation only | `changes` and `docs`; `windows`, `security` and `ui` show as *skipped*, and the run concludes `success` |
+| Push or pull request that changes anything else | `changes`, `docs`, `windows`, `security` and `ui` |
+| `workflow_dispatch` | `changes` and `macos`; `windows`, `security` and `ui` only when dispatched with `-f windows=true` |
+| Tag `v*` | `release.yml` alone: `ci.yml` runs on `main` and on pull requests |
+
+Documentation is `docs/**`, `README.md`, `CHANGELOG.md` and `LICENSE*` at the root, with one
+exception: the two notices pages, `docs/third-party-notices.md` and
+`docs/it/third-party-notices.md`, are generated from `Cargo.lock` and checked by a step of the
+`windows` job, so a change to either counts as code. Whatever `changes` cannot decide counts as
+code as well: a first push, a force push, a diff it cannot read or that lists nothing, and a
+push on top of a commit whose own run did not succeed. That last rule is there because a newer
+push cancels the run of the one before it: a documentation push must not turn `main` green over
+code that no Windows job passed. A file moved into or out of `docs/` counts under both of its
+paths. The allow-list is written in the workflow, where it acts, and `src/__tests__/ci.test.ts`
+runs that script.
+
+The `docs` job runs on every push and pull request, whatever the answer: the link check, and
+the two suites that read a file on the allow-list, `docs.test.ts` and `release.test.ts` (which
+reads `CHANGELOG.md`). A suite that starts reading one of those files belongs in that job's
+command, and `ci.test.ts` fails until it is there.
 
 ## The security suite
 
@@ -79,7 +111,8 @@ finish. The corpus section is the one §11.7 asks to be kept per release:
 `certain.precision`, `certain.recall`, `suspected.recall` and
 `suspected.false_positive_rate`, with the clean lines it flagged.
 
-In CI the `security` job runs the suite on Windows on every push, prints the report and keeps
+In CI the `security` job runs the suite on Windows on every push that changes code
+([above](#what-runs-on-which-push)), prints the report and keeps
 it as the artifact `security-report-windows`. The macOS leg is dispatch-only while macOS is
 deferred, and its `macos` job runs the suite as a step and keeps `security-report-macos`.
 The release workflow runs the suite once more on the tagged commit and attaches the report to

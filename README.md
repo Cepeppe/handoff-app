@@ -75,6 +75,11 @@ pnpm check:links    # every relative link of the Markdown resolves
 node scripts/third-party-notices.mjs --check   # the crate list of the notices is current
 ```
 
+CI runs all of them on a push that changes code. A push that changes only documentation runs
+the link check and the documentation tests alone, and its Windows jobs show as skipped:
+[`docs/dev/testing.md`](docs/dev/testing.md#what-runs-on-which-push) says what counts as
+documentation.
+
 After adding or bumping a Rust dependency, `pnpm notices` rewrites the crate list of
 `docs/third-party-notices.md` and `docs/it/third-party-notices.md`.
 
@@ -102,8 +107,8 @@ scripts\e2e.ps1     # from the workspace root: builds everything, then runs pnpm
 
 `docs/dev/e2e.md` is the harness, the traps and how to read a failure. The automation channel
 it drives is compiled only with `--features e2e`; `scripts/check-no-automation.mjs` proves a
-build without the feature carries none of it, on every push in CI and on the binary the
-release workflow publishes.
+build without the feature carries none of it, on every push in CI that changes code and on
+the binary the release workflow publishes.
 
 ### Releasing
 

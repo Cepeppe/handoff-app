@@ -142,8 +142,8 @@ not run, 2 the suite could not run.
 
 ## In CI
 
-The `ui` job of `ci.yml` runs on `windows-latest` on every push, on the runner's desktop
-session. It builds the application itself (neither binary of the `windows` job is one it can
+The `ui` job of `ci.yml` runs on `windows-latest` on every push that changes code
+([testing.md](testing.md#what-runs-on-which-push)), on the runner's desktop session. It builds the application itself (neither binary of the `windows` job is one it can
 drive), restores the `windows` job's Rust cache read-only, keeps `tauri-driver` in a cache of
 its own, fetches the `msedgedriver` of the runner's WebView2, and uploads `tests/ui/results/`
 as the artifact `ui-results` whatever happened.
