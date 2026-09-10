@@ -528,6 +528,13 @@ fn band(image: &RgbaImage, rect: Rect) -> RgbaImage {
 /// stop-hook double needed in `handoff-mcp` (`HANDOFF.md`, 2026-09-08): a peer with a
 /// real-time budget must meet something that is already warm.
 ///
+/// It stops at the first engine that answers, which is what [`select_and_run`] does too, so
+/// the one that is warmed is the one that will be used. Warming the rest is pure cost and it
+/// is not small: the Windows runner answers with its own engine in 54 ms and would then
+/// spend **49 s** loading the weights of a bundled engine it never reaches, twice per job.
+///
+/// [`select_and_run`]: handoff_app_lib::ocr::select_and_run
+///
 /// The answer is how many engines this machine has at all, which is the one thing that must
 /// not be zero: an installation with no language pack **and** no models is a broken build,
 /// not a slow one.
@@ -547,6 +554,9 @@ fn warm_the_engines(image: &RgbaImage) -> usize {
             started.elapsed(),
             if outcome.is_ok() { "ok" } else { "refused" }
         );
+        if outcome.is_ok() {
+            break;
+        }
     }
     available
 }
