@@ -11,6 +11,14 @@
  * | `HANDOFF_HOME` | `~/.handoff`: the token, the channel pipe (its name is a digest of this string), the runbooks |
  * | `HANDOFF_APP_DATA_DIR` | the database and the settings |
  * | `PATH` | gains the attempt's own `bin/`, first, where a scenario can put a stand-in `claude` |
+ * | `TEMP`, `TMP` | the attempt's own `tmp/`, where `msedgedriver` creates the session's WebView2 profile |
+ *
+ * The last row is how the driver and the runtime find each other. `msedgedriver` hands the
+ * WebView2 a profile folder of its own making under `TEMP` (`scoped_dir…\EBWebView`) with
+ * `--remote-debugging-port=0`, and waits for the runtime to write the port it chose into a
+ * `DevToolsActivePort` file there. Inside the attempt's root that folder is a known, writable,
+ * long path, it goes when the attempt goes, and when a session will not start it is the
+ * first place to look — `snapshot` below reads it.
  *
  * `USERPROFILE` is deliberately **not** redirected, although it is where the installation
  * adapter finds `~/.claude.json`. WebView2 and the Windows components it loads follow it too,
@@ -19,8 +27,7 @@
  * against the same build with and without the redirection. No scenario writes to the
  * adapter's files — the one that reaches the consent screen never presses Accept, and checks
  * that the machine's own files are what they were. `WEBVIEW2_USER_DATA_FOLDER` is not set
- * either: under the drivers the runtime keeps its profile beside the executable
- * (`handoff-app.exe.WebView2/`) whatever it says, and the window keeps nothing in it.
+ * either: the driver's own profile folder wins over it.
  *
  * Two settings are written through the automation channel before a scenario begins, and the
  * page is reloaded so the window reads them the way it reads them at every launch. The
@@ -60,12 +67,23 @@ export const APP_BINARY =
  */
 export const BUILD_COMMAND = 'pnpm tauri build --debug --no-bundle --features e2e';
 
+/** What an error says when the application could not be started at all. */
+export const START_FAILURE = 'the application could not be started under WebDriver';
+
 /** The two settings keys the setup writes (`ui_bridge::general`, `ui_bridge::install`). */
 const LANGUAGE_KEY = 'language';
 const ONBOARDED_KEY = 'onboarded';
 
 /** The executables a running Baton can be: a development build and an installed one. */
 const BATON_IMAGES = ['handoff-app.exe', 'Baton.exe'];
+
+/**
+ * How long a session may take to start before the machine is photographed.
+ *
+ * A healthy start is a second or two on a warm machine and about ten on a cold one;
+ * `msedgedriver` itself gives up at sixty.
+ */
+const SLOW_SESSION_MS = 20_000;
 
 /**
  * A terminal colour code, which the log carries when the subscriber decides it has a terminal.
@@ -85,6 +103,8 @@ export interface UiWorkspace {
   readonly appData: string;
   /** A folder put first on the application's `PATH`, empty unless a scenario fills it. */
   readonly bin: string;
+  /** `TEMP` and `TMP` of the drivers and the application. */
+  readonly temp: string;
 }
 
 /** A running application, its WebDriver session and its automation channel. */
@@ -108,8 +128,9 @@ export function makeWorkspace(id: string): UiWorkspace {
     home: join(root, 'home'),
     appData: join(root, 'appdata'),
     bin: join(root, 'bin'),
+    temp: join(root, 'tmp'),
   };
-  for (const folder of [workspace.home, workspace.appData, workspace.bin]) {
+  for (const folder of [workspace.home, workspace.appData, workspace.bin, workspace.temp]) {
     mkdirSync(folder, { recursive: true });
   }
   return workspace;
@@ -155,6 +176,8 @@ function environment(workspace: UiWorkspace): Record<string, string> {
   // Windows spells it `Path`, and Node keeps the spelling it found; one entry, whatever it is.
   const pathKey = Object.keys(child).find((name) => name.toUpperCase() === 'PATH') ?? 'Path';
   child[pathKey] = `${workspace.bin};${child[pathKey] ?? ''}`;
+  child['TEMP'] = workspace.temp;
+  child['TMP'] = workspace.temp;
   child['RUST_LOG'] = process.env['HANDOFF_UI_RUST_LOG'] ?? 'handoff_app_lib=debug';
   child['NO_COLOR'] = '1';
   return child;
@@ -185,6 +208,37 @@ function plain(text: string): string {
 }
 
 /**
+ * What the machine looks like while a session is slow to start.
+ *
+ * The four things that decide whether `msedgedriver` can reach the WebView2 it launched, read
+ * while it is still waiting: the processes of the drivers, of the application and of its
+ * WebView2 browser, with their command lines (is `--remote-debugging-port` there, and which
+ * profile folder); whether that profile has its `DevToolsActivePort` yet; the tail of the
+ * runtime's own `chrome_debug.log`, which the driver's `--enable-logging` writes beside it;
+ * and any WebView2 or Edge policy of the machine, which can switch remote debugging off.
+ * Only the application's own WebView2 is listed: every other program's is none of ours.
+ *
+ * Exported so it can be run by hand against a live attempt (`HANDOFF_UI_KEEP=1` keeps the
+ * root): a healthy session starts long before it is called, so a suite that passes never
+ * exercises it.
+ */
+export function snapshot(workspace: Pick<UiWorkspace, 'temp'>): string {
+  const temp = workspace.temp.replace(/'/gu, "''");
+  const script = [
+    "$apps = @(Get-CimInstance Win32_Process -Filter \"Name='handoff-app.exe'\" | ForEach-Object { $_.ProcessId })",
+    "Get-CimInstance Win32_Process | Where-Object { @('tauri-driver.exe','msedgedriver.exe','handoff-app.exe') -contains $_.Name -or ($_.Name -eq 'msedgewebview2.exe' -and $apps -contains $_.ParentProcessId) } | ForEach-Object { 'process {0} pid={1} parent={2}: {3}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, $_.CommandLine }",
+    `Get-ChildItem -LiteralPath '${temp}' -Recurse -Depth 4 -Force -ErrorAction SilentlyContinue | Where-Object { @('DevToolsActivePort','chrome_debug.log') -contains $_.Name } | ForEach-Object { 'file ' + $_.FullName + ' (' + $_.Length + ' bytes)' }`,
+    `Get-ChildItem -LiteralPath '${temp}' -Recurse -Depth 4 -Force -Filter chrome_debug.log -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 30 }`,
+    "foreach ($key in @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2','HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge')) { if (Test-Path $key) { 'policy ' + $key; Get-ItemProperty $key | Out-String } }",
+  ].join('; ');
+  const answer = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  return `${answer.stdout ?? ''}${answer.stderr ?? ''}`.trim();
+}
+
+/**
  * The product channel's endpoint, from the line the application logs when it binds.
  *
  * Read and never derived: the Windows pipe name is a digest of the user and of `HANDOFF_HOME`
@@ -199,7 +253,7 @@ function channelEndpointIn(text: string): string | null {
 /** An error carrying what the drivers and the application printed. */
 function withLog(what: string, cause: unknown, text: string): Error {
   const why = cause instanceof Error ? `: ${cause.message}` : '';
-  return new Error(`${what}${why}\n--- drivers and application (tail) ---\n${plain(text).slice(-3000)}`);
+  return new Error(`${what}${why}\n--- drivers and application ---\n${plain(text).slice(-20_000)}`);
 }
 
 /**
@@ -245,17 +299,26 @@ export async function startApp(
 
     // Smart App Control refuses a freshly linked executable at random on the development
     // machine and lets the same bytes through a moment later (`HANDOFF.md`, T-002); through
-    // the drivers it arrives as a browser that "failed to start". The e2e harness retries the
-    // spawn for the same reason, and so does this.
+    // the drivers it arrives as a browser that "failed to start". One more try is the remedy
+    // the e2e harness uses for the same reason. Not more: a session that fails twice fails
+    // for a reason a third try will not change, and each try can cost the driver's sixty
+    // seconds.
     for (let attempt = 1; session === undefined; attempt += 1) {
+      const slow = setTimeout(() => {
+        text +=
+          `\n[ui] no session after ${String(SLOW_SESSION_MS / 1000)} s; the machine meanwhile:\n` +
+          `${snapshot(workspace)}\n`;
+      }, SLOW_SESSION_MS);
       try {
         session = await Session.create(base, {
           browserName: 'wry',
           'tauri:options': { application: APP_BINARY },
         });
       } catch (cause) {
-        if (attempt >= 3) throw cause;
+        if (attempt >= 2) throw cause;
         text += `\n[ui] the session did not start (${cause instanceof Error ? cause.message : String(cause)}); retrying\n`;
+      } finally {
+        clearTimeout(slow);
       }
     }
 
@@ -312,6 +375,6 @@ export async function startApp(
   } catch (cause) {
     await session?.delete().catch(() => undefined);
     killTree(driver);
-    throw withLog('the application could not be started under WebDriver', cause, text);
+    throw withLog(START_FAILURE, cause, text);
   }
 }

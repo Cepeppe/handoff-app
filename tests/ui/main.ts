@@ -38,6 +38,7 @@ import {
   batonIsRunning,
   cleanUp,
   makeWorkspace,
+  START_FAILURE,
   startApp,
   type RunningApp,
 } from './app.ts';
@@ -56,7 +57,7 @@ const ATTEMPT_TIMEOUT_MS = 180_000;
 /** One run and, if it fails, one more. */
 const ATTEMPTS = 2;
 
-type Verdict = 'passed' | 'flaky' | 'failed';
+type Verdict = 'passed' | 'flaky' | 'failed' | 'not run';
 
 interface AttemptReport {
   readonly attempt: number;
@@ -280,12 +281,31 @@ async function main(argv: readonly string[]): Promise<number> {
       `tauri-driver ${TAURI_DRIVER_VERSION}`,
   );
   const reports: ScenarioReport[] = [];
-  for (const scenario of scenarios) {
+  for (const [index, scenario] of scenarios.entries()) {
     line(`  ...      ${scenario.id} — ${scenario.title}`);
     const report = await runScenario(scenario, tools);
     reports.push(report);
     const seconds = Math.round(report.attempts.reduce((sum, one) => sum + one.durationMs, 0) / 1000);
     line(`  ${report.verdict.toUpperCase().padEnd(8)} ${report.id} · ${String(seconds)}s`);
+
+    // A scenario whose every attempt died before the window existed says nothing about the
+    // window: the machine cannot start the application under the drivers, and every scenario
+    // after it would spend the same minutes learning the same thing. The rest are reported as
+    // not run, which is what they were, and the run fails.
+    if (report.attempts.every((one) => !one.ok && (one.error ?? '').startsWith(START_FAILURE))) {
+      line('ui: the drivers could not start the application in any attempt; the scenarios after this one are not run');
+      for (const skipped of scenarios.slice(index + 1)) {
+        reports.push({
+          id: skipped.id,
+          covers: skipped.covers,
+          title: skipped.title,
+          verdict: 'not run',
+          attempts: [],
+          facts: {},
+        });
+      }
+      break;
+    }
   }
 
   writeFileSync(

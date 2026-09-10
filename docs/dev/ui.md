@@ -84,8 +84,11 @@ temporary root, `HANDOFF_UI_RUST_LOG` changes what the application logs, and
 
 ## How a scenario works
 
-1. A temporary root with its own `HANDOFF_HOME` and `HANDOFF_APP_DATA_DIR`, and a `bin/` put
-   first on the application's `PATH`.
+1. A temporary root with its own `HANDOFF_HOME` and `HANDOFF_APP_DATA_DIR`, a `bin/` put first
+   on the application's `PATH`, and a `tmp/` that is the drivers' `TEMP`: `msedgedriver`
+   gives the WebView2 a profile folder of its own making there (`scoped_dir…\EBWebView`) with
+   `--remote-debugging-port=0`, and waits for the runtime to write the port into a
+   `DevToolsActivePort` file in it. That file is how the driver finds the window.
 2. `tauri-driver` is started with that environment — the application is `msedgedriver`'s child
    and inherits it — and a WebDriver session starts the application.
 3. Through the automation channel of the `e2e` build, the **language** is set to English and,
@@ -125,8 +128,17 @@ Every failed attempt leaves four files in `tests/ui/results/` (git-ignored): the
 screenshot of the window, its DOM, and what the drivers and the application printed. The
 report of the whole run is `tests/ui/results/last-run.json`.
 
-Exit codes: 0 every scenario passed (flaky ones included), 1 at least one failed twice, 2 the
-suite could not run.
+Two things keep a broken machine from costing a whole job. A session that has not started
+after twenty seconds gets the machine photographed while the driver is still waiting — the
+processes of the drivers, of the application and of its WebView2 browser with their command
+lines, whether the session's profile has its `DevToolsActivePort` yet, the tail of the
+runtime's own `chrome_debug.log`, and any WebView2 or Edge policy — and that goes into the
+error of the attempt (`app.ts`, `snapshot`). And a scenario whose every attempt died before
+the window existed stops the run: the scenarios after it are reported **not run**, because
+they would spend the same minutes learning the same thing.
+
+Exit codes: 0 every scenario passed (flaky ones included), 1 at least one failed twice or was
+not run, 2 the suite could not run.
 
 ## In CI
 
@@ -147,9 +159,10 @@ Each of these cost a run while the suite was written.
   file doesn't exist`, after exactly sixty seconds, every time. The suite leaves it alone; the
   onboarding scenario makes Claude Code "found" with a stand-in `claude.cmd` in its `bin/`,
   never presses Accept, and checks the machine's two files are byte for byte what they were.
-- **`WEBVIEW2_USER_DATA_FOLDER` is ignored under the drivers.** The runtime keeps its profile
-  beside the executable (`src-tauri/target/debug/handoff-app.exe.WebView2/`) whatever it says.
-  The window keeps nothing in it.
+- **`WEBVIEW2_USER_DATA_FOLDER` is ignored under the drivers.** `msedgedriver` hands the
+  runtime a `--user-data-dir` of its own making under `TEMP`, and that wins. Point `TEMP` at a
+  folder of your own instead, as the harness does, to know where the profile and its
+  `chrome_debug.log` are.
 - **The preview's four pixels are the capture's.** The canvas draws a 1300-pixel page at about
   a third of its size, so a "two-pixel" drag on screen is a box of about eight. A drag meant to
   be too short is sized from the scale on screen.
