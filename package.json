@@ -18,6 +18,8 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "check:server": "node scripts/fetch-server.mjs --check",
+    "check:links": "node scripts/check-links.mjs",
+    "notices": "node scripts/third-party-notices.mjs",
     "e2e": "node tests/e2e/main.ts",
     "tauri": "tauri"
   },

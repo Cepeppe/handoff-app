@@ -65,6 +65,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The user documentation (T-052): every relative link and `#anchor` of every Markdown
+      # file resolves. Dependency-free and about a second, so it runs before anything builds.
+      - name: Documentation links
+        run: pnpm check:links
+
       # The pinned server artifact (§3.5). `handoff-mcp` is private, so this needs the
       # cross-repository read token of T-010; it expires on 2027-09-07.
       - name: Fetch the pinned server
@@ -114,6 +119,12 @@ jobs:
       - name: cargo deny
         working-directory: src-tauri
         run: cargo deny check
+
+      # The crate list of `docs/third-party-notices.md` and of its Italian page is generated
+      # from the graph Cargo resolves for the shipped build; a dependency added or bumped
+      # without re-running the script would leave the notices describing another build.
+      - name: Third-party notices are current
+        run: node scripts/third-party-notices.mjs --check
 
       - name: Frontend tests
         run: pnpm test

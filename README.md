@@ -8,6 +8,10 @@ and the runbooks on the machine. It consumes `handoff-mcp` via a pinned release 
 repository is proprietary; see `LICENSE`. Status: work in progress, nothing is stable
 yet.
 
+The user documentation — installing, the consent screen, the overlay, screenshots, runbooks,
+the log, how to verify what Baton sends, troubleshooting and the third-party notices — is in
+[`docs/`](docs/index.md), in English and in Italian (`docs/it/`).
+
 ## Development
 
 ### Prerequisites
@@ -61,7 +65,12 @@ pnpm test           # frontend unit and component tests (vitest, jsdom)
 pnpm check          # svelte-check over the components and the TypeScript
 pnpm build          # svelte-check + the production frontend bundle
 pnpm tauri build --debug
+pnpm check:links    # every relative link of the Markdown resolves
+node scripts/third-party-notices.mjs --check   # the crate list of the notices is current
 ```
+
+After adding or bumping a Rust dependency, `pnpm notices` rewrites the crate list of
+`docs/third-party-notices.md` and `docs/it/third-party-notices.md`.
 
 And, when the change touches the channel, the store, the state machine, the hook decision,
 the capture pipeline or the tool contract, the end-to-end suite — ten scenarios against a
@@ -94,7 +103,8 @@ src-tauri/src/       Rust core, one module per area:
                        license  crash  i18n  ui_bridge  paths
 src-tauri/binaries/  the pinned server, named for Tauri (git-ignored)
 vendor/handoff-mcp/  the unpacked release artifact: binary and format files (git-ignored)
-scripts/             fetch-server and the pinning documentation
+scripts/             fetch-server and the pinning documentation, the link check, the notices
+docs/                the user documentation (English, Italian in it/); dev/ the test harnesses
 ```
 
 Two rules the layout depends on, both explained at the top of `src-tauri/src/lib.rs`:
@@ -109,8 +119,10 @@ Two rules the layout depends on, both explained at the top of `src-tauri/src/lib
   never translated twice and one key-parity test covers both.
 - **only `net::egress` may open a network connection.** `clippy.toml` disallows the HTTP
   and TCP types everywhere, `deny.toml` refuses the HTTP crates as dependencies, and the
-  webview CSP is `default-src 'self'` with no `connect-src`. The application makes zero
-  network connections today.
+  webview CSP is `default-src 'self'` with no `connect-src`. The application's own code
+  makes zero network connections today. The WebView2 runtime that draws the window is
+  another program with connections of its own: every window starts it with the switches of
+  `ui_bridge::WEBVIEW2_BROWSER_ARGS`, and `docs/verify-trust.md` says what remains.
 
 ### OCR
 
