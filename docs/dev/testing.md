@@ -64,6 +64,12 @@ code that no Windows job passed. A file moved into or out of `docs/` counts unde
 paths. The allow-list is written in the workflow, where it acts, and `src/__tests__/ci.test.ts`
 runs that script.
 
+The job prints its answer and the first reason it met on one line of its log:
+`code=false: documentation only, on top of a commit that passed`, or for example
+`code=true: .github/workflows/ci.yml is not documentation`. To read it before the whole run
+has ended, ask for the job's own log, `gh api repos/{owner}/{repo}/actions/jobs/<job id>/logs`;
+`gh run view --log` answers only once every job is done.
+
 The `docs` job runs on every push and pull request, whatever the answer: the link check, and
 the two suites that read a file on the allow-list, `docs.test.ts` and `release.test.ts` (which
 reads `CHANGELOG.md`). A suite that starts reading one of those files belongs in that job's
