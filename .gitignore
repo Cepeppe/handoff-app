@@ -21,6 +21,9 @@ coverage/
 *.log
 # The e2e report names a machine and a moment (tests/e2e/main.ts)
 tests/e2e/results/
+# The UI suite's drivers (tests/ui/tools.ts), and its report with the screenshots of failures
+tests/ui/.cache/
+tests/ui/results/
 
 # Local environment
 .env

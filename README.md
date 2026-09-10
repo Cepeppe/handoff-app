@@ -78,6 +78,19 @@ node scripts/third-party-notices.mjs --check   # the crate list of the notices i
 After adding or bumping a Rust dependency, `pnpm notices` rewrites the crate list of
 `docs/third-party-notices.md` and `docs/it/third-party-notices.md`.
 
+The WebDriver suite drives the real window — the step view, collapse, the request sheet, the
+preview, the settings, the consent screen — and runs in its own CI job, `ui`. By hand, on
+Windows, about a minute:
+
+```sh
+pnpm tauri build --debug --no-bundle --features e2e
+pnpm test:ui -- --setup   # once: tauri-driver, and the msedgedriver of this machine's WebView2
+pnpm test:ui
+```
+
+[`docs/dev/ui.md`](docs/dev/ui.md) is the harness, the three gestures it cannot make and what
+stands in for them, and its traps.
+
 And, when the change touches the channel, the store, the state machine, the hook decision,
 the capture pipeline or the tool contract, the end-to-end suite — ten scenarios against a
 **real** Claude Code and a real build of the app, about four minutes. It is run by hand, not

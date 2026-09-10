@@ -3,7 +3,8 @@
 This page is the map of the automated suites of this repository: what each one proves, how
 to run it, and what stays a manual check. The commands CI runs are in the
 [README](../../README.md#checks); the end-to-end harness has a page of its own,
-[e2e.md](e2e.md), and so does driving the built app by hand, [smoke.md](smoke.md).
+[e2e.md](e2e.md), and so do the WebDriver suite, [ui.md](ui.md), and driving the built app by
+hand, [smoke.md](smoke.md).
 
 - [The suites](#the-suites)
 - [The security suite](#the-security-suite)
@@ -31,6 +32,7 @@ Every Rust suite runs from `src-tauri/`, after `node scripts/fetch-server.mjs` h
 | Automation channel | `cargo test --features e2e --test e2e_channel` | The transport of the e2e channel, which exists only with the feature; CI runs it in a step of its own. |
 | **Security** | `cargo test --test security -- --nocapture` | What the design's §11.7 asks for: [below](#the-security-suite). |
 | Frontend | `pnpm test` (repository root) | The components and the TypeScript in jsdom, the locale parity, the user documentation and its links. |
+| UI (WebDriver) | `pnpm test:ui` (repository root) | The real window of a debug build with `--features e2e`, driven through `tauri-driver` and `msedgedriver` against fake server sessions and the fixture capture backend: the step view, collapse and expand, the request sheet, the preview, the settings pages, the consent screen. Its own job in CI; [ui.md](ui.md) is the harness. |
 | Installer hooks | `pnpm test src/__tests__/installer-hooks.test.ts` | `installer/windows/hooks.nsh` compiled with the real `makensis` and run against folders of its own, with a live process standing in for an agent's server: the in-place rename of FM-24, the uninstaller's cleanup, the application-data box, the login marker. Part of `pnpm test`, where it is skipped with a warning until the first `pnpm tauri build` has downloaded `makensis`; the `windows` job of CI runs it again after its bundle, and there a missing `makensis` fails. |
 | Release pipeline | `pnpm test src/__tests__/release.test.ts` | The two checks the release workflow starts with (the tag is the version, the changelog has its section), through their command line, and the decisions written in `release.yml`: the gate on the binary the setup was packed from, the report attached, only the drafting job allowed to write. |
 | End to end | `scripts\e2e.ps1` (workspace root) | Ten scenarios with a real Claude Code and a real build of the app, run by hand and not in CI: [e2e.md](e2e.md). |

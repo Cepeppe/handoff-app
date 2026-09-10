@@ -214,6 +214,78 @@ jobs:
           path: src-tauri/target/security-report.json
           if-no-files-found: warn
 
+  # The WebDriver suite of §11.4 (T-055): the real window, driven through `tauri-driver` and
+  # `msedgedriver` on the runner's desktop session, against fake server sessions and the
+  # fixture capture backend. It builds the app it drives itself — a debug build with
+  # `--features e2e`, through `tauri build` so the frontend is embedded — because neither
+  # binary of the `windows` job is one it can drive: the bundle carries no automation channel,
+  # and the positive control looks for the Vite dev server. The Rust cache is the `windows`
+  # job's, restored read-only as the `security` job does, so what is compiled here is this
+  # crate and not its dependencies. `docs/dev/ui.md` is the harness.
+  ui:
+    name: ui (windows-latest)
+    if: github.event_name != 'workflow_dispatch' || inputs.windows
+    runs-on: windows-latest
+    # Every attempt of every scenario is bounded by the suite; this bounds the job around it,
+    # so a driver that hangs costs forty minutes rather than the six hours GitHub allows.
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Rust toolchain
+        run: rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows
+          save-if: false
+
+      # `tauri-driver` is a crate the suite pins and installs into `tests/ui/.cache/`
+      # (`tests/ui/tools.ts`). The key is that file, so bumping the version installs the new one.
+      - uses: actions/cache@v4
+        with:
+          path: tests/ui/.cache/tauri-driver
+          key: tauri-driver-${{ runner.os }}-${{ hashFiles('tests/ui/tools.ts') }}
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fetch the pinned server
+        run: node scripts/fetch-server.mjs
+        env:
+          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+
+      - name: Build the app the suite drives
+        run: pnpm tauri build --debug --no-bundle --features e2e
+
+      # `tauri-driver` from the cache or from crates.io, and the `msedgedriver` of the runner's
+      # own WebView2 runtime, whose version is the runner image's to decide.
+      - name: WebDriver tools
+        run: node tests/ui/main.ts --setup
+
+      - name: UI suite
+        run: pnpm test:ui
+
+      # The report always; and a screenshot, the DOM, the error and the output of every failed
+      # attempt, the first attempt of a scenario that then passed included.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-results
+          path: tests/ui/results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # macOS is deferred (TASKS.md §0.4 item 7) and its minutes cost ten times as much, so
   # this leg runs only when it is dispatched by hand; T-059 makes it run on every push.
   # What it proves is that the `cfg(target_os = "macos")` branches written along the way

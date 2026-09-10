@@ -21,6 +21,7 @@
     "check:links": "node scripts/check-links.mjs",
     "notices": "node scripts/third-party-notices.mjs",
     "e2e": "node tests/e2e/main.ts",
+    "test:ui": "node tests/ui/main.ts",
     "tauri": "tauri"
   },
   "dependencies": {
