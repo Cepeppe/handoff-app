@@ -11,7 +11,7 @@
  * forget: that the agent ran at all, that the server registered, and that the log holds no
  * value the user typed and no secret the spec carried (§11.2, LOG-02).
  */
-import type { AgentRun } from './agent.ts';
+import type { AgentRun, AgentRunner } from './agent.ts';
 import type { Automation } from './automation.ts';
 import type { Workspace } from './app.ts';
 import { check, type Assertion } from './classify.ts';
@@ -23,6 +23,8 @@ export interface ScenarioContext {
   readonly workspace: Workspace;
   /** The automation channel of the running app. */
   readonly app: Automation;
+  /** The agent under test: Claude Code, or Codex for the Codex subset (T-067). */
+  readonly agent: AgentRunner;
   /** Values that must not appear anywhere in the log afterwards (§11.2). */
   readonly forbidden: string[];
   /** What was measured, for the report. Never a spec value. */
@@ -47,13 +49,14 @@ export interface Scenario {
 
 /** The agent ran to a result at all: the first assertion of every scenario. */
 export function wellFormed(run: AgentRun, id: string): Assertion {
+  const program = run.agent === 'codex' ? 'codex' : 'claude';
   const reason = run.timedOut
     ? 'the run was killed at the harness timeout'
     : run.result === undefined
-      ? 'stream-json carried no result message'
+      ? `${program}'s output carried no result`
       : run.exitCode === 0
         ? ''
-        : `claude exited ${String(run.exitCode)}`;
+        : `${program} exited ${String(run.exitCode)}`;
   return {
     id,
     what: 'the agent ran to a result',
@@ -77,6 +80,48 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
     'protocol',
     entry?.status === 'connected',
     `mcp_servers: ${JSON.stringify(init?.mcp_servers ?? null)}`,
+  );
+}
+
+/**
+ * The server registered, asked of whichever agent ran (A-01, SRV-20, ADPT-02).
+ *
+ * Claude Code lists its MCP servers on the `init` line of its transcript, which is what
+ * [`serverRegistered`] reads. Codex's `--json` stream has no such line, so for Codex the
+ * question is asked at the other end: the app's registry holds a session whose server
+ * resolved the `codex` row, with the client name Codex sends in its handshake (T-066). That is
+ * the stronger of the two answers — it is the registration itself, not the agent's report of
+ * it.
+ */
+export async function agentRegistered(run: AgentRun, app: Automation, id: string): Promise<Assertion> {
+  if (run.agent === 'claude-code') return serverRegistered(run, id);
+  const sessions = (await app.state()).sessions;
+  const codex = sessions.find((session) => session.agentId === 'codex');
+  return check(
+    id,
+    'the server registered with the app as a Codex session (SRV-20, ADPT-02)',
+    'protocol',
+    codex !== undefined && codex.clientName === 'codex-mcp-client',
+    `sessions: ${JSON.stringify(
+      sessions.map((session) => ({ agent: session.agentId, client: session.clientName })),
+    )}`,
+  );
+}
+
+/**
+ * The tab names the agent the way its capability row does (OPEN-02, ADPT-03).
+ *
+ * The name is the server's — `display_name` of the row it resolved, carried in `hello` — and
+ * never one this application keeps, which is why a second agent shows up correctly without a
+ * line of change in the overlay (T-067).
+ */
+export function tabNamesTheAgent(label: string, agent: AgentRunner, id: string): Assertion {
+  return check(
+    id,
+    `the tab names the agent as its capability row does, "${agent.displayName}" (OPEN-02)`,
+    'protocol',
+    label.startsWith(`${agent.displayName} · `),
+    `tab label: ${JSON.stringify(label)}`,
   );
 }
 

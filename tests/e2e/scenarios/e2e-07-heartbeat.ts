@@ -16,12 +16,12 @@
  * scenario that asserted 30 s would have been red for a correct implementation. `TASKS.md`
  * and `DEVIATIONS.md` carry the correction.
  */
-import { callsTo, startAgent, statuses } from '../agent.ts';
+import { callsTo, statuses } from '../agent.ts';
 import { sleep } from '../automation.ts';
 import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
 import { handoffOf, openPrompt, plantedSpec, REPORT_LINE, walkTheSteps } from '../specs.ts';
-import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
+import { agentRegistered, tabNamesTheAgent, wellFormed, type Scenario } from '../scenario.ts';
 import { outcomeOf } from './e2e-04-defer.ts';
 
 /** The tool timeout §11.5 names for this scenario. */
@@ -39,14 +39,14 @@ export const heartbeatScenario: Scenario = {
   title: 'a slow user gets an `in_progress` heartbeat and the resume re-attaches the call',
   timeoutMs: 420_000,
 
-  async run({ workspace, app, forbidden, facts, say }) {
+  async run({ workspace, app, agent, forbidden, facts, say }) {
     const planted = plantedSpec('07');
     forbidden.push(...planted.forbidden);
 
     const prompt = [
-      openPrompt(planted.spec),
+      openPrompt(planted.spec, agent),
       'If the status is "in_progress" the user is still working and this is not the end of it:',
-      'call mcp__handoff__handoff_to_user again immediately with {"resume": "<the handoff_id>"}',
+      `call ${agent.tool('handoff_to_user')} again immediately with {"resume": "<the handoff_id>"}`,
       'and wait again. Repeat that for as long as you keep getting "in_progress".',
       'Stop only when the outcome has "final": true.',
       REPORT_LINE,
@@ -54,7 +54,7 @@ export const heartbeatScenario: Scenario = {
 
     say(`starting the agent with HANDOFF_TOOL_TIMEOUT_MS=${String(TOOL_TIMEOUT_MS)}`);
     const startedAt = Date.now();
-    const agent = startAgent(workspace, {
+    const running = agent.start(workspace, {
       prompt,
       maxTurns: 16,
       toolTimeoutMs: TOOL_TIMEOUT_MS,
@@ -94,7 +94,7 @@ export const heartbeatScenario: Scenario = {
     await app
       .waitFor(`${id} is closed`, (seen) => handoffOf(seen, id)?.closedAt != null, 120_000)
       .catch(() => undefined);
-    const run = await agent;
+    const run = await running;
     facts['statuses'] = statuses(run);
     facts['total_ms'] = Date.now() - startedAt;
 
@@ -111,7 +111,8 @@ export const heartbeatScenario: Scenario = {
 
     return [
       wellFormed(run, 'E2E-7'),
-      serverRegistered(run, 'E2E-7'),
+      await agentRegistered(run, app, 'E2E-7'),
+      tabNamesTheAgent(handoff.tab.label, agent, 'E2E-7'),
       check(
         'E2E-7',
         'the blocked call comes back with status in_progress (TOOL-05)',

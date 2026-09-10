@@ -13,8 +13,13 @@
  * `sk_live_…` is what `stripe_secret_key` matches (§4.6), so the certain detector masks it
  * at ingress (§5.5) and no row of the log may hold it afterwards (LOG-02, DET-04).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { CLAUDE_CODE, type AgentRunner } from './agent.ts';
 import type { Automation, HandoffState } from './automation.ts';
 import { fixtureSecret, sentinel } from './db.ts';
+import { REPO_ROOT } from './paths.ts';
 
 /** A spec and the values the log must never hold afterwards. */
 export interface PlantedSpec {
@@ -68,11 +73,34 @@ export function plantedSpec(
 /** The verification sentence a scenario with a `verify` uses. */
 export const VERIFY_TEXT = 'The banner is listed as published in the announcements table.';
 
+/**
+ * The phrase only the no-hook variant of a `deferred` or `parked` instruction carries
+ * (§4.7.4, the tool contract's `no_stop_hook` rows): the server picks the variant from the
+ * `stop_hook` of the session's capability row.
+ */
+export const NO_HOOK_PHRASE = 'Nothing will remind you';
+
+/**
+ * A text of the English catalogue, `src/locales/en.json`.
+ *
+ * `state()` answers with the view the window draws, and the view carries catalogue keys; this
+ * is how a scenario reads the sentence a person would be shown for one of them.
+ */
+export function catalogueText(key: string): string | undefined {
+  const catalogue = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'src', 'locales', 'en.json'), 'utf8'),
+  ) as Record<string, string>;
+  return catalogue[key];
+}
+
 /** The prompt preamble every scenario shares: call the tool once, with this exact spec. */
-export function openPrompt(spec: Record<string, unknown>): string {
+export function openPrompt(
+  spec: Record<string, unknown>,
+  agent: Pick<AgentRunner, 'tool'> = CLAUDE_CODE,
+): string {
   return [
     'You are the coding agent in an automated end-to-end test of a handoff system.',
-    'Call the tool mcp__handoff__handoff_to_user exactly once with this exact argument,',
+    `Call the tool ${agent.tool('handoff_to_user')} exactly once with this exact argument,`,
     'copied verbatim and not modified in any way:',
     JSON.stringify({ spec }),
     'The call blocks while a person works through the steps; that is expected and you must wait for it.',

@@ -14,31 +14,31 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { callsTo, startAgent, statuses } from '../agent.ts';
+import { callsTo, statuses } from '../agent.ts';
 import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
 import { openPrompt, plantedSpec, REPORT_LINE, VERIFY_TEXT, walkTheSteps } from '../specs.ts';
-import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
+import { agentRegistered, tabNamesTheAgent, wellFormed, type Scenario } from '../scenario.ts';
 
 export const verifiedScenario: Scenario = {
   id: 'e2e-01-verified',
   covers: 'E2E-1',
   title: 'a handoff confirmed step by step and verified by the agent reaches `verified`',
 
-  async run({ workspace, app, forbidden, facts, say }) {
+  async run({ workspace, app, agent, forbidden, facts, say }) {
     const planted = plantedSpec('01', { verify: VERIFY_TEXT });
     forbidden.push(...planted.forbidden);
 
     const prompt = [
-      openPrompt(planted.spec),
+      openPrompt(planted.spec, agent),
       'When it returns, read the `status` field of the outcome.',
-      'If the status is "awaiting_verification", call mcp__handoff__handoff_verify once with',
+      `If the status is "awaiting_verification", call ${agent.tool('handoff_verify')} once with`,
       `{"handoff_id": "<the handoff_id from the outcome>", "verify": {"ok": true, "detail": "${VERIFY_TEXT}"}}.`,
       REPORT_LINE,
     ].join(' ');
 
     say('starting the agent');
-    const agent = startAgent(workspace, { prompt, maxTurns: 10 });
+    const running = agent.start(workspace, { prompt, maxTurns: 10 });
 
     const handoff = await app.theHandoff();
     const id = handoff.tab.id;
@@ -53,7 +53,7 @@ export const verifiedScenario: Scenario = {
       180_000,
     );
     const finalView = closed.handoffs.find((one) => one.tab.id === id);
-    const run = await agent;
+    const run = await running;
     facts['statuses'] = statuses(run);
     facts['duration_ms'] = run.durationMs;
 
@@ -72,7 +72,8 @@ export const verifiedScenario: Scenario = {
     const outcome = lastOutcome(run);
     return [
       wellFormed(run, 'E2E-1'),
-      serverRegistered(run, 'E2E-1'),
+      await agentRegistered(run, app, 'E2E-1'),
+      tabNamesTheAgent(handoff.tab.label, agent, 'E2E-1'),
       check(
         'E2E-1',
         'the agent calls handoff_to_user with the spec it was given',

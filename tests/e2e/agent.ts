@@ -115,6 +115,8 @@ export interface ToolResult {
 
 /** Everything one agent run produced. */
 export interface AgentRun {
+  /** Which agent produced it: the capability-table key its server resolves (§5.6). */
+  readonly agent: 'claude-code' | 'codex';
   readonly exitCode: number | null;
   readonly durationMs: number;
   readonly timedOut: boolean;
@@ -331,6 +333,7 @@ export function readRun(
   }
   const result = transcript.find((message) => message.type === 'result');
   return {
+    agent: 'claude-code',
     exitCode,
     durationMs,
     timedOut,
@@ -415,7 +418,7 @@ function imagesOf(content: unknown): ToolImage[] {
 }
 
 /** The outcome JSON inside a tool result, when the result was one. */
-function parseOutcome(text: string): Record<string, unknown> | undefined {
+export function parseOutcome(text: string): Record<string, unknown> | undefined {
   const trimmed = text.trim();
   if (!trimmed.startsWith('{')) return undefined;
   try {
@@ -446,3 +449,31 @@ export function statuses(run: AgentRun): string[] {
 export function callsTo(run: AgentRun, tool: string): ToolUse[] {
   return run.toolUses.filter((use) => use.name === `mcp__${MCP_SERVER_NAME}__${tool}`);
 }
+
+/**
+ * The agent a scenario runs against (T-067): how it is started, and how a prompt names our
+ * tools to it.
+ *
+ * Claude Code is the default and the only agent of E2E-3, 5, 6, 10 and 11; Codex runs the
+ * subset of `scenarios/index.ts` through `codex.ts`. Both answer the same `AgentRun`, with a
+ * tool use named `mcp__handoff__<tool>` whichever agent made it, so an assertion reads the
+ * same against either.
+ */
+export interface AgentRunner {
+  /** The capability-table key the server resolves for this agent (§5.6). */
+  readonly id: 'claude-code' | 'codex';
+  /** The name its capability row carries, which is what the tab of its session shows. */
+  readonly displayName: string;
+  /** Starts one run. Not awaited straight away: the harness plays the user meanwhile. */
+  start(workspace: Workspace, options: AgentOptions): Promise<AgentRun>;
+  /** How a prompt names one of our tools to this agent. */
+  tool(name: string): string;
+}
+
+/** Claude Code, exactly as every scenario of T-043 has run it. */
+export const CLAUDE_CODE: AgentRunner = {
+  id: 'claude-code',
+  displayName: 'Claude Code',
+  start: startAgent,
+  tool: (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
+};

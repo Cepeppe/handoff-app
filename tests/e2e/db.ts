@@ -84,17 +84,18 @@ export class Log {
     );
   }
 
-  /** The request queue (§7.7). */
+  /** The request queue (§7.7), closed entries included, with the session each was given. */
   requests(): {
     id: string;
     text: string;
+    session_ref: string | null;
     linked_handoff_id: string | null;
     about_handoff_id: string | null;
     delivered_via: string | null;
   }[] {
     return this.rows(
-      'SELECT id, text, linked_handoff_id, about_handoff_id, delivered_via FROM user_requests ' +
-        'ORDER BY created_at, id',
+      'SELECT id, text, session_ref, linked_handoff_id, about_handoff_id, delivered_via ' +
+        'FROM user_requests ORDER BY created_at, id',
     );
   }
 

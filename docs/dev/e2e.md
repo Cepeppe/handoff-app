@@ -2,7 +2,8 @@
 
 `pnpm e2e` runs the scenarios of the design's §11.5 against a **real Claude Code** and a
 **real build of the app**, with the person at the machine played by an automation channel
-that only exists in an `--features e2e` build.
+that only exists in an `--features e2e` build. `pnpm e2e -- --agent codex` runs a subset of
+them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067).
 
 It is the only check that exercises the whole system at once. `cargo test` drives the core
 with a fake server on one side and a fake window on the other; the frontend suite draws
@@ -18,6 +19,7 @@ secret is provisioned for a real agent (`TASKS.md` §0.4 item 9), and `e2e.yml` 
 turning it on later is a secret rather than a task.
 
 - [What it runs](#what-it-runs)
+- [The Codex subset](#the-codex-subset)
 - [Running it](#running-it)
 - [How a scenario works](#how-a-scenario-works)
 - [The automation channel](#the-automation-channel)
@@ -58,6 +60,38 @@ control. On a machine whose engine cannot read the planted key even unredacted, 
 is reported as a failing **note** and the check above it is vacuous rather than green — the
 same rule §11.7 takes for the glyph-leak pass.
 
+## The Codex subset
+
+`pnpm e2e -- --agent codex` runs five scenarios against the real Codex CLI (`tests/e2e/codex.ts`),
+the subset §13 M7 asks of every adapter:
+
+| Scenario | What it proves for Codex |
+|---|---|
+| `e2e-01-verified` | the happy path and the verification, exactly as for Claude Code |
+| `e2e-02-question` | Ask comes back as `status: question`, and Codex's reply lands on the step |
+| `e2e-04-defer` | a deferral comes back as `deferred` with the **no-hook** instruction ("Nothing will remind you"), and Codex's own resume takes the tab back to `active` |
+| `e2e-07-heartbeat` | `in_progress` at the 50 s floor, and the resume re-attaches |
+| `e2e-09-request-clipboard` | a request typed with no session running reaches Codex through the clipboard — the harness reads the clipboard back and starts Codex with it, as Ctrl+V would — and the handoff adopts its id; no hook row exists |
+
+E2E-9 has its own shape because Codex runs no end-of-turn hook (the `codex` row of
+`handoff-mcp` says `stop_hook: false`): the clipboard is the whole of the delivery, and the
+person who pastes is the whole of the transport. E2E-5 and E2E-10 are about what the Stop hook
+says, which a Codex session never hears. Every Codex scenario also checks that the session
+registered as Codex and that its tab is labelled *Codex CLI* — the name the capability row
+carries in `hello`, which the overlay never keeps a list of.
+
+Before the scenarios, a **preflight** hands the golden `config.toml` of
+`src-tauri/tests/fixtures/install/codex-empty/out/` — byte for byte what the installer writes,
+which `tests/install_golden.rs` pins — to the real `codex mcp get` in a throw-away
+`CODEX_HOME`, and checks the command, the arguments, both variables, `tool_timeout_sec` and
+the approval mode. The scenarios cannot prove that themselves: they must stay off the user's
+own configuration, so they declare the server with `-c` overrides holding the same values.
+
+Every `codex exec` runs with the isolation the Codex canary of `handoff-mcp` measured:
+`--ignore-user-config` (it keeps the login), `apps` and `plugins` disabled with the browser,
+computer-use, image-generation and sub-agent features, `--ephemeral`, and the `read-only`
+sandbox. The report is `tests/e2e/results/last-run-codex.json`, beside the Claude Code one.
+
 ## Running it
 
 From the workspace root, which builds everything first:
@@ -65,6 +99,7 @@ From the workspace root, which builds everything first:
 ```powershell
 scripts\e2e.ps1                    # all ten
 scripts\e2e.ps1 e2e-01-verified    # one
+scripts\e2e.ps1 -Agent codex       # the Codex subset
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
@@ -74,6 +109,7 @@ Or, with the build already done, from `handoff-app`:
 ```bash
 pnpm e2e
 pnpm e2e -- e2e-05-parked
+pnpm e2e -- --agent codex
 pnpm e2e -- --list
 ```
 
@@ -84,15 +120,16 @@ Four things must exist, and `missingPrerequisites()` names the two it can check:
 3. `dist/`, from `pnpm build` — a release binary loads it, a debug one looks for a Vite dev
    server on port 1420 and comes up empty (the T-040 handoff entry), which is why the suite
    uses the release profile;
-4. `claude` on `PATH`, logged in.
+4. `claude` on `PATH`, logged in — or `codex`, logged in, for the Codex subset.
 
-Environment: `HANDOFF_E2E_MODEL` pins the model (default `sonnet`), `HANDOFF_E2E_KEEP=1`
-keeps each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry at another server
-binary, `HANDOFF_E2E_RUST_LOG` changes what the app logs.
+Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
+`HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`, at low reasoning effort),
+`HANDOFF_E2E_KEEP=1` keeps each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry
+at another server binary, `HANDOFF_E2E_RUST_LOG` changes what the app logs.
 
 A whole run is about four minutes and a few cents. The report is
-`tests/e2e/results/last-run.json` (git-ignored): verdicts, every assertion, the measured
-facts, and the **transcript ids** — with which the agent's own transcript can be read at
+`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json` for the Codex subset):
+verdicts, every assertion, the measured facts, and the **transcript ids** — with which the agent's own transcript can be read at
 `~/.claude/projects/<slug>/<session-id>.jsonl`, the one place a hook error is written down.
 
 ## How a scenario works
@@ -219,3 +256,15 @@ Each of these cost a run.
 - **An unref'd timer empties the event loop.** A scenario spends most of its life waiting for
   a model; with the polling timer unref'd, Node exits with "unsettled top-level await" and no
   other explanation.
+- **A plain `codex exec` reaches the owner's accounts.** Apps and plugins are on by default
+  and a `-c mcp_servers.…` override merges with the user's own servers, so the isolation flags
+  of `tests/e2e/codex.ts` are never optional (the T-066 handoff entry).
+- **Without `default_tools_approval_mode = "approve"`, `codex exec` refuses our tools** with
+  "MCP tool call requires approval, but approval policy is never", which reads like a model
+  that never called them.
+- **Codex keeps no transcript of an `--ephemeral` run.** The `--json` stream is written to
+  `agent-codex-<thread id>.jsonl` in the run's root, and `HANDOFF_E2E_KEEP=1` is the only way
+  to read it afterwards. There is no `--max-turns`: the harness timeout is the bound.
+- **The clipboard is read, not composed, in `e2e-09-request-clipboard`**: the sentence the
+  harness pastes is the one the app rendered, in the app's language. A person copying
+  something else during the run would change what Codex is given.

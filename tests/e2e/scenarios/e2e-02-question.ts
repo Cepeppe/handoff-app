@@ -6,12 +6,12 @@
  * continue shape; the reply appears on the step the user is standing on, and the round the
  * question happened in is still the same round (VER-09).
  */
-import { callsTo, startAgent, statuses } from '../agent.ts';
+import { callsTo, statuses } from '../agent.ts';
 import type { HandoffState } from '../automation.ts';
 import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
 import { handoffOf, openPrompt, plantedSpec, REPORT_LINE, walkTheSteps } from '../specs.ts';
-import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
+import { agentRegistered, tabNamesTheAgent, wellFormed, type Scenario } from '../scenario.ts';
 
 /** What the user types into the Ask sheet. Distinctive, so the reply can be traced to it. */
 export const QUESTION = 'Which announcement channel should this banner go to?';
@@ -24,21 +24,21 @@ export const questionScenario: Scenario = {
   covers: 'E2E-2',
   title: 'a question from the overlay comes back to the agent and its reply lands on the step',
 
-  async run({ workspace, app, forbidden, facts, say }) {
+  async run({ workspace, app, agent, forbidden, facts, say }) {
     const planted = plantedSpec('02');
     forbidden.push(...planted.forbidden);
 
     const prompt = [
-      openPrompt(planted.spec),
+      openPrompt(planted.spec, agent),
       'When the call returns with status "question", the user asked something on the current step.',
-      `Answer it by calling mcp__handoff__handoff_to_user again with {"handoff_id": "<the handoff_id>", "reply": "${ANSWER}"}.`,
+      `Answer it by calling ${agent.tool('handoff_to_user')} again with {"handoff_id": "<the handoff_id>", "reply": "${ANSWER}"}.`,
       'Send that reply text exactly, with no additions. Then keep waiting: the call blocks again.',
       'Repeat until the status you get back has "final": true.',
       REPORT_LINE,
     ].join(' ');
 
     say('starting the agent');
-    const agent = startAgent(workspace, { prompt, maxTurns: 12 });
+    const running = agent.start(workspace, { prompt, maxTurns: 12 });
 
     const handoff = await app.theHandoff();
     const id = handoff.tab.id;
@@ -65,7 +65,7 @@ export const questionScenario: Scenario = {
       (seen) => handoffOf(seen, id)?.closedAt != null,
       120_000,
     );
-    const run = await agent;
+    const run = await running;
     facts['statuses'] = statuses(run);
 
     const log = new Log(workspace);
@@ -76,7 +76,8 @@ export const questionScenario: Scenario = {
     const questionOutcome = questionOutcomeOf(run);
     return [
       wellFormed(run, 'E2E-2'),
-      serverRegistered(run, 'E2E-2'),
+      await agentRegistered(run, app, 'E2E-2'),
+      tabNamesTheAgent(handoff.tab.label, agent, 'E2E-2'),
       check(
         'E2E-2',
         'the blocking call comes back with status question (RESP-04, TOOL-04)',

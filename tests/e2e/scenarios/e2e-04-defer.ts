@@ -6,11 +6,20 @@
  * `DEVIATIONS.md` records under T-034, and the one thing an agent that defers and returns
  * must find. The user then finishes the round and the handoff waits for the verification.
  */
-import { callsTo, startAgent, statuses } from '../agent.ts';
+import { callsTo, statuses } from '../agent.ts';
 import { check, type Assertion } from '../classify.ts';
 import { Log } from '../db.ts';
-import { handoffOf, openPrompt, plantedSpec, REPORT_LINE, VERIFY_TEXT, walkTheSteps } from '../specs.ts';
-import { serverRegistered, wellFormed, type Scenario } from '../scenario.ts';
+import {
+  catalogueText,
+  handoffOf,
+  NO_HOOK_PHRASE,
+  openPrompt,
+  plantedSpec,
+  REPORT_LINE,
+  VERIFY_TEXT,
+  walkTheSteps,
+} from '../specs.ts';
+import { agentRegistered, tabNamesTheAgent, wellFormed, type Scenario } from '../scenario.ts';
 
 /** The reason the user types into the Defer sheet. */
 export const DEFER_REASON = 'I do not have the console open right now.';
@@ -20,22 +29,22 @@ export const deferScenario: Scenario = {
   covers: 'E2E-4',
   title: 'a deferred handoff comes back to `active` when the agent resumes it',
 
-  async run({ workspace, app, forbidden, facts, say }) {
+  async run({ workspace, app, agent, forbidden, facts, say }) {
     const planted = plantedSpec('04', { verify: VERIFY_TEXT });
     forbidden.push(...planted.forbidden);
 
     const prompt = [
-      openPrompt(planted.spec),
+      openPrompt(planted.spec, agent),
       'If the call returns with status "deferred", the user postponed the work.',
-      'Follow the instruction you were given: call mcp__handoff__handoff_to_user again with',
+      `Follow the instruction you were given: call ${agent.tool('handoff_to_user')} again with`,
       '{"resume": "<the handoff_id>"} and wait again.',
-      'If the status becomes "awaiting_verification", call mcp__handoff__handoff_verify once with',
+      `If the status becomes "awaiting_verification", call ${agent.tool('handoff_verify')} once with`,
       `{"handoff_id": "<the handoff_id>", "verify": {"ok": true, "detail": "${VERIFY_TEXT}"}}.`,
       REPORT_LINE,
     ].join(' ');
 
     say('starting the agent');
-    const agent = startAgent(workspace, { prompt, maxTurns: 12 });
+    const running = agent.start(workspace, { prompt, maxTurns: 12 });
 
     const handoff = await app.theHandoff();
     const id = handoff.tab.id;
@@ -77,7 +86,7 @@ export const deferScenario: Scenario = {
     await app
       .waitFor(`${id} is closed`, (seen) => handoffOf(seen, id)?.closedAt != null, 120_000)
       .catch(() => waiting);
-    const run = await agent;
+    const run = await running;
     facts['statuses'] = statuses(run);
 
     const log = new Log(workspace);
@@ -86,9 +95,14 @@ export const deferScenario: Scenario = {
     log.close();
 
     const deferredOutcome = outcomeOf(run, 'deferred');
+    const deferredInstruction =
+      typeof deferredOutcome?.['instruction'] === 'string' ? deferredOutcome['instruction'] : '';
+    const bannerKey = facts['banner_when_deferred'];
+    const bannerText = typeof bannerKey === 'string' ? catalogueText(bannerKey) : undefined;
     return [
       wellFormed(run, 'E2E-4'),
-      serverRegistered(run, 'E2E-4'),
+      await agentRegistered(run, app, 'E2E-4'),
+      tabNamesTheAgent(handoff.tab.label, agent, 'E2E-4'),
       check(
         'E2E-4',
         'the blocking call comes back with status deferred (RESP-05)',
@@ -140,6 +154,26 @@ export const deferScenario: Scenario = {
         'protocol',
         handoffsInTheLog === 1 && row !== undefined,
         `handoffs in the log: ${String(handoffsInTheLog)}`,
+      ),
+      // The server picks the instruction's variant from the row's `stop_hook` (§4.7.4): the
+      // no-hook one for Codex, which tells the agent that nothing will remind it (FM-03), and
+      // the Stop-hook one for Claude Code, whose row promises the hook.
+      check(
+        'E2E-4',
+        agent.id === 'codex'
+          ? 'the deferred instruction is the no-hook one: nothing will remind the agent (FM-03)'
+          : "the deferred instruction is the Stop-hook one the agent's row promises (§4.7.4)",
+        'protocol',
+        deferredOutcome === undefined ||
+          (agent.id === 'codex') === deferredInstruction.includes(NO_HOOK_PHRASE),
+        `instruction: ${JSON.stringify(deferredInstruction)}`,
+      ),
+      check(
+        'E2E-4',
+        'the banner the window draws while it is deferred promises no hook (ADPT-04)',
+        'protocol',
+        bannerText !== undefined && !bannerText.toLowerCase().includes('hook'),
+        `${String(bannerKey)}: ${JSON.stringify(bannerText)}`,
       ),
     ] satisfies Assertion[];
   },

@@ -1,20 +1,29 @@
 name: e2e
 
-# The end-to-end suite of §11.5, against the real Claude Code.
+# The end-to-end suite of §11.5, against the real Claude Code, and its Codex subset (T-067)
+# against the real Codex CLI.
 #
 # `workflow_dispatch` only, and it will stay that way until the owner decides otherwise:
-# running a real agent in CI needs an `ANTHROPIC_API_KEY`, and `TASKS.md` §0.4 item 9 records
-# the decision not to provision one — the suite is run by hand with `scripts/e2e.ps1` after
-# every Claude Code update, and the result is recorded in `docs/dev/e2e.md`. This file exists
-# so that turning it on later is a secret and not a task (T-056 is that task).
+# running a real agent in CI needs an API key, and `TASKS.md` §0.4 item 9 records the decision
+# not to provision one — the suite is run by hand with `scripts/e2e.ps1` after every Claude
+# Code update, and the result is recorded in `docs/dev/e2e.md`. This file exists so that
+# turning it on later is a secret and not a task (T-056 is that task): `ANTHROPIC_API_KEY` for
+# Claude Code, `OPENAI_API_KEY` for Codex, the same two names the canaries of `handoff-mcp`
+# read.
 #
-# Without the secret every step below is skipped and the job is green, which is deliberate:
-# a dispatch by somebody who has not read this should say "nothing to run", not fail.
+# Without the key of the chosen agent every step below is skipped and the job is green, which
+# is deliberate: a dispatch by somebody who has not read this should say "nothing to run",
+# not fail.
 on:
   workflow_dispatch:
     inputs:
+      agent:
+        description: 'claude-code runs every scenario; codex runs the Codex subset (T-067)'
+        type: choice
+        options: [claude-code, codex]
+        default: claude-code
       scenarios:
-        description: 'Scenario ids, space separated; empty runs all nine'
+        description: "Scenario ids, space separated; empty runs all of the chosen agent's"
         type: string
         default: ''
 
@@ -35,14 +44,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Is there a key to run an agent with?
+      - name: Is there a key to run the agent with?
         id: gate
         env:
+          AGENT: ${{ inputs.agent }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+          if [ "$AGENT" = "codex" ]; then
+            name=OPENAI_API_KEY; key="${OPENAI_API_KEY:-}"
+          else
+            name=ANTHROPIC_API_KEY; key="${ANTHROPIC_API_KEY:-}"
+          fi
+          if [ -z "$key" ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "No ANTHROPIC_API_KEY: the e2e suite is run locally (TASKS.md §0.4 item 9)." >> "$GITHUB_STEP_SUMMARY"
+            echo "No $name: the e2e suite is run locally (TASKS.md §0.4 item 9)." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
@@ -89,19 +105,33 @@ jobs:
         run: cargo build --release --features e2e --bin handoff-app
 
       - name: Install Claude Code
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true' && inputs.agent != 'codex'
         run: npm install -g @anthropic-ai/claude-code
+
+      # The Codex subset: the published CLI, logged in with the API key the way the Codex
+      # canary of `handoff-mcp` does it (`codex login --with-api-key` reads the key on stdin).
+      # The harness runs every `codex exec` with `--ignore-user-config`, apps and plugins off.
+      - name: Install Codex
+        if: steps.gate.outputs.run == 'true' && inputs.agent == 'codex'
+        run: npm install --global @openai/codex
+
+      - name: Log Codex in with the API key
+        if: steps.gate.outputs.run == 'true' && inputs.agent == 'codex'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: printenv OPENAI_API_KEY | codex login --with-api-key
 
       - name: Run the scenarios
         if: steps.gate.outputs.run == 'true'
-        run: pnpm e2e -- ${{ inputs.scenarios }}
+        run: pnpm e2e -- --agent "$AGENT" ${{ inputs.scenarios }}
         env:
+          AGENT: ${{ inputs.agent }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: The report
         if: steps.gate.outputs.run == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report
-          path: tests/e2e/results/last-run.json
+          name: e2e-report-${{ inputs.agent }}
+          path: tests/e2e/results/*.json
           if-no-files-found: ignore

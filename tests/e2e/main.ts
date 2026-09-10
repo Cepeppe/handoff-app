@@ -3,41 +3,74 @@
  *
  * It runs the scenarios of `scenarios/`, each in its own isolated app instance, classifies
  * every run, retries a model failure exactly once (§11.5), prints a report on stderr and
- * writes the whole thing to `tests/e2e/results/last-run.json`, which is git-ignored because
- * it names a machine and a moment.
+ * writes the whole thing to `tests/e2e/results/`, which is git-ignored because it names a
+ * machine and a moment.
  *
  * ```
- * pnpm e2e                       # every scenario
- * pnpm e2e -- e2e-01-verified    # only these
- * pnpm e2e -- --list             # what exists, without running anything
+ * pnpm e2e                          # every scenario, against Claude Code
+ * pnpm e2e -- e2e-01-verified       # only these
+ * pnpm e2e -- --agent codex         # the Codex subset, against the Codex CLI (T-067)
+ * pnpm e2e -- --list                # what exists, without running anything
  * ```
  *
- * Environment: `HANDOFF_E2E_MODEL` pins the model (default `sonnet`), `HANDOFF_E2E_KEEP=1`
- * keeps each run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER`
- * points the MCP entry at a server binary other than the pinned one.
+ * Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
+ * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_KEEP=1` keeps each
+ * run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the MCP
+ * entry at a server binary other than the pinned one.
  *
  * Exit codes: **0** every scenario passed · **1** at least one failed · **2** the harness
- * could not run (nothing built, no `claude`, an unknown scenario id).
+ * could not run (nothing built, no agent on PATH, an unknown scenario id or agent).
  *
- * These runs cost real Claude usage and real minutes. Nothing here retries more than §11.5
+ * These runs cost real usage and real minutes. Nothing here retries more than §11.5
  * allows, and an app is started and stopped per scenario rather than shared: a scenario that
  * inherited another one's database would be asserting on somebody else's handoffs.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { transcriptIds } from './agent.ts';
+import { CLAUDE_CODE, DEFAULT_MODEL, transcriptIds, type AgentRunner } from './agent.ts';
 import { cleanUp, makeWorkspace, startApp } from './app.ts';
 import { classify, failures, label, reported, shouldRetry, type Assertion, type RunVerdict } from './classify.ts';
+import { CODEX, CODEX_DEFAULT_MODEL, codexOnPath, codexReadsTheInstalledEntry } from './codex.ts';
 import { missingPrerequisites, REPO_ROOT } from './paths.ts';
 import { logInvariants, zeroEgress, type Scenario } from './scenario.ts';
-import { SCENARIOS } from './scenarios/index.ts';
+import { CODEX_SCENARIOS, SCENARIOS } from './scenarios/index.ts';
 
-/** Where the report is written. Git-ignored. */
-export const RESULTS_FILE = join(REPO_ROOT, 'tests', 'e2e', 'results', 'last-run.json');
+/** Where the reports are written. Git-ignored. */
+export const RESULTS_DIR = join(REPO_ROOT, 'tests', 'e2e', 'results');
 
 /** How long a scenario may take, app and agent included, unless it asks for more. */
 export const DEFAULT_SCENARIO_TIMEOUT_MS = 360_000;
+
+/**
+ * The agents the suite runs against: what each one runs, on which model, and where its report
+ * goes. One report file per agent, so a Codex run never overwrites the Claude Code report the
+ * T-043 procedure records after every Claude Code update.
+ */
+const AGENTS: Readonly<
+  Record<
+    string,
+    {
+      readonly runner: AgentRunner;
+      readonly scenarios: readonly Scenario[];
+      readonly model: () => string;
+      readonly results: string;
+    }
+  >
+> = {
+  'claude-code': {
+    runner: CLAUDE_CODE,
+    scenarios: SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_MODEL'] ?? DEFAULT_MODEL,
+    results: 'last-run.json',
+  },
+  codex: {
+    runner: CODEX,
+    scenarios: CODEX_SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_CODEX_MODEL'] ?? CODEX_DEFAULT_MODEL,
+    results: 'last-run-codex.json',
+  },
+};
 
 interface ScenarioReport {
   readonly id: string;
@@ -76,7 +109,10 @@ async function within<T>(what: string, ms: number, work: Promise<T>): Promise<T>
  * than of a flow, so both run after every scenario instead of in the one that seemed
  * relevant, and both read the database after the app has stopped writing it.
  */
-async function attempt(scenario: Scenario): Promise<{ assertions: Assertion[]; facts: Record<string, unknown> }> {
+async function attempt(
+  scenario: Scenario,
+  agent: AgentRunner,
+): Promise<{ assertions: Assertion[]; facts: Record<string, unknown> }> {
   const workspace = makeWorkspace(scenario.id.replace(/[^a-z0-9]/giu, ''));
   transcriptIds.length = 0;
   const forbidden: string[] = [];
@@ -91,6 +127,7 @@ async function attempt(scenario: Scenario): Promise<{ assertions: Assertion[]; f
       scenario.run({
         workspace,
         app: app.automation,
+        agent,
         forbidden,
         facts,
         say: (what) => line(`             · ${what}`),
@@ -122,7 +159,7 @@ async function attempt(scenario: Scenario): Promise<{ assertions: Assertion[]; f
 }
 
 /** One scenario, with §11.5's single retry for a model failure and nothing more. */
-async function runScenario(scenario: Scenario): Promise<ScenarioReport> {
+async function runScenario(scenario: Scenario, agent: AgentRunner): Promise<ScenarioReport> {
   const started = Date.now();
   let tries = 0;
   let assertions: Assertion[] = [];
@@ -132,7 +169,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioReport> {
   do {
     tries += 1;
     if (tries > 1) line('             model failure, retrying once (§11.5)');
-    const attempted = await attempt(scenario);
+    const attempted = await attempt(scenario, agent);
     assertions = attempted.assertions;
     facts = attempted.facts;
     verdict = classify(assertions);
@@ -165,61 +202,94 @@ function report(scenario: ScenarioReport): void {
 }
 
 async function main(argv: readonly string[]): Promise<number> {
-  const wanted = argv.filter((argument) => !argument.startsWith('--'));
+  const agentAt = argv.indexOf('--agent');
+  const agentId = agentAt === -1 ? 'claude-code' : (argv[agentAt + 1] ?? '');
+  const chosen = AGENTS[agentId];
+  if (chosen === undefined) {
+    line(`e2e: no agent named "${agentId}". The agents are ${Object.keys(AGENTS).join(', ')}.`);
+    return 2;
+  }
+  const wanted = argv.filter(
+    (argument, index) => !argument.startsWith('--') && !(agentAt !== -1 && index === agentAt + 1),
+  );
 
   if (argv.includes('--list')) {
-    for (const scenario of SCENARIOS) line(`${scenario.id.padEnd(26)} ${scenario.covers}  ${scenario.title}`);
+    for (const scenario of chosen.scenarios) line(`${scenario.id.padEnd(26)} ${scenario.covers}  ${scenario.title}`);
     return 0;
   }
 
   const missing = missingPrerequisites();
+  if (chosen.runner.id === 'codex' && !codexOnPath()) {
+    missing.push('codex is not on PATH. The Codex subset drives the real Codex CLI, logged in.');
+  }
   if (missing.length > 0) {
     for (const problem of missing) line(`e2e: ${problem}`);
     return 2;
   }
 
-  const unknown = wanted.filter((id) => !SCENARIOS.some((scenario) => scenario.id === id));
+  const unknown = wanted.filter((id) => !chosen.scenarios.some((scenario) => scenario.id === id));
   if (unknown.length > 0) {
-    line(`e2e: no scenario named ${unknown.join(', ')}. Try --list.`);
+    line(`e2e: no scenario named ${unknown.join(', ')} for ${agentId}. Try --list.`);
     return 2;
   }
 
   const scenarios =
-    wanted.length === 0 ? SCENARIOS : SCENARIOS.filter((scenario) => wanted.includes(scenario.id));
+    wanted.length === 0
+      ? chosen.scenarios
+      : chosen.scenarios.filter((scenario) => wanted.includes(scenario.id));
 
-  line(`e2e: ${String(scenarios.length)} scenarios against the real Claude Code and the built app`);
+  // The one check a scenario cannot make, because every scenario must stay off the user's
+  // configuration: that the agent itself reads what the installer writes (T-067).
+  const preflight: Assertion[] = [];
+  if (chosen.runner.id === 'codex') {
+    const reads = codexReadsTheInstalledEntry();
+    preflight.push(reads);
+    line(`  ${(reads.ok ? 'PASS' : 'PROTOCOL').padEnd(8)} preflight · ${reads.what}`);
+    if (!reads.ok && reads.detail !== undefined) {
+      for (const detail of reads.detail.split('\n')) line(`               ${detail}`);
+    }
+  }
+
+  line(
+    `e2e: ${String(scenarios.length)} scenarios against the real ${chosen.runner.displayName} and the built app`,
+  );
   const reports: ScenarioReport[] = [];
   for (const scenario of scenarios) {
     line(`  ...      ${scenario.id} — ${scenario.title}`);
-    reports.push(await runScenario(scenario));
+    reports.push(await runScenario(scenario, chosen.runner));
     report(reports[reports.length - 1] as ScenarioReport);
   }
 
+  const failed = reports.filter((scenario) => scenario.verdict !== 'passed');
+  const preflightFailed = preflight.filter((assertion) => !assertion.ok).length;
   const document = {
     generated_at: new Date().toISOString(),
     platform: `${process.platform}-${process.arch}`,
-    model: process.env['HANDOFF_E2E_MODEL'] ?? 'sonnet',
+    agent: chosen.runner.id,
+    model: chosen.model(),
+    preflight,
     scenarios: reports,
-    failed: reports.filter((scenario) => scenario.verdict !== 'passed').length,
+    failed: failed.length + preflightFailed,
   };
-  mkdirSync(join(REPO_ROOT, 'tests', 'e2e', 'results'), { recursive: true });
-  writeFileSync(RESULTS_FILE, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+  const results = join(RESULTS_DIR, chosen.results);
+  mkdirSync(RESULTS_DIR, { recursive: true });
+  writeFileSync(results, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
 
-  const failed = reports.filter((scenario) => scenario.verdict !== 'passed');
   const pendingCount = reports.flatMap((scenario) =>
     scenario.assertions.filter((assertion) => !assertion.ok && assertion.pendingTask !== undefined),
   ).length;
   line(
     `e2e: ${String(reports.length - failed.length)}/${String(reports.length)} passed` +
+      (preflightFailed > 0 ? `, the preflight failed` : '') +
       (pendingCount > 0 ? `, ${String(pendingCount)} pending a later task` : '') +
-      ' · report in tests/e2e/results/last-run.json',
+      ` · report in tests/e2e/results/${chosen.results}`,
   );
   for (const scenario of failed) {
     for (const assertion of failures(scenario.assertions)) {
       line(`  ${scenario.id}: [${assertion.kind}] ${assertion.what}`);
     }
   }
-  return failed.length === 0 ? 0 : 1;
+  return failed.length === 0 && preflightFailed === 0 ? 0 : 1;
 }
 
 process.exitCode = await main(process.argv.slice(2));
