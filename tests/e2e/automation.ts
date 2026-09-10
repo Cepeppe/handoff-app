@@ -110,6 +110,49 @@ export interface RequestState {
   readonly createdAt: string;
 }
 
+/** What `screenshotFixture` asks the app to do (`e2e::api::ScreenshotFixtureParams`). */
+export interface ScreenshotFixture {
+  /** The PNG that replaces the screen for this capture (`capture::fake`). */
+  readonly path: string;
+  /** `image` or `text` (PREV-04). */
+  readonly mode?: 'image' | 'text';
+  /** The scale factor the fixture pretends its monitor has. */
+  readonly scale?: number;
+  /** The flagged boxes the user lifts before sending (PREV-02, DET-01). */
+  readonly unlock?: readonly number[];
+  /** The optional line typed beside the picture; it becomes `user_text`. */
+  readonly comment?: string;
+  /** What the text pane holds; the recognised text when nothing is given. */
+  readonly text?: string;
+}
+
+/**
+ * What one screenshot send produced, as the app reports it back.
+ *
+ * The last two fields are the app's own answer to the assertion §11.5 asks for and the
+ * harness cannot make: **OCR of the sent PNG finds no certain pattern.** The engines live
+ * in the app, so the read is done there, on the bytes that really left; `certainBefore` is
+ * its control, the families the detectors found in the same capture while it was still
+ * legible. A run whose `certainBefore` is empty proves nothing about the burn.
+ */
+export interface SentScreenshot {
+  readonly mode: 'image' | 'text';
+  readonly width: number;
+  readonly height: number;
+  readonly redactions: number;
+  /** The PNG's size in bytes, `null` in text mode (A-20, FM-30). */
+  readonly bytes: number | null;
+  readonly ocrEngine: string | null;
+  /** Why the capture could not be read, when it could not (FM-16). */
+  readonly unread: string | null;
+  /** Whether **Send image** was on offer at all (PREV-04, FM-05). */
+  readonly imagesInResults: boolean;
+  /** The certain families the detectors found in the capture, before the burn. */
+  readonly certainBefore: readonly string[];
+  /** The certain families an OCR of the **sent** PNG still finds. `null` in text mode. */
+  readonly certainAfter: readonly string[] | null;
+}
+
 /** What `state` answers with. */
 export interface AppState {
   readonly handoffs: readonly HandoffState[];
@@ -230,6 +273,23 @@ export class Automation {
       action,
       ...(payload === undefined ? {} : { payload }),
     });
+  }
+
+  /**
+   * The whole screenshot pipeline over a fixture image (E2E-3, T-049).
+   *
+   * The one `act` whose payload is an object rather than a sentence, because the button it
+   * stands for is four presses: pick the fixture that replaces the screen, take the
+   * capture, lift whatever flagged boxes the user would lift, send. The answer carries the
+   * one thing the harness cannot work out for itself — what an OCR of the **sent** PNG
+   * still reads — because the engines are in the app and not here.
+   */
+  async screenshotFixture(handoffId: string, fixture: ScreenshotFixture): Promise<SentScreenshot> {
+    return (await this.call('act', {
+      handoff_id: handoffId,
+      action: 'screenshot_fixture',
+      payload: JSON.stringify(fixture),
+    })) as SentScreenshot;
   }
 
   /** The request sheet of §7.7, without the sheet. Answers the `hf_` id it created. */

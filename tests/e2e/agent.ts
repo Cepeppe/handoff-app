@@ -88,6 +88,14 @@ export interface ToolUse {
   readonly id: string;
 }
 
+/** An image block of a tool result: what §4.3 maps to `content[1]` (A-07). */
+export interface ToolImage {
+  /** `image/png` for everything this system sends. */
+  readonly mediaType: string;
+  /** The base64 payload, exactly as the agent received it. */
+  readonly data: string;
+}
+
 /** A tool result as the transcript shows it. */
 export interface ToolResult {
   readonly tool_use_id: string;
@@ -95,6 +103,14 @@ export interface ToolResult {
   readonly text: string;
   /** The outcome JSON, when the text was one. */
   readonly outcome: Record<string, unknown> | undefined;
+  /**
+   * The image blocks beside the text, in order (§4.3, A-07).
+   *
+   * E2E-3 is the one scenario that reads them, and it reads them twice over: that one is
+   * *there* (the agent was handed a picture at all) and that its bytes are the bytes the
+   * app burned, which the `sends` row's hash is what it is compared against.
+   */
+  readonly images: readonly ToolImage[];
 }
 
 /** Everything one agent run produced. */
@@ -372,10 +388,30 @@ function toolResults(transcript: readonly TranscriptMessage[]): ToolResult[] {
         isError: block['is_error'] === true,
         text,
         outcome: parseOutcome(text),
+        images: imagesOf(block['content']),
       });
     }
   }
   return results;
+}
+
+/** The image blocks of a tool result's content, in the order the agent was given them. */
+function imagesOf(content: unknown): ToolImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: ToolImage[] = [];
+  for (const block of content as unknown[]) {
+    if (typeof block !== 'object' || block === null) continue;
+    const entry = block as Record<string, unknown>;
+    if (entry['type'] !== 'image') continue;
+    const source = entry['source'];
+    if (typeof source !== 'object' || source === null) continue;
+    const fields = source as Record<string, unknown>;
+    images.push({
+      mediaType: typeof fields['media_type'] === 'string' ? fields['media_type'] : '',
+      data: typeof fields['data'] === 'string' ? fields['data'] : '',
+    });
+  }
+  return images;
 }
 
 /** The outcome JSON inside a tool result, when the result was one. */

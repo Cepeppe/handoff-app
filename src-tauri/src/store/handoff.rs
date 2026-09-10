@@ -218,9 +218,9 @@ impl From<&Session> for Opener {
 
 /// A screenshot the user decided to send (§7.8–§7.10, LOG-03, PREV-01).
 ///
-/// The shape is fixed now because the store has to record it and build an outcome from it;
-/// what fills it is the capture and preview pipeline.
-// TASK: T-049 — produced by the preview, once capture, OCR and redaction exist.
+/// Produced by `ui_bridge::preview` — the one path a capture has out of this machine — and
+/// consumed by [`crate::store::Store::screenshot`], which records it and builds the
+/// outcome from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotPayload {
     /// Whether the user sent the pixels or the extracted text (PREV-04).
@@ -232,9 +232,12 @@ pub struct ScreenshotPayload {
     pub image_base64: Option<String>,
     /// 64 lowercase hexadecimal characters of the redacted image, for the log.
     pub image_sha256: Option<String>,
-    /// Pixel width of what was captured.
+    /// Pixel width of what was **sent**: the burned PNG in image mode, the captured area in
+    /// text mode. They travel in the same `sends` row as `image_sha256` and
+    /// `redaction_boxes_json`, whose rectangles are in the sent image's coordinates, so a
+    /// pair that meant the capture would leave the boxes uninterpretable (LOG-03).
     pub width: u32,
-    /// Pixel height of what was captured.
+    /// Pixel height of what was sent. See [`ScreenshotPayload::width`].
     pub height: u32,
     /// How many regions were burned out before anything left the machine (PRIN-09).
     pub redactions: u32,

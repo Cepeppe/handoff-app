@@ -122,12 +122,22 @@ export interface StepView {
   last: boolean;
 }
 
+/** What was sent, when a screenshot is what the agent has not answered (§7.6, PREV-04). */
+export interface PendingScreenshotView {
+  mode: 'image' | 'text';
+  /** The size of what was sent, when it is known. Never the pixels (LOG-03). */
+  width: number | null;
+  height: number | null;
+}
+
 /** The interruption the agent has not answered yet. */
 export interface PendingView {
   kind: 'question' | 'screenshot';
   step: number;
-  /** What was asked; `null` for a screenshot, whose summary comes with the capture (T-049). */
+  /** What was asked, or what was written beside the picture, as it was sent. */
   text: string | null;
+  /** The summary §7.6 shows in place of a screenshot; `null` for a question. */
+  screenshot: PendingScreenshotView | null;
 }
 
 /** A verification report (VER-05). */
@@ -193,6 +203,96 @@ export type CaptureOutcome =
   | { status: 'ready'; width: number; height: number; monitor: number }
   | { status: 'denied' }
   | { status: 'failed'; message: string };
+
+/** How a screenshot leaves the machine (PREV-04). */
+export type ScreenshotMode = 'image' | 'text';
+
+/**
+ * A rectangle in the pixels of the capture it belongs to (`capture::Rect`).
+ *
+ * Not {@link LogicalRect}: that one is CSS pixels of a selection overlay, measured on a
+ * monitor whose scale factor decides what a pixel is. Everything the preview holds is in
+ * the capture's own full-resolution pixels (CAP-05), which is the one coordinate system
+ * the OCR, the boxes and the burn-in all agree on.
+ */
+export interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * One box the preview draws over the capture (§7.10, DET-01, PREV-02).
+ *
+ * The coordinates are the **capture's own pixels**, at full resolution: the window scales
+ * them onto whatever size it draws the image at, and the burn-in scales them the other way
+ * (CAP-06). `cause` is a family or a rule name and never the matched text (R-19).
+ */
+export interface PreviewBox {
+  id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** `locked` may not be lifted (DET-01); `flagged` costs one click (PREV-02). */
+  level: 'locked' | 'flagged';
+  cause: string;
+  unlocked: boolean;
+}
+
+/** The boxes and the crop, as the preview draws them right now. */
+export interface PreviewDraw {
+  boxes: PreviewBox[];
+  /** What the user cropped to, in the capture's own pixels. */
+  crop: PixelRect | null;
+  /** How many regions **Send image** would burn out right now. */
+  redactions: number;
+}
+
+/** Everything the preview needs once the detectors have answered (OCR-04). */
+export interface PreviewAnalysis extends PreviewDraw {
+  handoffId: string;
+  width: number;
+  height: number;
+  /** The recognised text, as the editable pane starts (PREV-03). */
+  text: string;
+  /** The engine that read it (§7.9), `null` when none did. */
+  ocrEngine: string | null;
+  /** Why nothing could be read, when nothing could (FM-16, OCR-01). */
+  unread: string | null;
+  /** Whether **Send image** may be offered at all (PREV-04, FM-05). */
+  imagesInResults: boolean;
+  /** Whether the capture is large enough to be worth sending as text (FM-30). */
+  large: boolean;
+}
+
+/** What the text pane would send, and what the two detectors took out of it (§7.10). */
+export interface PreviewText {
+  text: string;
+  /** The certain families that were replaced, without repetition. Never the text. */
+  kinds: string[];
+  /** How many suspected tokens were replaced. */
+  suspected: number;
+}
+
+/** One edit of the preview (PREV-02). */
+export type PreviewEdit =
+  | { kind: 'unlock'; id: number }
+  | { kind: 'relock'; id: number }
+  | { kind: 'addBox'; rect: PixelRect }
+  | { kind: 'crop'; rect: PixelRect }
+  | { kind: 'uncrop' };
+
+/** What one **Send image** or **Send text** produced (LOG-03). */
+export interface SentScreenshot {
+  mode: ScreenshotMode;
+  width: number;
+  height: number;
+  redactions: number;
+  /** How many bytes the PNG weighs, `null` in text mode. */
+  bytes: number | null;
+}
 
 /** What one selection overlay knows about itself (DD-29). */
 export interface SelectionSetup {

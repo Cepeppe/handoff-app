@@ -43,8 +43,12 @@ use crate::ui_bridge::Ui;
 /// effect on the next transition and dies with the process.
 pub const VERIFYING_TIMEOUT_KEY: &str = "e2e.verifying_timeout_ms";
 
-/// The action name that stands in for the screenshot pipeline until it exists.
-// TASK: T-049 — the preview and the redaction burn-in land there, and E2E-3 with them.
+/// The action that plays the whole screenshot pipeline over a fixture image (E2E-3).
+///
+/// It is the one `act` name that is not a button of [`Action`], because the button it
+/// stands for is four presses rather than one: pick a fixture, take the capture, look at
+/// what the detectors found, send it. Its payload is a JSON object,
+/// [`ScreenshotFixtureParams`].
 pub const SCREENSHOT_FIXTURE: &str = "screenshot_fixture";
 
 /// JSON-RPC error codes. The three below `-32000` are ours; the rest are the standard ones.
@@ -62,6 +66,11 @@ pub mod codes {
     /// The channel never came up, so there is no store to drive (`lib.rs`).
     pub const NO_CORE: i32 = -32002;
     /// The action exists in the vocabulary and its implementation is a later task.
+    ///
+    /// Unused since T-049 landed the capture pipeline, which was the one action that
+    /// answered it. It stays for the same reason `classify.ts` keeps its `pending` kind:
+    /// the next scenario written ahead of its task needs a way to say "written, not yet
+    /// decidable", and a harness that met a silent success instead would report a green.
     pub const NOT_YET_IMPLEMENTED: i32 = -32003;
 }
 
@@ -124,6 +133,38 @@ pub struct ActParams {
     /// The note, question or reason, or the request id of a relink.
     #[serde(default)]
     pub payload: Option<String>,
+}
+
+/// The payload of [`SCREENSHOT_FIXTURE`], carried as JSON inside `act`'s `payload` string.
+///
+/// A harness with nobody at the keyboard cannot drag a rectangle over a screen it cannot
+/// see (`capture::fake`), so `path` replaces the screen and the rest is what the user would
+/// have done in the preview.
+#[derive(Debug, Deserialize)]
+pub struct ScreenshotFixtureParams {
+    /// The PNG that stands in for the screen.
+    pub path: String,
+    /// `image` or `text` (PREV-04).
+    #[serde(default = "image_mode")]
+    pub mode: String,
+    /// The scale factor the fixture pretends its monitor has.
+    #[serde(default)]
+    pub scale: Option<f64>,
+    /// The flagged boxes the user lifts before sending (PREV-02).
+    #[serde(default)]
+    pub unlock: Vec<usize>,
+    /// The optional line typed beside the picture.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// What the text pane holds when **Send text** is pressed; the recognised text when
+    /// nothing is given, which is what a user who edited nothing sends.
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// The default `mode` of [`ScreenshotFixtureParams`]: E2E-3 is about the image.
+fn image_mode() -> String {
+    "image".to_owned()
 }
 
 /// `open_request` params: what the user typed, and which session they addressed it to.
@@ -349,14 +390,10 @@ async fn state(app: &AppHandle) -> MethodResult {
 /// `act`: one press of one button, through [`commands::act`].
 async fn act(app: &AppHandle, params: ActParams) -> MethodResult {
     if params.action == SCREENSHOT_FIXTURE {
-        // The capture backend, the OCR, the detector and the preview are T-046 to T-049;
-        // the store already takes a `Screenshot` action and nothing here can build one
-        // honestly. E2E-3 is added with the pipeline (T-043 Notes), and this answer is what
-        // a scenario written early meets instead of a silent success.
-        return Err(Failure::new(
-            codes::NOT_YET_IMPLEMENTED,
-            "screenshot_fixture arrives with the capture pipeline (T-049)",
-        ));
+        let payload = params.payload.as_deref().unwrap_or_default();
+        let fixture: ScreenshotFixtureParams = serde_json::from_str(payload)
+            .map_err(|error| Failure::new(codes::INVALID_PARAMS, error.to_string()))?;
+        return screenshot_fixture(app, &params.handoff_id, fixture).await;
     }
 
     let action: Action =
@@ -377,6 +414,123 @@ async fn act(app: &AppHandle, params: ActParams) -> MethodResult {
     .await
     .map(|()| json!({}))
     .map_err(|error| Failure::new(codes::REFUSED, error))
+}
+
+/// The whole screenshot pipeline over a fixture image (E2E-3, §11.5).
+///
+/// It presses the four things a person presses — take the capture, wait for the detectors,
+/// lift the flagged boxes they decided to lift, send — through the same commands the window
+/// calls, so a scenario that passes here has exercised the path a person exercises.
+///
+/// The answer carries the one assertion §11.5 asks for that the harness cannot make itself:
+/// **OCR of the sent PNG finds no certain pattern.** The OCR engines are in this process
+/// and not in the harness, so the read is done here, on the bytes that really left, and
+/// `certain_before` is its control — the families the detectors found in the same capture
+/// while it was still legible. A run where `certain_before` is empty proves nothing, and
+/// the scenario says so rather than reporting a clean image.
+async fn screenshot_fixture(
+    app: &AppHandle,
+    handoff_id: &str,
+    params: ScreenshotFixtureParams,
+) -> MethodResult {
+    use crate::capture::fake::{FIXTURE_KEY, FIXTURE_SCALE_KEY};
+
+    let mode = match params.mode.as_str() {
+        "image" => crate::format::outcome::ScreenshotMode::Image,
+        "text" => crate::format::outcome::ScreenshotMode::Text,
+        other => {
+            return Err(Failure::new(
+                codes::INVALID_PARAMS,
+                format!("no screenshot mode named {other}"),
+            ))
+        }
+    };
+
+    let ui = app.state::<Ui>();
+    let written = ui.with_db(|db| {
+        crate::log::settings::set(db, FIXTURE_KEY, &params.path)?;
+        crate::log::settings::set(db, FIXTURE_SCALE_KEY, &params.scale.unwrap_or(1.0))
+    });
+    match written {
+        None => return Err(Failure::new(codes::NO_CORE, "the app has no database")),
+        Some(Err(error)) => return Err(Failure::new(codes::REFUSED, error.to_string())),
+        Some(Ok(())) => {}
+    }
+
+    crate::ui_bridge::capture::capture_full_screen(app.clone())
+        .await
+        .map_err(|error| Failure::new(codes::REFUSED, error))?;
+
+    let analysis = crate::ui_bridge::preview::analyze_capture(app.clone(), handoff_id.to_owned())
+        .await
+        .map_err(|error| Failure::new(codes::REFUSED, error))?;
+    let certain_before: Vec<&str> = analysis
+        .draw
+        .boxes
+        .iter()
+        .filter(|drawn| drawn.level == "locked")
+        .map(|drawn| drawn.cause)
+        .collect();
+
+    for id in params.unlock {
+        crate::ui_bridge::preview::edit_preview(
+            app.clone(),
+            crate::ui_bridge::preview::PreviewEdit::Unlock { id },
+        )
+        .map_err(|error| Failure::new(codes::REFUSED, error))?;
+    }
+
+    let text = params.text.or_else(|| Some(analysis.text.clone()));
+    let sent = crate::ui_bridge::preview::send_screenshot(
+        app.clone(),
+        handoff_id.to_owned(),
+        mode,
+        text,
+        params.comment,
+    )
+    .await
+    .map_err(|error| Failure::new(codes::REFUSED, error))?;
+
+    let certain_after = certain_in_the_sent_png(app).await;
+    let mut answer = serde_json::to_value(&sent)
+        .map_err(|error| Failure::new(codes::REFUSED, error.to_string()))?;
+    if let Some(object) = answer.as_object_mut() {
+        object.insert("ocrEngine".to_owned(), json!(analysis.ocr_engine));
+        object.insert("unread".to_owned(), json!(analysis.unread));
+        object.insert(
+            "imagesInResults".to_owned(),
+            json!(analysis.images_in_results),
+        );
+        object.insert("certainBefore".to_owned(), json!(certain_before));
+        object.insert("certainAfter".to_owned(), json!(certain_after));
+    }
+    Ok(answer)
+}
+
+/// The certain families an OCR of the **sent** PNG still finds (§11.5 E2E-3, R-06).
+///
+/// `null` when the last send carried no image (text mode), or when no engine could read the
+/// burned picture — which is the honest answer and not a clean one: a scenario that read a
+/// `null` here has learnt nothing about the burn, and the geometry gate of §11.7 is what
+/// covers that case on every machine.
+async fn certain_in_the_sent_png(app: &AppHandle) -> Option<Vec<String>> {
+    let png = crate::ui_bridge::preview::last_sent_png(app)?;
+    let image = image::load_from_memory(&png).ok()?.to_rgba8();
+    let read = crate::ocr::select_and_run(std::sync::Arc::new(image), None)
+        .await
+        .ok()?;
+    let text = read
+        .blocks
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(
+        crate::redaction::certain::scan_text(&text)
+            .into_iter()
+            .map(|hit| hit.kind.as_str().to_owned())
+            .collect(),
+    )
 }
 
 /// `open_request`: the request sheet of §7.7, without the sheet.
@@ -463,10 +617,31 @@ mod tests {
     }
 
     #[test]
-    fn the_screenshot_action_is_not_one_of_them_yet() {
+    fn the_screenshot_action_is_not_a_button_of_the_window() {
+        // It is four presses rather than one, so `act` handles it before it reaches the
+        // vocabulary of `Action`; a day it *became* an action, this test would say so.
         let parsed: Result<Action, _> =
             serde_json::from_value(Value::String(SCREENSHOT_FIXTURE.to_owned()));
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn the_screenshot_payload_defaults_to_the_image_a_user_would_send() {
+        let params: ScreenshotFixtureParams =
+            serde_json::from_str(r#"{"path":"page.png"}"#).expect("a payload");
+        assert_eq!(params.path, "page.png");
+        assert_eq!(params.mode, "image");
+        assert_eq!(params.scale, None);
+        assert!(params.unlock.is_empty());
+        assert_eq!(params.comment, None);
+        assert_eq!(params.text, None);
+
+        let params: ScreenshotFixtureParams =
+            serde_json::from_str(r#"{"path":"p.png","mode":"text","unlock":[2],"scale":2.0}"#)
+                .expect("a payload");
+        assert_eq!(params.mode, "text");
+        assert_eq!(params.unlock, vec![2]);
+        assert_eq!(params.scale, Some(2.0));
     }
 
     #[test]

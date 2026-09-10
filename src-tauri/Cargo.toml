@@ -34,6 +34,12 @@ secrets-write = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# The one encoding a redacted screenshot may cross the channel in: §6.6 lets pixels reach
+# the server only inside an outcome, and the `image` field of `channel.v1.schema.json` is a
+# base64 PNG (`DEVIATIONS.md`, 2026-09-08). It adds **no crate to the graph**: `wry`, which
+# every Tauri build links, already resolves the same 0.22.1, so this line names something
+# that is compiled either way rather than deciding that the product may ship one more thing.
+base64 = "0.22.1"
 # Only to compare `last_verified_at` as an instant when the matching rule ranks runbooks
 # (§4.5.3). `clock` is off: nothing here reads the wall clock, and the feature would pull a
 # time-zone database this crate has no use for.

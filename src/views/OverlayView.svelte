@@ -309,7 +309,12 @@
       <StepView {view} />
 
       {#if sheet === null}
-        <ActionBar actions={view.actions} lastStep={view.step?.last ?? false} onact={start} />
+        <ActionBar
+          handoffId={view.tab.id}
+          actions={view.actions}
+          lastStep={view.step?.last ?? false}
+          onact={start}
+        />
       {:else}
         <TextSheet
           handoffId={view.tab.id}

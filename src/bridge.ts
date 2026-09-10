@@ -35,14 +35,20 @@ import type {
   LogEntryView,
   Notice,
   OnboardingView,
+  PreviewAnalysis,
+  PreviewDraw,
+  PreviewEdit,
+  PreviewText,
   Redacted,
   PendingRunbookProposalView,
   RequestChoice,
   RunbookEntryView,
   ScanReport,
   Scope,
+  ScreenshotMode,
   Selection,
   SelectionSetup,
+  SentScreenshot,
   SessionChoice,
   ShortcutStatus,
   TabView,
@@ -202,8 +208,38 @@ export interface Bridge {
   /** The PNG of the capture waiting to be shown. Raw bytes, never base64. */
   capturePreview(): Promise<ArrayBuffer>;
 
-  /** Drops the pixels the preview was showing (PRIN-04). */
+  /** Drops the pixels the preview was showing, and what was found in them (PRIN-04). */
   discardCapture(): Promise<void>;
+
+  /**
+   * Runs the OCR and both detectors over the capture that is waiting (§7.9, §7.10, OCR-04).
+   *
+   * The preview is already on screen when this is called, showing the image with its send
+   * buttons disabled: OCR-04 is what makes that the shape of the flow, and the several
+   * seconds a native engine can take are why. Calling it twice for the same capture is
+   * free and keeps whatever the user has already unlocked.
+   */
+  analyzeCapture(handoffId: string): Promise<PreviewAnalysis>;
+
+  /** Unlock, put back, add a box, crop, undo the crop (PREV-02). */
+  editPreview(edit: PreviewEdit): Promise<PreviewDraw>;
+
+  /** What the text pane would send right now, redacted as it will leave (PREV-03). */
+  previewText(text: string): Promise<PreviewText>;
+
+  /**
+   * **Send image** or **Send text** (PREV-01, PREV-04).
+   *
+   * `text` is what the pane holds and is used in text mode alone; `comment` is the optional
+   * line beside the picture. Both are redacted again on the Rust side: what the user saw
+   * before pressing is what leaves, whatever called this.
+   */
+  sendScreenshot(
+    handoffId: string,
+    mode: ScreenshotMode,
+    text: string | null,
+    comment: string | null,
+  ): Promise<SentScreenshot>;
 
   /** A capture ended, one way or another (§7.8, FM-17). */
   onCaptureReady(handler: (outcome: CaptureOutcome) => void): Promise<Unlisten>;
@@ -473,6 +509,18 @@ export function tauriBridge(): Bridge {
     async discardCapture() {
       await invoke('discard_capture');
     },
+    async analyzeCapture(handoffId) {
+      return invoke<PreviewAnalysis>('analyze_capture', { handoffId });
+    },
+    async editPreview(edit) {
+      return invoke<PreviewDraw>('edit_preview', { edit });
+    },
+    async previewText(text) {
+      return invoke<PreviewText>('preview_text', { text });
+    },
+    async sendScreenshot(handoffId, mode, text, comment) {
+      return invoke<SentScreenshot>('send_screenshot', { handoffId, mode, text, comment });
+    },
     async onCaptureReady(handler) {
       return listen<CaptureOutcome>(EVENT_CAPTURE_READY, (event) => handler(event.payload));
     },
@@ -644,6 +692,21 @@ export function noopBridge(): Bridge {
       throw new Error('no capture');
     },
     async discardCapture() {},
+    async analyzeCapture() {
+      // There is no capture outside the webview, and answering with an empty analysis
+      // would be a claim this side cannot make: it would say "nothing was found to hide".
+      throw new Error('no capture');
+    },
+    async editPreview() {
+      throw new Error('no capture');
+    },
+    async previewText(text) {
+      // The same rule as `scanTypedText`: no detector here, so nothing is claimed about it.
+      return { text, kinds: [], suspected: 0 };
+    },
+    async sendScreenshot() {
+      throw new Error('no core');
+    },
     onCaptureReady: unlisten,
     async sessionPicker() {
       return [];

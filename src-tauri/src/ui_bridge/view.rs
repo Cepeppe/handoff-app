@@ -248,10 +248,24 @@ pub struct PendingView {
     pub kind: &'static str,
     /// The 1-based step it was raised on.
     pub step: u32,
-    /// What the user asked, as it was sent (§7.6 shows the question, not only that there
-    /// is one). Absent for a screenshot, whose summary is the image's and comes with the
-    /// capture pipeline.
+    /// What the user asked or wrote beside the picture, as it was sent (§7.6 shows the
+    /// question, not only that there is one).
     pub text: Option<String>,
+    /// What was sent, when a screenshot was (§7.6 "the question **or screenshot
+    /// summary**"). The pixels are not in it and never were (LOG-03).
+    pub screenshot: Option<PendingScreenshotView>,
+}
+
+/// The summary §7.6 shows in place of a screenshot the agent has not answered (PREV-04).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingScreenshotView {
+    /// `image` or `text`.
+    pub mode: &'static str,
+    /// The width of what was sent, when it is known.
+    pub width: Option<u32>,
+    /// The height of what was sent, when it is known.
+    pub height: Option<u32>,
 }
 
 /// One closed round, collapsed (VER-09).
@@ -338,8 +352,8 @@ pub struct ActionsView {
     pub defer: bool,
     /// Abandon, always beside Defer (RESP-08).
     pub abandon: bool,
-    /// Send what the user sees. Never true yet: the capture pipeline is T-046 to T-049, and
-    /// the button is drawn disabled with a tooltip that says so.
+    /// Send what the user sees (CAP-01, PREV-01). Offered on the same states as Ask,
+    /// because a screenshot interrupts a handoff being guided (§7.4) and nothing else.
     pub screenshot: bool,
     /// Pick a parked or deferred handoff up again (RESP-07, FM-31).
     pub resume: bool,
@@ -639,6 +653,12 @@ fn tab_of(snapshot: &HandoffSnapshot, ui_state: UiState, _now: &Timestamp) -> Ta
 /// that step of the current round.
 fn pending_of(snapshot: &HandoffSnapshot, exchanges: &Exchanges) -> Option<PendingView> {
     let pending = snapshot.pending_question.as_ref()?;
+    // The last screenshot sent on this step of this round, which is the one being waited on.
+    let shot = exchanges
+        .screenshots
+        .iter()
+        .rev()
+        .find(|shot| shot.round == snapshot.round && shot.step == pending.step);
     Some(PendingView {
         kind: match pending.kind {
             crate::store::PendingKind::Question => "question",
@@ -652,8 +672,21 @@ fn pending_of(snapshot: &HandoffSnapshot, exchanges: &Exchanges) -> Option<Pendi
                 .rev()
                 .find(|question| question.round == snapshot.round && question.step == pending.step)
                 .map(|question| question.text.clone()),
-            // TASK: T-049 — a screenshot's summary comes from the preview that sent it.
-            crate::store::PendingKind::Screenshot => None,
+            // The comment beside the picture, or the text that was sent in its place — in
+            // both cases exactly what left (LOG-03), which is what the user is waiting on
+            // an answer about.
+            crate::store::PendingKind::Screenshot => shot.and_then(|shot| shot.text.clone()),
+        },
+        screenshot: match pending.kind {
+            crate::store::PendingKind::Question => None,
+            crate::store::PendingKind::Screenshot => Some(PendingScreenshotView {
+                mode: shot.map_or("image", |shot| match shot.mode {
+                    crate::format::outcome::ScreenshotMode::Image => "image",
+                    crate::format::outcome::ScreenshotMode::Text => "text",
+                }),
+                width: shot.and_then(|shot| shot.width),
+                height: shot.and_then(|shot| shot.height),
+            }),
         },
     })
 }
@@ -862,10 +895,10 @@ fn actions_of(snapshot: &HandoffSnapshot) -> ActionsView {
             HandoffState::Active | HandoffState::Deferred
         ),
         abandon: !is_final,
-        // The capture itself is T-046 and the send path is T-049, so the button opens the
-        // two-choice popover and ends in the preview; what the preview cannot do yet is
-        // send. It is offered on the same states as Ask and Note, because a screenshot is
-        // an interrupting action on a handoff being guided (§7.4) and on nothing else.
+        // The button opens the two-choice popover of CAP-01 and ends in the preview, which
+        // is where the two send buttons are. It is offered on the same states as Ask and
+        // Note, because a screenshot is an interrupting action on a handoff being guided
+        // (§7.4) and on nothing else.
         screenshot: active,
         resume: matches!(
             snapshot.state,
@@ -1375,6 +1408,7 @@ mod tests {
             &Exchanges {
                 questions: Vec::new(),
                 replies,
+                screenshots: Vec::new(),
             },
             &connected,
             &now(),
@@ -1424,6 +1458,7 @@ mod tests {
             &Exchanges {
                 questions: Vec::new(),
                 replies,
+                screenshots: Vec::new(),
             },
             &connected,
             &now(),
@@ -1513,6 +1548,7 @@ mod tests {
                 },
             ],
             replies: Vec::new(),
+            screenshots: Vec::new(),
         };
 
         let view = build(&it, &exchanges, &connected, &now());
@@ -1528,16 +1564,87 @@ mod tests {
     }
 
     #[test]
-    fn a_pending_screenshot_has_no_words_of_its_own_yet() {
+    fn a_pending_screenshot_carries_the_summary_of_what_was_sent() {
+        // §7.6 asks for "the question **or screenshot summary**". There are no pixels to
+        // draw anywhere (LOG-03), so the summary is which button was pressed, how big what
+        // left was, and the comment that went with it.
         let mut it = snapshot();
         it.pending_question = Some(PendingQuestion {
             kind: PendingKind::Screenshot,
             step: 1,
             at: at("2026-09-09T09:20:00Z"),
         });
-        let pending = view(&it).pending.expect("a pending screenshot");
+        let exchanges = Exchanges {
+            questions: Vec::new(),
+            replies: Vec::new(),
+            screenshots: vec![crate::store::Screenshot {
+                round: 1,
+                step: 1,
+                mode: crate::format::outcome::ScreenshotMode::Image,
+                text: Some("the button is not where the step says".to_owned()),
+                width: Some(1200),
+                height: Some(660),
+                at: at("2026-09-09T09:20:00Z"),
+            }],
+        };
+
+        let pending = build(&it, &exchanges, &connected, &now())
+            .pending
+            .expect("a pending screenshot");
         assert_eq!(pending.kind, "screenshot");
+        assert_eq!(
+            pending.text.as_deref(),
+            Some("the button is not where the step says")
+        );
+        let shot = pending.screenshot.expect("a summary");
+        assert_eq!(shot.mode, "image");
+        assert_eq!((shot.width, shot.height), (Some(1200), Some(660)));
+    }
+
+    #[test]
+    fn a_pending_screenshot_of_an_earlier_step_is_not_the_one_being_waited_on() {
+        // The summary names the send this step is waiting for, not the last one of the run.
+        let mut it = snapshot();
+        it.pending_question = Some(PendingQuestion {
+            kind: PendingKind::Screenshot,
+            step: 2,
+            at: at("2026-09-09T09:20:00Z"),
+        });
+        let exchanges = Exchanges {
+            questions: Vec::new(),
+            replies: Vec::new(),
+            screenshots: vec![crate::store::Screenshot {
+                round: 1,
+                step: 1,
+                mode: crate::format::outcome::ScreenshotMode::Text,
+                text: Some("an older one".to_owned()),
+                width: Some(800),
+                height: Some(600),
+                at: at("2026-09-09T09:10:00Z"),
+            }],
+        };
+
+        let pending = build(&it, &exchanges, &connected, &now())
+            .pending
+            .expect("a pending screenshot");
         assert_eq!(pending.text, None);
+        let shot = pending.screenshot.expect("a summary");
+        assert_eq!((shot.width, shot.height), (None, None));
+    }
+
+    #[test]
+    fn a_pending_question_carries_no_screenshot_summary() {
+        let mut it = snapshot();
+        it.pending_question = Some(PendingQuestion {
+            kind: PendingKind::Question,
+            step: 1,
+            at: at("2026-09-09T09:20:00Z"),
+        });
+        assert!(view(&it)
+            .pending
+            .expect("a pending question")
+            .screenshot
+            .is_none());
     }
 
     #[test]
@@ -1581,6 +1688,7 @@ mod tests {
                     at: at("2026-09-09T09:35:00Z"),
                 }],
                 replies: Vec::new(),
+                screenshots: Vec::new(),
             },
             &connected,
             &now(),

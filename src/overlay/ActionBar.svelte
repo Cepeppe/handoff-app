@@ -24,10 +24,13 @@
   import ScreenshotButton from './ScreenshotButton.svelte';
 
   const {
+    handoffId,
     actions,
     lastStep,
     onact,
   }: {
+    /** The tab these buttons act on; the Screenshot flow carries it to the preview. */
+    handoffId: string;
     actions: ActionsView;
     /** Whether the cursor is on the last step of the round (RESP-09). */
     lastStep: boolean;
@@ -55,7 +58,7 @@
     <button type="button" class="button" onclick={() => onact('skip')}>{t('action.skip')}</button>
   {/if}
   {#if actions.screenshot}
-    <ScreenshotButton />
+    <ScreenshotButton {handoffId} />
   {/if}
   {#if actions.defer}
     <button type="button" class="button" onclick={() => onact('defer')}>{t('action.defer')}</button>

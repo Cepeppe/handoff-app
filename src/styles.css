@@ -1202,6 +1202,22 @@ body.selection-window {
   The preview of PREV-01. The image is drawn at the panel's width whatever the capture's
   size; the number of pixels it really has is said in words underneath.
 */
+/*
+ * The preview canvas (§7.10, PREV-02).
+ *
+ * The image sizes itself to the panel and every box is positioned in **percentages** of it,
+ * so the drawing is the same picture whatever width the window has. The burn-in works in
+ * the capture's own pixels on the Rust side; the two never have to agree on a scale.
+ */
+.preview-canvas {
+  position: relative;
+  line-height: 0;
+}
+
+.preview-canvas[data-tool] {
+  cursor: crosshair;
+}
+
 .preview-image {
   display: block;
   width: 100%;
@@ -1209,6 +1225,57 @@ body.selection-window {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 4px;
+}
+
+.preview-box {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+}
+
+/* A certain match: solid, opaque, and not a control — there is nothing to press (DET-01). */
+.preview-box-locked {
+  background: #000;
+  border: 1px solid var(--danger);
+}
+
+/* A suspicion: the user decides, so it is a button and it says so by being dashed. */
+.preview-box-flagged {
+  background: #000;
+  border: 1px dashed var(--warning);
+  cursor: pointer;
+}
+
+.preview-box-lifted {
+  background: transparent;
+}
+
+.preview-crop {
+  position: absolute;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+.preview-drag {
+  position: absolute;
+  background: rgb(76 154 255 / 25%);
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+.preview-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--space);
+}
+
+.preview-label {
+  display: block;
+  margin-top: var(--space);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .preview-size,
@@ -1229,6 +1296,13 @@ body.selection-window {
 
 .preview-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: var(--space);
+}
+
+.pending-summary {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
 }

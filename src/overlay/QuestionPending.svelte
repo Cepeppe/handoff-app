@@ -24,6 +24,29 @@
       : t('overlay.pendingScreenshot', { step: pending.step })}
   </p>
 
+  {#if pending.screenshot !== null}
+    <!--
+      §7.6 asks for "the question **or screenshot summary**". A screenshot has no words of
+      its own — the picture is gone, and LOG-03 keeps no pixels anywhere — so the summary is
+      what left: which of the two send buttons was pressed, and how big it was.
+    -->
+    <p class="pending-summary">
+      {#if pending.screenshot.width === null || pending.screenshot.height === null}
+        {pending.screenshot.mode === 'image' ? t('preview.sentImage') : t('preview.sentText')}
+      {:else if pending.screenshot.mode === 'image'}
+        {t('preview.sentImageSized', {
+          width: pending.screenshot.width,
+          height: pending.screenshot.height,
+        })}
+      {:else}
+        {t('preview.sentTextSized', {
+          width: pending.screenshot.width,
+          height: pending.screenshot.height,
+        })}
+      {/if}
+    </p>
+  {/if}
+
   {#if pending.text !== null}
     <blockquote class="pending-text">{pending.text}</blockquote>
   {/if}

@@ -63,9 +63,10 @@ pnpm build          # svelte-check + the production frontend bundle
 pnpm tauri build --debug
 ```
 
-And, when the change touches the channel, the store, the state machine, the hook decision or
-the tool contract, the end-to-end suite — nine scenarios against a **real** Claude Code and a
-real build of the app, about four minutes. It is run by hand, not in CI:
+And, when the change touches the channel, the store, the state machine, the hook decision,
+the capture pipeline or the tool contract, the end-to-end suite — ten scenarios against a
+**real** Claude Code and a real build of the app, about four minutes. It is run by hand, not
+in CI:
 
 ```sh
 scripts\e2e.ps1     # from the workspace root: builds everything, then runs pnpm e2e
@@ -161,6 +162,24 @@ A redaction box covers a **whole OCR line**, because a line is the one unit ever
 reports faithfully and nothing in it says where inside the line a character sits. And the
 burn happens **after** the downscale, never before: filling first leaves the resampling
 kernel a grey halo in the shape of the letters, which is exactly what `CAP-06` forbids.
+
+### The preview is the only way out
+
+`src-tauri/src/ui_bridge/preview.rs` is the one path a capture has to an agent, and the
+window draws what it answers. There is no "send without preview" (`PREV-01`): the picture
+appears the instant the capture ends, the OCR and both detectors run behind it while the two
+send buttons are disabled (`OCR-04`), and the boxes drawn over the image are the rectangles
+the burn will fill.
+
+The burn happens on **this** side and never in the webview, which is the one part of the
+application that must not be believed about what may leave the machine: the window sends an
+edit — unlock, add a box, crop — and gets the drawing back, and a plan that had been
+tampered with still cannot lift a locked box. **Send image** and **Send text** sit side by
+side with no default, and the image button is not drawn at all for a session whose
+capability row says the agent cannot read one (`PREV-04`, `FM-05`).
+
+What is recorded is the `sends` row of `LOG-03`: the text exactly as it left, or an image's
+hash, size and boxes. Never pixels — there is no column to put them in.
 
 ### The screenshot corpus
 

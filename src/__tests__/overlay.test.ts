@@ -616,7 +616,9 @@ describe('every row of §8.4', () => {
       state: 'active',
       banner: { key: 'banner.questionSent', arg: null },
       says: 'Sent to the agent, waiting for the reply',
-      overrides: { pending: { kind: 'question', step: 1, text: 'which button?' } },
+      overrides: {
+        pending: { kind: 'question', step: 1, text: 'which button?', screenshot: null },
+      },
     },
     {
       uiState: 'deferred',
@@ -828,7 +830,7 @@ describe('the question-pending view (§7.6, RESP-04)', () => {
       view({
         uiState: 'questionSent',
         banner: { key: 'banner.questionSent', arg: null },
-        pending: { kind: 'question', step: 1, text: 'is this the right page?' },
+        pending: { kind: 'question', step: 1, text: 'is this the right page?', screenshot: null },
       }),
     );
 
@@ -837,16 +839,41 @@ describe('the question-pending view (§7.6, RESP-04)', () => {
     expect(screen.getByText('is this the right page?')).toBeDefined();
   });
 
-  it('says a screenshot is pending without inventing a summary for it', async () => {
+  it('summarises a pending screenshot: which button was pressed, and how big it was', async () => {
+    // §7.6 asks for "the question **or screenshot summary**". There are no pixels anywhere
+    // to draw (LOG-03), so the summary is what left.
     await open(
       view({
         uiState: 'questionSent',
         banner: { key: 'banner.questionSent', arg: null },
-        pending: { kind: 'screenshot', step: 2, text: null },
+        pending: {
+          kind: 'screenshot',
+          step: 2,
+          text: null,
+          screenshot: { mode: 'image', width: 1200, height: 660 },
+        },
       }),
     );
     expect(screen.getByText('You sent a screenshot from step 2.')).toBeDefined();
+    expect(screen.getByText('You sent a picture of 1200 × 660 pixels.')).toBeDefined();
     expect(document.querySelector('.pending-text')).toBeNull();
+  });
+
+  it('shows the comment typed beside a screenshot, as it was sent', async () => {
+    await open(
+      view({
+        uiState: 'questionSent',
+        banner: { key: 'banner.questionSent', arg: null },
+        pending: {
+          kind: 'screenshot',
+          step: 2,
+          text: 'the button is not where the step says',
+          screenshot: { mode: 'text', width: 800, height: 600 },
+        },
+      }),
+    );
+    expect(screen.getByText('You sent the text read from 800 × 600 pixels.')).toBeDefined();
+    expect(screen.getByText('the button is not where the step says')).toBeDefined();
   });
 });
 

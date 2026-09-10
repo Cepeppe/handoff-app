@@ -98,6 +98,30 @@ export class Log {
     );
   }
 
+  /**
+   * The `sends` rows of a handoff: everything that left towards the agent (LOG-03).
+   *
+   * The one table with a rule stronger than "record it" — an image is a hash, its
+   * dimensions and the boxes that were burned over it, and never pixels. E2E-3 reads it to
+   * compare the hash with the bytes the transcript shows the agent was handed.
+   */
+  sends(handoffId: string): {
+    kind: string;
+    text_as_sent: string | null;
+    image_sha256: string | null;
+    image_w: number | null;
+    image_h: number | null;
+    redaction_boxes_json: string | null;
+    ocr_engine: string | null;
+    patterns_version: string | null;
+  }[] {
+    return this.rows(
+      'SELECT kind, text_as_sent, image_sha256, image_w, image_h, redaction_boxes_json, ' +
+        `ocr_engine, patterns_version FROM sends WHERE handoff_id = '${escape(handoffId)}' ` +
+        'ORDER BY id',
+    );
+  }
+
   /** The names of every table the migrations created. */
   tables(): string[] {
     return this.rows<{ name: string }>(

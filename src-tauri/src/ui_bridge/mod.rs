@@ -41,6 +41,10 @@
 //! T-046 added [`capture`]: the two-choice popover of CAP-01, the panel hiding itself for
 //! the length of a shot (CAP-03) and the transparent selection overlays of DD-29 — one
 //! window per monitor, alive only for the drag.
+//!
+//! T-049 added [`preview`], which is the other half of it and the only way a screenshot
+//! leaves this machine: the OCR and the detectors over the capture, the boxes the user
+//! edits, and the burn-in that produces what the agent is given (PREV-01..05, PRIN-09).
 
 pub mod capture;
 pub mod commands;
@@ -49,6 +53,7 @@ pub mod events;
 pub mod general;
 pub mod install;
 pub mod log;
+pub mod preview;
 pub mod requests;
 pub mod runbooks;
 pub mod shortcut;
@@ -158,6 +163,7 @@ pub struct Ui {
     db: Mutex<Option<Db>>,
     wide: AtomicBool,
     capture: capture::State,
+    preview: preview::State,
 }
 
 impl Ui {

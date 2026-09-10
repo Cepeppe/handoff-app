@@ -40,7 +40,8 @@ pub mod watch;
 
 pub use actor::{
     exchanges_of, spawn, Command, Delivery, Exchanges, HandoffSnapshot, OpenAccepted, OpenParams,
-    Question, Reply, ResumeSnapshot, RoundSummary, Store, StoreHandle, UserAction, VerifyAccepted,
+    Question, Reply, ResumeSnapshot, RoundSummary, Screenshot, Store, StoreHandle, UserAction,
+    VerifyAccepted,
 };
 pub use handoff::{
     AttachedCall, Call, Cursor, FinalState, Handoff, NotVerifiedReason, Opener, PendingKind,

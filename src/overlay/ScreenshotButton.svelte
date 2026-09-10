@@ -19,7 +19,21 @@
   import { t } from '../i18n';
   import type { CaptureChoice } from '../model';
 
-  const { onchoose }: { onchoose?: () => void } = $props();
+  const {
+    handoffId,
+    onchoose,
+  }: {
+    /**
+     * The tab the capture belongs to.
+     *
+     * A screenshot is an interrupting action on a handoff (§7.4): the exemption list of
+     * DET-03 is that handoff's spec and the outcome names its step, so the id travels with
+     * the capture from this press. Reading the selected tab when the preview opens instead
+     * would send the picture to whichever tab the user had switched to meanwhile.
+     */
+    handoffId: string;
+    onchoose?: () => void;
+  } = $props();
 
   let open = $state(false);
   let last = $state<CaptureChoice | null>(null);
@@ -41,7 +55,7 @@
   function choose(choice: CaptureChoice): void {
     open = false;
     onchoose?.();
-    void startCapture(choice);
+    void startCapture(choice, handoffId);
   }
 </script>
 

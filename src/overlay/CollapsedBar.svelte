@@ -64,7 +64,7 @@
       <button type="button" class="button" onclick={() => act('ask')}>{t('action.ask')}</button>
     {/if}
     {#if view.actions.screenshot}
-      <ScreenshotButton onchoose={() => expand()} />
+      <ScreenshotButton handoffId={view.tab.id} onchoose={() => expand()} />
     {/if}
   </div>
 </div>

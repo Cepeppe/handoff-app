@@ -257,8 +257,20 @@ pub struct RedactedText {
     pub text: String,
     /// The certain families that were replaced, in order, without repetition.
     pub kinds: Vec<String>,
+    /// How many spans a certain pattern matched. Not [`RedactedText::kinds`]'s length: one
+    /// family can be replaced several times, and `screenshot.redactions` counts the
+    /// regions that were taken out (§4.3), not the vocabulary of what was in them.
+    pub certain: usize,
     /// How many suspected tokens were replaced. Never which ones (R-19).
     pub suspected: usize,
+}
+
+impl RedactedText {
+    /// How many regions this text lost, which is `screenshot.redactions` in text mode.
+    #[must_use]
+    pub fn redactions(&self) -> usize {
+        self.certain + self.suspected
+    }
 }
 
 /// The text an agent receives in text mode (§7.10, PREV-03, PREV-05).
@@ -271,8 +283,10 @@ pub struct RedactedText {
 pub fn redact_text(text: &str, plan: &RedactionPlan) -> RedactedText {
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
     let mut kinds: Vec<String> = Vec::new();
+    let mut certain = 0_usize;
     for hit in scan_certain(text) {
         replacements.push((hit.start, hit.end, mask_for(hit.kind)));
+        certain += 1;
         let kind = hit.kind.as_str().to_owned();
         if !kinds.contains(&kind) {
             kinds.push(kind);
@@ -297,6 +311,7 @@ pub fn redact_text(text: &str, plan: &RedactionPlan) -> RedactedText {
     RedactedText {
         text: splice(text, &replacements),
         kinds,
+        certain,
         suspected,
     }
 }

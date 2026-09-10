@@ -29,9 +29,10 @@
 //! shape and the frontend one listener.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter as _, Manager as _, PhysicalPosition, PhysicalSize, WebviewUrl,
@@ -108,6 +109,23 @@ pub enum Outcome {
     Failed { message: String },
 }
 
+/// The capture waiting to be looked at, at full resolution (CAP-05).
+///
+/// The pixels are behind an [`Arc`] because three things read them and none of them owns
+/// them: the preview draws them, the OCR of §7.9 runs on them from a blocking thread, and
+/// the burn-in of CAP-06 reads them again when **Send image** is pressed. Cloning a
+/// full-screen buffer three times per screenshot is several megabytes for nothing, and
+/// holding the mutex across the OCR would stop every other command for ten seconds.
+#[derive(Clone)]
+pub struct Held {
+    /// The capture itself.
+    pub image: Arc<RgbaImage>,
+    /// The monitor it came from.
+    pub monitor: MonitorId,
+    /// When it was taken.
+    pub taken_at: crate::log::Timestamp,
+}
+
 /// What this module remembers between a capture and the preview that draws it.
 ///
 /// Three facts, all of them about the *flow* and none about the screen: the pixels waiting
@@ -115,7 +133,7 @@ pub enum Outcome {
 /// `crate::capture` itself holds nothing at all (PRIN-04, NFR-03).
 #[derive(Default)]
 pub struct State {
-    ready: Mutex<Option<Capture>>,
+    ready: Mutex<Option<Held>>,
     restore_overlay: AtomicBool,
     selecting: AtomicBool,
 }
@@ -123,21 +141,40 @@ pub struct State {
 impl State {
     /// Keeps a capture until the preview asks for it.
     fn hold(&self, capture: Capture) {
-        *self.ready.lock().expect("the capture mutex is poisoned") = Some(capture);
+        *self.ready.lock().expect("the capture mutex is poisoned") = Some(Held {
+            image: Arc::new(capture.image),
+            monitor: capture.origin_monitor,
+            taken_at: capture.taken_at,
+        });
+    }
+
+    /// The capture waiting to be drawn, or nothing.
+    ///
+    /// The lock is released before the caller does anything with the pixels: everything
+    /// that reads them is slow (OCR, a resize, a PNG encode) and the mutex is also what a
+    /// discard has to take.
+    #[must_use]
+    pub fn held(&self) -> Option<Held> {
+        self.ready
+            .lock()
+            .expect("the capture mutex is poisoned")
+            .clone()
     }
 
     /// The capture waiting to be drawn, encoded as a PNG.
     fn png(&self) -> Option<Result<Vec<u8>, CaptureError>> {
-        self.ready
-            .lock()
-            .expect("the capture mutex is poisoned")
-            .as_ref()
-            .map(Capture::to_png)
+        let held = self.held()?;
+        let mut png = Vec::new();
+        let encoded = held
+            .image
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|error| CaptureError::Backend(error.to_string()));
+        Some(encoded.map(|()| png))
     }
 
     /// Drops the pixels. Called when the preview is left, so a screenshot the user decided
     /// against does not sit in memory until the next one replaces it.
-    fn forget(&self) {
+    pub(super) fn forget(&self) {
         *self.ready.lock().expect("the capture mutex is poisoned") = None;
     }
 
@@ -243,6 +280,8 @@ fn report(app: &AppHandle, taken: Result<Capture, CaptureError>) {
         Ok(capture) => {
             let (width, height) = capture.image.dimensions();
             let monitor = capture.origin_monitor;
+            // Whatever the preview had found in the last capture is about the last capture.
+            app.state::<Ui>().preview.forget();
             app.state::<Ui>().capture.hold(capture);
             Outcome::Ready {
                 width,
@@ -451,12 +490,15 @@ pub fn capture_preview(app: AppHandle) -> Result<tauri::ipc::Response, String> {
 
 /// Drops the pixels the preview was showing (PRIN-04: nothing is kept between captures).
 ///
+/// The analysis goes with them: the boxes, the recognised text and the plan are all about
+/// a capture that no longer exists (§7.10).
+///
 /// # Errors
 ///
 /// Never.
 #[tauri::command]
 pub fn discard_capture(app: AppHandle) -> Result<(), String> {
-    app.state::<Ui>().capture.forget();
+    super::preview::discard(&app);
     Ok(())
 }
 

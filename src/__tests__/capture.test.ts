@@ -1,5 +1,5 @@
 /**
- * The Screenshot button, the two choices behind it and the preview they end in (§7.8).
+ * The Screenshot button and the two choices behind it (§7.8, CAP-01).
  *
  * CAP-01 is the requirement these cases exist for, and it is a *negative* one: pressing the
  * button must not capture anything. That is invisible to a screenshot of the UI and easy to
@@ -7,8 +7,9 @@
  * **not** happen — no capture on opening the popover, and the highlighted choice sitting
  * there unfired.
  *
- * The rest is the preview of PREV-01 in the three states this task can reach: the capture,
- * the macOS permission of FM-17, and a platform that refused.
+ * The rest is the preview in the three states that are not a picture: the macOS permission
+ * of FM-17, a platform that refused, and a capture whose pixels could not be fetched. The
+ * preview proper — the boxes, the two send buttons, PREV-01..05 — is `preview.test.ts`.
  */
 import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
@@ -49,7 +50,7 @@ describe('the Screenshot button (CAP-01)', () => {
   it('asks which capture instead of taking one', async () => {
     const bridge = fakeBridge();
     setBridge(bridge);
-    render(ScreenshotButton);
+    render(ScreenshotButton, { handoffId: 'hf_0123456789' });
 
     screen.getByRole('button', { name: 'Screenshot' }).click();
     await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
@@ -67,7 +68,7 @@ describe('the Screenshot button (CAP-01)', () => {
       captureSettings: vi.fn(async () => ({ lastChoice: 'region' as const })),
     });
     setBridge(bridge);
-    render(ScreenshotButton);
+    render(ScreenshotButton, { handoffId: 'hf_0123456789' });
 
     screen.getByRole('button', { name: 'Screenshot' }).click();
     await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
@@ -83,7 +84,7 @@ describe('the Screenshot button (CAP-01)', () => {
   it('takes the capture the user picked, and closes the popover', async () => {
     const bridge = fakeBridge();
     setBridge(bridge);
-    render(ScreenshotButton);
+    render(ScreenshotButton, { handoffId: 'hf_0123456789' });
 
     screen.getByRole('button', { name: 'Screenshot' }).click();
     await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
@@ -97,7 +98,7 @@ describe('the Screenshot button (CAP-01)', () => {
   it('closes without capturing when the popover is dismissed', async () => {
     const bridge = fakeBridge();
     setBridge(bridge);
-    render(ScreenshotButton);
+    render(ScreenshotButton, { handoffId: 'hf_0123456789' });
 
     const button = screen.getByRole('button', { name: 'Screenshot' });
     button.click();
@@ -110,18 +111,7 @@ describe('the Screenshot button (CAP-01)', () => {
   });
 });
 
-describe('the preview (PREV-01)', () => {
-  it('draws the capture and says how many pixels it has', async () => {
-    setBridge(fakeBridge({ capturePreview: vi.fn(async () => new ArrayBuffer(8)) }));
-    await captureFinished({ status: 'ready', width: 1280, height: 720, monitor: 1 });
-    render(PreviewView);
-
-    const image = screen.getByRole('img', { name: 'The captured screen' });
-    expect(image.getAttribute('src')).toBe('blob:test/0');
-    expect(screen.getByText('1280 × 720 pixels')).toBeDefined();
-    expect(view()).toBe('preview');
-  });
-
+describe('the preview, where a capture cannot be drawn (PREV-01)', () => {
   it('shows the macOS explanation and the way to the settings pane instead (FM-17)', async () => {
     // The permission is asked for *before* the platform is touched, so what reaches the
     // user is this screen and never the system prompt CAP-04 rules out mid-handoff.
@@ -136,6 +126,7 @@ describe('the preview (PREV-01)', () => {
       expect(bridge.openScreenRecordingSettings).toHaveBeenCalledTimes(1),
     );
     expect(bridge.capturePreview).not.toHaveBeenCalled();
+    expect(bridge.analyzeCapture).not.toHaveBeenCalled();
   });
 
   it('says what the platform refused rather than showing an empty frame', async () => {
@@ -161,19 +152,6 @@ describe('the preview (PREV-01)', () => {
     expect(screen.getByRole('status').textContent).toContain('there is no capture to show');
   });
 
-  it('lets go of the pixels on both sides when the preview is left (PRIN-04)', async () => {
-    const bridge = fakeBridge({ capturePreview: vi.fn(async () => new ArrayBuffer(8)) });
-    setBridge(bridge);
-    await captureFinished({ status: 'ready', width: 4, height: 4, monitor: 1 });
-    render(PreviewView);
-
-    screen.getByRole('button', { name: 'Discard' }).click();
-    await waitFor(() => expect(bridge.discardCapture).toHaveBeenCalledTimes(1));
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test/0');
-    expect(preview().status).toBe('empty');
-    expect(view()).toBe('overlay');
-  });
-
   it('reports a capture the core refused to start', async () => {
     setBridge(
       fakeBridge({
@@ -182,7 +160,7 @@ describe('the preview (PREV-01)', () => {
         }),
       }),
     );
-    await startCapture('fullScreen');
+    await startCapture('fullScreen', 'hf_0123456789');
 
     expect(preview()).toEqual({ status: 'failed', message: 'no window to hide' });
     expect(view()).toBe('preview');

@@ -31,6 +31,7 @@ turning it on later is a secret rather than a task.
 |---|---|
 | `e2e-01-verified` | open → confirm each step → done → `handoff_verify ok:true` → `verified` in the log |
 | `e2e-02-question` | Ask from the overlay comes back as `status: question`; the reply lands on the step; one round |
+| `e2e-03-screenshot` | a capture of a fixture page reaches the agent as an image block, with the fake Stripe key burned out of it and only its hash in the log |
 | `e2e-04-defer` | a deferral comes back as `deferred`; the agent's resume takes the tab back to `active` |
 | `e2e-05-parked` | two deferrals park it; the Stop hook stops the agent **once** and names it |
 | `e2e-06-correction` | `ok:false` → `replacement_steps` → a second round → `verified` |
@@ -43,17 +44,26 @@ After **every** scenario, whatever it was about, the log-invariant check of §11
 whole database is dumped column by column and searched for the fixture secrets the scenario
 planted. LOG-02 is a property of the log and not of a flow.
 
-Two rows of the §11.5 table are not here. **E2E-3** (a screenshot from a fixture image) waits
-for the capture pipeline; the automation channel already takes the action name and answers
-"arrives with T-049". **E2E-8** (the app stopped → text mode) is the server's and runs there,
-in `handoff-mcp`'s canary.
+One row of the §11.5 table is not here: **E2E-8** (the app stopped → text mode) is the
+server's and runs there, in `handoff-mcp`'s canary — its second half, "no database row", has
+no app to have a row in.
+
+**E2E-3 borrows its fixture from the corpus of §11.7**, `src-tauri/tests/fixtures/screenshots/`:
+a Stripe webhook page drawn by a program, with a fake signing secret on it. No real screen
+and no issued credential is ever committed. It also asks the app one question the harness
+cannot answer itself — *what does an OCR of the sent PNG still read?* — because the OCR
+engines are in the app; the answer comes back with the `screenshot_fixture` action, together
+with the families the detectors found in the same capture **before** the burn, which is the
+control. On a machine whose engine cannot read the planted key even unredacted, that control
+is reported as a failing **note** and the check above it is vacuous rather than green — the
+same rule §11.7 takes for the glyph-leak pass.
 
 ## Running it
 
 From the workspace root, which builds everything first:
 
 ```powershell
-scripts\e2e.ps1                    # all nine
+scripts\e2e.ps1                    # all ten
 scripts\e2e.ps1 e2e-01-verified    # one
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
@@ -122,7 +132,11 @@ exists now, so both read what is in it.
 | framing | NDJSON, one JSON-RPC object per line, as the product channel frames its traffic |
 
 Six methods: `auth` (first, or everything else is refused), `state`, `act`, `open_request`,
-`settings`, `quit`. Each of them is a thin adapter over `ui_bridge::commands` — the same
+`settings`, `quit`. `act` takes one action name that is not a button of the window,
+`screenshot_fixture`: the button it stands for is four presses — pick the fixture that
+replaces the screen, take the capture, lift the flagged boxes the user would lift, send — so
+its payload is a JSON object (`path`, `mode`, `scale`, `unlock`, `comment`, `text`) and its
+answer is the summary of what left. Each of them is a thin adapter over `ui_bridge::commands` — the same
 functions the window calls, with the same managed state — so a scenario that passes has
 exercised the path a person exercises. `state` answers with the **view** the window is given,
 where secret-treated values are masked: the true values of a spec never cross this socket

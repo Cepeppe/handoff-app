@@ -1,18 +1,19 @@
 /**
- * The nine scenarios of §11.5 this task runs, in the order they are worth reading (T-043).
+ * The ten scenarios of §11.5 this suite runs, in the order they are worth reading (T-043).
  *
- * The other two rows of the table are elsewhere and stay there:
+ * The one row of the table that is elsewhere stays there: **E2E-8** (the app stopped → text
+ * mode) is the server's and it runs there,
+ * `handoff-mcp/test/canary/scenarios/e2e-08-text-mode.ts` (`TASKS.md` §0.4 item 3) — its
+ * second half, "no database row", has no app to have a row in.
  *
- * - **E2E-3** (screenshot with a fixture image) waits for the capture pipeline. The
- *   automation channel already takes the action name and answers "arrives with T-049", so
- *   the scenario is one file away the day the pipeline exists.
- * - **E2E-8** (the app stopped → text mode) is the server's, and it runs there:
- *   `handoff-mcp/test/canary/scenarios/e2e-08-text-mode.ts` (`TASKS.md` §0.4 item 3). Its
- *   second half — "no database row" — has no app to have a row in.
+ * **E2E-3** joined them with T-049: the capture pipeline it drives — OCR, both detectors,
+ * the burn-in — did not exist when the harness was written, and the automation channel
+ * answered "arrives with T-049" until it did.
  */
 import type { Scenario } from '../scenario.ts';
 import { verifiedScenario } from './e2e-01-verified.ts';
 import { questionScenario } from './e2e-02-question.ts';
+import { screenshotScenario } from './e2e-03-screenshot.ts';
 import { deferScenario } from './e2e-04-defer.ts';
 import { parkedScenario } from './e2e-05-parked.ts';
 import { correctionScenario } from './e2e-06-correction.ts';
@@ -25,6 +26,7 @@ import { secondSessionScenario } from './e2e-11-second-session.ts';
 export const SCENARIOS: readonly Scenario[] = [
   verifiedScenario,
   questionScenario,
+  screenshotScenario,
   deferScenario,
   parkedScenario,
   correctionScenario,

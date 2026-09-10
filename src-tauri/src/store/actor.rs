@@ -35,7 +35,9 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::format::channel::DetachReason;
-use crate::format::outcome::{Outcome, OutcomeStatus, ResumedFrom, SecretTreated, VerifyReport};
+use crate::format::outcome::{
+    Outcome, OutcomeStatus, ResumedFrom, ScreenshotMode, SecretTreated, VerifyReport,
+};
 use crate::format::spec::{HandoffSpec, HandoffStep};
 use crate::ids;
 use crate::log::events::{EventKind, EventRow};
@@ -183,16 +185,46 @@ pub struct Question {
     pub at: Timestamp,
 }
 
+/// What the user sent as a screenshot, and on which step (§7.6, PREV-04, LOG-03).
+///
+/// The third voice of the same trail, read from the same two tables: an `events` row of
+/// kind `screenshot` and the `sends` row beside it. §7.6's "Question pending" view shows
+/// "the question **or screenshot summary**", and there is nothing in the handoff record to
+/// build one from — §7.4 keeps that a screenshot happened and nothing about it.
+///
+/// It carries no pixels and no hash: what the user needs to read while they wait is what
+/// they sent and how big it was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Screenshot {
+    /// The round it was sent in.
+    pub round: u32,
+    /// The 1-based step it was sent from.
+    pub step: u32,
+    /// Whether the pixels or the extracted text left (PREV-04).
+    pub mode: ScreenshotMode,
+    /// The comment beside the picture, or the text that was sent — as it left (LOG-03).
+    pub text: Option<String>,
+    /// The width of what was sent.
+    pub width: Option<u32>,
+    /// The height of what was sent.
+    pub height: Option<u32>,
+    /// When it was sent.
+    pub at: Timestamp,
+}
+
 /// One handoff's whole question-and-answer trail, read in a single pass (§7.6).
 ///
-/// Both halves come out of `events` and both are wanted by the same repaint, so they are
-/// read together: a second call would be a second scan of the same rows.
+/// The three halves come out of `events` and `sends` and all three are wanted by the same
+/// repaint, so they are read together: a second call would be a second scan of the same
+/// rows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Exchanges {
     /// What the user asked, oldest first.
     pub questions: Vec<Question>,
     /// What the agents answered, oldest first.
     pub replies: Vec<Reply>,
+    /// What the user sent as a screenshot, oldest first.
+    pub screenshots: Vec<Screenshot>,
 }
 
 /// What a view needs to draw one tab (§7.6, §8.4).
@@ -1818,7 +1850,41 @@ pub fn exchanges_of(db: &Db, handoff_id: &str) -> Result<Exchanges> {
         })
         .collect();
 
-    Ok(Exchanges { questions, replies })
+    // The same pairing for the third voice: one `screenshot` event and one `sends` row per
+    // send, written in the same transaction (`Store::screenshot`), so the n-th of each
+    // belongs to the n-th of the other.
+    let captured = events
+        .iter()
+        .filter(|row| row.kind == EventKind::Screenshot);
+    let shots = sends.iter().filter(|row| {
+        matches!(
+            row.kind,
+            crate::log::sends::SendKind::ScreenshotImage
+                | crate::log::sends::SendKind::ScreenshotText
+        )
+    });
+    let screenshots = captured
+        .zip(shots)
+        .map(|(event, send)| Screenshot {
+            round: round_of(event),
+            step: step_of(event),
+            mode: if send.kind == crate::log::sends::SendKind::ScreenshotImage {
+                ScreenshotMode::Image
+            } else {
+                ScreenshotMode::Text
+            },
+            text: send.text_as_sent.clone(),
+            width: send.image_w.and_then(|it| u32::try_from(it).ok()),
+            height: send.image_h.and_then(|it| u32::try_from(it).ok()),
+            at: event.at.clone(),
+        })
+        .collect();
+
+    Ok(Exchanges {
+        questions,
+        replies,
+        screenshots,
+    })
 }
 
 /// Delivers an outcome to the attached call, or queues it (§7.4, DD-12).
@@ -3262,6 +3328,39 @@ mod tests {
             sends[0].text_as_sent.as_deref(),
             Some("is this the right page?")
         );
+    }
+
+    #[test]
+    fn the_diary_pairs_a_screenshot_event_with_the_send_beside_it() {
+        // §7.6 shows a pending screenshot's summary, and §7.4 keeps nothing about one: it is
+        // the `events` row and the `sends` row of the same transaction, read back together.
+        let mut store = store();
+        let id = open_with(&mut store, spec(2, true));
+        store
+            .ask(&id, "which button?", &at("2026-09-08T11:00:00Z"))
+            .expect("ask");
+        store.take_deliveries();
+        store
+            .screenshot(
+                &id,
+                &screenshot(&"a".repeat(64)),
+                &at("2026-09-08T11:05:00Z"),
+            )
+            .expect("screenshot");
+
+        let exchanges = store.exchanges(&id).expect("the diary");
+        assert_eq!(
+            exchanges.questions.len(),
+            1,
+            "the Ask is still one question"
+        );
+        assert_eq!(exchanges.screenshots.len(), 1);
+        let shot = &exchanges.screenshots[0];
+        assert_eq!(shot.mode, ScreenshotMode::Image);
+        assert_eq!(shot.step, 1);
+        assert_eq!(shot.round, 1);
+        assert_eq!((shot.width, shot.height), (Some(1600), Some(900)));
+        assert_eq!(shot.text.as_deref(), Some("is this the right page?"));
     }
 
     #[test]
