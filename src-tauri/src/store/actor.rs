@@ -47,6 +47,7 @@ use crate::log::transitions::{commit as commit_transition, Transition};
 use crate::log::{
     handoffs, maintenance, sessions, user_requests, Db, HandoffState, StoreError, Timestamp,
 };
+use crate::redaction::suspected::Exemptions;
 use crate::requests::queue::OpenLink;
 
 use super::handoff::{
@@ -1760,6 +1761,18 @@ impl Store {
             None => Vec::new(),
         }
     }
+
+    /// The values of this handoff that the suspected detector may not flag (DET-03).
+    ///
+    /// It is built from the **in-memory** spec, which is the true one: the row in
+    /// `handoffs` carries the masked copy (LOG-02, T-030), and an exemption list built from
+    /// masks would exempt nothing the user is actually looking at.
+    pub fn exemptions(&self, handoff_id: &str) -> Exemptions {
+        self.handoffs
+            .get(handoff_id)
+            .and_then(|it| it.spec.as_ref())
+            .map_or_else(Exemptions::none, Exemptions::of_spec)
+    }
 }
 
 /// The same pass as [`Store::exchanges`], over a connection rather than over the store.
@@ -2242,6 +2255,13 @@ pub enum Command {
         /// One entry for a single value, one per item for an array.
         reply_to: oneshot::Sender<Vec<String>>,
     },
+    /// What the suspected detector may not flag for this handoff (DET-03, §7.10).
+    Exemptions {
+        /// Which handoff.
+        handoff_id: String,
+        /// Empty when the handoff is gone or has no spec yet.
+        reply_to: oneshot::Sender<Exemptions>,
+    },
     /// The user answered a runbook rewrite (§7.12 row 3, RUN-09).
     ResolveRunbookProposal {
         /// Which handoff carries the proposal.
@@ -2546,6 +2566,18 @@ impl StoreHandle {
         .await
     }
 
+    /// What the suspected detector may not flag for this handoff (DET-03).
+    pub async fn exemptions(&self, handoff_id: String) -> Exemptions {
+        self.ask(
+            |reply_to| Command::Exemptions {
+                handoff_id,
+                reply_to,
+            },
+            Exemptions::none,
+        )
+        .await
+    }
+
     /// The user accepted or declined a runbook rewrite (RUN-09).
     pub async fn resolve_runbook_proposal(&self, handoff_id: String, accept: bool) -> Result<bool> {
         self.ask(
@@ -2758,6 +2790,12 @@ fn apply(store: &mut Store, command: Command) {
             reply_to,
         } => {
             let _ = reply_to.send(store.value(&handoff_id, &key));
+        }
+        Command::Exemptions {
+            handoff_id,
+            reply_to,
+        } => {
+            let _ = reply_to.send(store.exemptions(&handoff_id));
         }
         Command::ResolveRunbookProposal {
             handoff_id,

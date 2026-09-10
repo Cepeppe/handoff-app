@@ -138,6 +138,52 @@ puts a resource on Windows (`../Resources` inside the `.app` on macOS). A build 
 not bundled — `cargo tauri dev`, `cargo test`, `cargo build` — has no such copy, so the
 lookup then walks up from the executable to the one committed in `src-tauri/`.
 
+### Detection and redaction
+
+Everything that reaches an agent from a capture goes through `src-tauri/src/redaction/`:
+
+| Module | What it decides |
+|---|---|
+| `certain` | the public patterns of the pinned server artifact, over a spec at ingress and over a capture |
+| `suspected` | the app's own heuristics: long hexadecimal, base64-looking, high-entropy, and a value beside a `key`/`secret`/`token`/`password` label |
+| `boxes` | what they found, as rectangles in the original image, plus the plan the preview edits |
+| `burn` | crop, downscale to 1600 px, rescale, expand by 2 px, fill black, encode |
+| `typed` | the same two detectors over what the user writes in a sheet |
+
+Two rules decide who may lift what, and they come straight from `DET-01`. A **certain**
+match is redacted automatically and the user cannot put it back: the patterns are
+precision-first by policy, so a false positive there is a defect of the pattern file. A
+**suspected** match is a heuristic and the user decides — in the preview by unlocking the
+box in one click, in a sheet by editing their own sentence, where the words are marked and
+sent as they were written.
+
+A redaction box covers a **whole OCR line**, because a line is the one unit every engine
+reports faithfully and nothing in it says where inside the line a character sits. And the
+burn happens **after** the downscale, never before: filling first leaves the resampling
+kernel a grey halo in the shape of the letters, which is exactly what `CAP-06` forbids.
+
+### The screenshot corpus
+
+`src-tauri/tests/fixtures/screenshots/` is a synthetic corpus: 46 dashboard-looking pages
+drawn by a program, with a fake key of every family, the four suspected shapes, and the
+negatives a heuristic is most likely to get wrong. **No real screenshot and no issued
+credential is in this repository.** `labels.json` says what every line is, written by hand
+in `src-tauri/tests/corpus/mod.rs` and never by running a detector: a corpus derived from
+the detector would agree with it whatever it did.
+
+```bash
+cargo test --test gen_corpus                          # the committed images still match
+HANDOFF_WRITE_CORPUS=1 cargo test --test gen_corpus   # redraw them after changing a page
+cargo test --test redaction_corpus metrics -- --nocapture   # the numbers of §11.7
+```
+
+The pages are drawn with a stroke font written in `src-tauri/tests/corpus/font.rs` rather
+than with a system font, so the same source produces the same pixels on every machine and
+the images can be committed and checked back. `tests/redaction_corpus.rs` then asks four
+things of them: whether the detectors say what the corpus says, whether the burn covers
+every ink pixel of a redacted line, whether burning in the wrong order would be noticed,
+and whether an OCR engine can still read a planted key out of the redacted image.
+
 ### Cargo features
 
 | Feature | State |

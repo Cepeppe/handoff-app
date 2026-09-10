@@ -4,3 +4,8 @@
 # working tree byte for byte: `text=auto` only guesses that they are binary, and a guess is
 # not what a file whose hash is its identity should depend on.
 *.rten binary
+
+# The 46 synthetic screenshots of `src-tauri/tests/fixtures/screenshots/` are ground truth:
+# `tests/gen_corpus.rs` compares them pixel for pixel and `tests/redaction_corpus.rs` reads
+# their geometry, so they must reach the working tree exactly as they were drawn.
+*.png binary

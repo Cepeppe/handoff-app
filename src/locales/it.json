@@ -122,6 +122,7 @@
   "sheet.cancel": "Annulla",
   "sheet.willSend": "Quello che leggerà l'agente",
   "sheet.redacted": "Un segreto è stato tolto prima dell'invio: {kinds}",
+  "sheet.suspected": "Evidenziato qui sotto: potrebbe contenere un segreto. Viene inviato com’è — modificalo se non deve partire.",
   "notice.actionRefused": "Non è più disponibile: l'handoff è andato avanti.",
   "notice.actionFailed": "Non è stato possibile salvare. Nulla è cambiato; riprova.",
   "notice.copyFailed": "Gli appunti hanno rifiutato il valore.",

@@ -27,11 +27,13 @@
 use indexmap::IndexMap;
 
 use crate::format::outcome::{
-    ContextStep, CurrentStep, Outcome, OutcomeContext, OutcomeStatus, ScreenshotInfo,
+    ContextStep, CurrentStep, Outcome, OutcomeContext, OutcomeNote, OutcomeStatus, ScreenshotInfo,
     ScreenshotMode,
 };
 use crate::format::schema::{validate, Document};
 use crate::format::spec::SpecValue;
+use crate::redaction::suspected::Exemptions;
+use crate::redaction::typed::redact;
 
 use super::handoff::{Handoff, ScreenshotPayload};
 
@@ -137,6 +139,30 @@ fn screenshot_instruction(step: u32, mode: ScreenshotMode) -> String {
     format!("The user sent what they see at step {step} as {what}. Answer on this step: call handoff_to_user with handoff_id and reply; add replacement_steps only if the remaining steps must change.")
 }
 
+/// One note of the round as the agent reads it: the same words, with a certain match
+/// replaced (§7.10, DET-01, PRIN-09).
+///
+/// A note is the one typed text of the app that is **not** redacted where it is typed. §7.10
+/// scans "Ask, comments, edited OCR text" and RESP-02 calls a note a local annotation, so
+/// `ui_bridge::commands::act` keeps what the user wrote — the step they read back afterwards
+/// is their own sentence, which is the whole point of the button. But RESP-03 also reports
+/// every note "all together in the final outcome", so a note *does* leave the machine, and
+/// PRIN-09 allows nothing to leave unredacted. This is where it leaves, so this is where the
+/// certain level is applied.
+///
+/// Only the certain level: DET-01 gives a suspected match to the user to decide on, the
+/// sheet has no marking for a text it does not scan, and an outcome has nowhere to carry a
+/// mark. The mask is [`crate::redaction::typed::mask_for`]'s — the one §7.10 gives to text
+/// an agent reads, not the log's. No exemption applies: DET-03 exempts a spec value from the
+/// **suspected** level and never from this one.
+fn as_the_agent_reads_it(note: &OutcomeNote) -> OutcomeNote {
+    OutcomeNote {
+        step: note.step,
+        text: redact(&note.text, &Exemptions::none()).text,
+        at: note.at.clone(),
+    }
+}
+
 /// The outcome for `status`, built from everything the handoff already knows.
 ///
 /// `user_text` is the question, the comment beside a screenshot, or the reason typed with
@@ -181,7 +207,9 @@ pub fn build(
             None
         },
         skipped_steps: round.map(|round| round.skipped.clone()).unwrap_or_default(),
-        notes: round.map(|round| round.notes.clone()).unwrap_or_default(),
+        notes: round
+            .map(|round| round.notes.iter().map(as_the_agent_reads_it).collect())
+            .unwrap_or_default(),
         secret_treated: handoff.secret_treated.clone(),
         verify: round.and_then(|round| round.verify.clone()),
         deferral_count: handoff.deferral_count.min(2),
@@ -438,6 +466,53 @@ mod tests {
             "The user sent what they see at step 2 as extracted text. Answer on this step: \
              call handoff_to_user with handoff_id and reply; add replacement_steps only if \
              the remaining steps must change."
+        );
+    }
+
+    #[test]
+    fn a_note_reaches_the_agent_with_its_certain_matches_replaced() {
+        // The one typed text `act` does not redact, because RESP-02 keeps a note local and
+        // the user reads it back on their own step. RESP-03 still reports it in the final
+        // outcome, so the mask is applied here, where it leaves (PRIN-09).
+        let mut handoff = handoff();
+        handoff
+            .current_round_mut()
+            .expect("a round")
+            .notes
+            .push(OutcomeNote {
+                step: 1,
+                text: "the field already held AKIAIOSFODNN7EXAMPLE".to_owned(),
+                at: "2026-09-10T09:00:00.000Z".to_owned(),
+            });
+
+        let outcome = build(&handoff, OutcomeStatus::Verified, None, None);
+        let note = outcome.notes.first().expect("the note travels");
+        assert_eq!(note.text, "the field already held [REDACTED:api_key]");
+        assert_eq!(note.step, 1);
+        assert_eq!(note.at, "2026-09-10T09:00:00.000Z");
+        // And the handoff still holds what the user wrote: the overlay draws this one.
+        assert_eq!(
+            handoff.current_round().expect("a round").notes[0].text,
+            "the field already held AKIAIOSFODNN7EXAMPLE"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_note_is_not_touched_on_its_way_out() {
+        let mut handoff = handoff();
+        handoff
+            .current_round_mut()
+            .expect("a round")
+            .notes
+            .push(OutcomeNote {
+                step: 2,
+                text: "the button is called Add destination now".to_owned(),
+                at: "2026-09-10T09:01:00.000Z".to_owned(),
+            });
+        let outcome = build(&handoff, OutcomeStatus::Verified, None, None);
+        assert_eq!(
+            outcome.notes[0].text,
+            "the button is called Add destination now"
         );
     }
 

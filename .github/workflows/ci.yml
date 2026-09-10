@@ -90,6 +90,13 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # §11.7 asks for the corpus metrics to be reported per release, and R-07 is a number
+      # to watch rather than a line to cross, so the one test that prints them is re-run with
+      # the capture off. The binary is already built by the step above; this costs a second.
+      - name: Redaction corpus metrics
+        working-directory: src-tauri
+        run: cargo test --test redaction_corpus metrics -- --nocapture
+
       # The transport of the automation channel (DD-33) is behind a feature, so the suite
       # above compiles it to nothing. Only this target is asked for: the rest of the crate
       # is already covered by the run above and by the all-features clippy.
@@ -195,3 +202,10 @@ jobs:
       - name: cargo test
         working-directory: src-tauri
         run: cargo test
+
+      # §11.7 asks for the corpus metrics to be reported per release, and R-07 is a number
+      # to watch rather than a line to cross, so the one test that prints them is re-run with
+      # the capture off. The binary is already built by the step above; this costs a second.
+      - name: Redaction corpus metrics
+        working-directory: src-tauri
+        run: cargo test --test redaction_corpus metrics -- --nocapture

@@ -285,6 +285,7 @@
         <WaitingForSpec {view} onact={start} />
       {:else}
         <TextSheet
+          handoffId={view.tab.id}
           action={sheet}
           optional={OPTIONAL.has(sheet)}
           scanned={SCANNED.has(sheet)}
@@ -311,6 +312,7 @@
         <ActionBar actions={view.actions} lastStep={view.step?.last ?? false} onact={start} />
       {:else}
         <TextSheet
+          handoffId={view.tab.id}
           action={sheet}
           optional={OPTIONAL.has(sheet)}
           scanned={SCANNED.has(sheet)}

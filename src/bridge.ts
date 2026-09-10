@@ -173,8 +173,13 @@ export interface Bridge {
   /** Opens the file a `secrets` entry names, with its default application (SEC-02). */
   openSecretFile(id: string, name: string): Promise<void>;
 
-  /** Runs the certain detector over typed text, before it can be sent (§7.10). */
-  scanTypedText(text: string): Promise<Redacted>;
+  /**
+   * Runs both detectors over typed text, before it can be sent (§7.10, DET-01, DET-03).
+   *
+   * `id` is the handoff the sheet belongs to: its spec's values are the exemption list, so
+   * a value the agent itself sent is not reported as a suspicion.
+   */
+  scanTypedText(id: string, text: string): Promise<Redacted>;
 
   /** The choice the two-option popover highlights, from the last capture (CAP-01). */
   captureSettings(): Promise<CaptureSettings>;
@@ -438,8 +443,8 @@ export function tauriBridge(): Bridge {
     async openSecretFile(id, name) {
       await invoke('open_secret_file', { id, name });
     },
-    async scanTypedText(text) {
-      return invoke<Redacted>('scan_typed_text', { text });
+    async scanTypedText(id, text) {
+      return invoke<Redacted>('scan_typed_text', { id, text });
     },
     async captureSettings() {
       return invoke<CaptureSettings>('capture_settings');
@@ -613,11 +618,11 @@ export function noopBridge(): Bridge {
     },
     async openUrl() {},
     async openSecretFile() {},
-    async scanTypedText(text) {
+    async scanTypedText(_id, text) {
       // Outside the webview there is no detector; saying "nothing was found" here would be
       // a claim this side cannot make, so the text comes back as it went in and the sheet
       // shows it unchanged.
-      return { text, kinds: [] };
+      return { text, kinds: [], reasons: [], segments: [{ text, suspected: false }] };
     },
     async captureSettings() {
       // Nothing was ever captured here, so neither choice is the last one and the popover

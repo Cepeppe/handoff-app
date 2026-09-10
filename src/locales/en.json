@@ -122,6 +122,7 @@
   "sheet.cancel": "Cancel",
   "sheet.willSend": "What the agent will read",
   "sheet.redacted": "A secret was taken out before sending: {kinds}",
+  "sheet.suspected": "Marked below: this may contain a secret. It is sent as written — edit it if it should not be.",
   "notice.actionRefused": "That is no longer available: the handoff has moved on.",
   "notice.actionFailed": "That could not be saved. Nothing changed; try again.",
   "notice.copyFailed": "The clipboard refused the value.",

@@ -20,6 +20,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::log::{HandoffState, Timestamp};
+use crate::redaction::suspected::Exemptions;
 use crate::redaction::typed::{redact, Redacted};
 use crate::requests::queue::Queue;
 use crate::requests::text::render_request_text;
@@ -208,7 +209,8 @@ pub async fn act(
         return Err("the store is not running".to_owned());
     };
 
-    let sent = |what: Option<String>| what.map(|text| redact(&text).text);
+    let exemptions = core.store.exemptions(id.clone()).await;
+    let sent = |what: Option<String>| what.map(|text| redact(&text, &exemptions).text);
     let user_action = match action {
         Action::Confirm => UserAction::Confirm,
         Action::Done => UserAction::Done,
@@ -700,12 +702,24 @@ pub fn set_collapse_fallback(app: AppHandle, enabled: bool) -> Result<(), String
     app.state::<super::Ui>().set_collapse_fallback(enabled)
 }
 
-/// Runs the certain detector over what the user typed (§7.10, DET-01).
+/// Runs both detectors over what the user typed (§7.10, DET-01, DET-03).
 ///
 /// The sheets for Ask, Defer and Abandon call it as the text changes and show what will be
 /// sent, so the redaction is something the user sees before pressing the button rather than
-/// something that happened to their words afterwards.
+/// something that happened to their words afterwards. The suspected level travels with it
+/// as marked runs: those words are still sent, and DET-01 gives the decision to the user.
+///
+/// `id` is the handoff the sheet belongs to, and it is what the exemption list of DET-03 is
+/// read from: a value the agent itself put in the spec is not a suspicion.
 #[tauri::command]
-pub fn scan_typed_text(text: String) -> Redacted {
-    redact(&text)
+pub async fn scan_typed_text(
+    core: State<'_, CoreState>,
+    id: String,
+    text: String,
+) -> Result<Redacted, String> {
+    let exemptions = match core.get().cloned() {
+        Some(core) => core.store.exemptions(id).await,
+        None => Exemptions::none(),
+    };
+    Ok(redact(&text, &exemptions))
 }

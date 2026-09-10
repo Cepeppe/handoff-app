@@ -1,23 +1,30 @@
 //! Typed text, before it leaves the machine (§7.10, DET-01, PRIN-09).
 //!
 //! "Typed text (Ask, comments, edited OCR text) runs through the same detectors before
-//! send" (§7.10). This is the certain half of that sentence: the same patterns the ingress
-//! scan and the screenshot pipeline use, applied to what the user wrote in an Ask, a Defer
-//! or an Abandon sheet, so that the sheet can show the redacted text **before** the send
-//! rather than after it (PREV-01's rule, applied to text the user typed).
+//! send" (§7.10). Both levels are here, and DET-01 gives them two different treatments,
+//! which is the one thing to understand about this file:
 //!
-//! The mask is `[REDACTED:<kind>]`, which is the one §7.10 names for text the app sends.
-//! It is deliberately not the log's `[treated as secret: <kind>]` ([`crate::log::redact`]):
-//! that one is what a stored spec keeps, this one is what an agent reads.
+//! - a **certain** match is "redacted automatically and shown redacted in the preview": the
+//!   span becomes `[REDACTED:<kind>]` and there is no way for the user to put it back;
+//! - a **suspected** match is "highlighted with the warning *may contain a secret*; the
+//!   user decides": the words are marked, and they are sent as they were written.
 //!
-//! Only the **certain** level lives here. The suspected heuristics — long random strings,
-//! tokens next to a `key`/`secret`/`password` label — are T-048's, and the sheet grows a
-//! second, user-decidable level then; a certain match is never the user's to unlock (DET-01).
-// TASK: T-048 — the suspected level over the same text.
+//! The asymmetry with the screenshot pipeline is deliberate and it is the same rule seen
+//! from two sides. A capture is the machine's reading of a screen the user did not compose,
+//! so a flagged box is drawn by default and unlocking it is one click (PREV-02). A sheet
+//! holds a sentence the user has just written, character by character, in the window they
+//! are looking at: marking the words *is* handing them the decision, and quietly rewriting
+//! their sentence would take it away. Nothing is hidden either way — the sheet shows what
+//! the agent will read before the button is pressed.
+//!
+//! The exemption list of DET-03 applies here too: a value the agent itself sent in the spec
+//! is not a suspicion, or every Ask that quotes an endpoint id would carry a warning.
 
 use serde::Serialize;
 
-use super::certain::{scan_text, CertainSecretKind};
+use super::certain::{scan_text as scan_certain, CertainSecretKind};
+use super::splice;
+use super::suspected::{scan_text as scan_suspected, Exemptions};
 
 /// What a redacted text looks like once a certain pattern has matched.
 #[must_use]
@@ -25,56 +32,126 @@ pub fn mask_for(kind: CertainSecretKind) -> String {
     format!("[REDACTED:{}]", kind.as_str())
 }
 
-/// The typed text as it would be sent, and what was taken out of it.
+/// One run of the text the sheet draws, marked or not (DET-01).
 ///
-/// It crosses into the webview, so it carries families and never the matched text (R-19):
-/// the sheet says "an api_key was removed", the value itself is gone by then.
+/// The sheet renders the runs in order, giving the marked ones the warning style, which is
+/// what "highlighted" means for a text a `<textarea>` cannot style in place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TextSegment {
+    /// The characters of this run.
+    pub text: String,
+    /// Whether the suspected detector picked this run out.
+    pub suspected: bool,
+}
+
+/// The typed text as it would be sent, and what the two detectors made of it.
+///
+/// It crosses into the webview. The certain half carries families and never the matched
+/// text (R-19); the suspected half carries the user's own words, which the webview already
+/// has — they are what is in the box they are typing into.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Redacted {
-    /// The text with every certain match replaced by its mask.
+    /// The text with every certain match replaced by its mask. This is what is sent.
     pub text: String,
-    /// The families that matched, in the order they appear, without repetition.
+    /// The certain families that matched, in the order they appear, without repetition.
     pub kinds: Vec<String>,
+    /// The suspected rules that fired, in order, without repetition. Never the words.
+    pub reasons: Vec<String>,
+    /// `text`, cut into runs so that the sheet can mark the suspected ones.
+    pub segments: Vec<TextSegment>,
 }
 
 impl Redacted {
-    /// Whether anything was replaced.
+    /// Whether a certain match was replaced.
     #[must_use]
     pub fn is_redacted(&self) -> bool {
         !self.kinds.is_empty()
     }
+
+    /// Whether the suspected detector has something to warn about.
+    #[must_use]
+    pub fn is_suspected(&self) -> bool {
+        !self.reasons.is_empty()
+    }
 }
 
-/// Runs the certain detector over `text` and replaces every match (§7.10).
-#[must_use]
-pub fn redact(text: &str) -> Redacted {
-    let hits = scan_text(text);
-    if hits.is_empty() {
-        return Redacted {
-            text: text.to_owned(),
-            kinds: Vec::new(),
-        };
+/// Where each mask ended up in the spliced text.
+///
+/// `replacements` is what [`splice`] was given, sorted and non-overlapping, so walking it
+/// once is enough: every span before a mask keeps its length, and the mask's own length is
+/// what moves the rest along.
+fn spans_of_masks(replacements: &[(usize, usize, String)]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::with_capacity(replacements.len());
+    let mut source = 0_usize;
+    let mut target = 0_usize;
+    for (start, end, mask) in replacements {
+        target += start.saturating_sub(source);
+        spans.push((target, target + mask.len()));
+        target += mask.len();
+        source = *end;
     }
+    spans
+}
 
-    let mut redacted = String::with_capacity(text.len());
+/// Runs both detectors over `text` and applies each level's treatment (§7.10, DET-01).
+#[must_use]
+pub fn redact(text: &str, exempt: &Exemptions) -> Redacted {
+    let hits = scan_certain(text);
     let mut kinds: Vec<String> = Vec::new();
+    let replacements: Vec<(usize, usize, String)> = hits
+        .iter()
+        .map(|hit| {
+            let kind = hit.kind.as_str().to_owned();
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+            (hit.start, hit.end, mask_for(hit.kind))
+        })
+        .collect();
+    let masked = splice(text, &replacements);
+    let mask_spans = spans_of_masks(&replacements);
+
+    // The suspected pass runs on the **masked** text, so that its spans are offsets into
+    // what is actually sent; the masks themselves are then skipped, or a text made only of
+    // them would be reported as suspicious in its own right.
+    let mut reasons: Vec<String> = Vec::new();
+    let mut segments: Vec<TextSegment> = Vec::new();
     let mut cursor = 0_usize;
-    for hit in hits {
-        // `scan_text` returns non-overlapping hits ordered by position, so the spans are
-        // walked once, left to right, with no bookkeeping.
-        redacted.push_str(&text[cursor..hit.start]);
-        redacted.push_str(&mask_for(hit.kind));
-        let kind = hit.kind.as_str().to_owned();
-        if !kinds.contains(&kind) {
-            kinds.push(kind);
+    for hit in scan_suspected(&masked, exempt) {
+        if mask_spans
+            .iter()
+            .any(|(start, end)| hit.start < *end && *start < hit.end)
+        {
+            continue;
         }
+        let reason = hit.reason.as_str().to_owned();
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+        if hit.start > cursor {
+            segments.push(TextSegment {
+                text: masked[cursor..hit.start].to_owned(),
+                suspected: false,
+            });
+        }
+        segments.push(TextSegment {
+            text: masked[hit.start..hit.end].to_owned(),
+            suspected: true,
+        });
         cursor = hit.end;
     }
-    redacted.push_str(&text[cursor..]);
+    if cursor < masked.len() {
+        segments.push(TextSegment {
+            text: masked[cursor..].to_owned(),
+            suspected: false,
+        });
+    }
 
     Redacted {
-        text: redacted,
+        text: masked,
         kinds,
+        reasons,
+        segments,
     }
 }
 
@@ -85,18 +162,31 @@ mod tests {
     /// A key of the AWS shape, which `patterns/certain-secrets.v1.json` calls an `api_key`.
     const AWS_KEY: &str = "AKIAIOSFODNN7EXAMPLE";
 
+    fn plain(text: &str) -> Redacted {
+        redact(text, &Exemptions::none())
+    }
+
     #[test]
     fn ordinary_text_is_left_exactly_as_it_was() {
         let text = "The webhook did not fire. Step 2 says to click Save, and I did.";
-        let redacted = redact(text);
+        let redacted = plain(text);
         assert_eq!(redacted.text, text);
         assert!(redacted.kinds.is_empty());
+        assert!(redacted.reasons.is_empty());
         assert!(!redacted.is_redacted());
+        assert!(!redacted.is_suspected());
+        assert_eq!(
+            redacted.segments,
+            vec![TextSegment {
+                text: text.to_owned(),
+                suspected: false
+            }]
+        );
     }
 
     #[test]
     fn a_certain_secret_is_replaced_and_its_family_is_reported() {
-        let redacted = redact(&format!("I pasted {AWS_KEY} and it was refused"));
+        let redacted = plain(&format!("I pasted {AWS_KEY} and it was refused"));
         assert_eq!(
             redacted.text,
             "I pasted [REDACTED:api_key] and it was refused"
@@ -113,7 +203,7 @@ mod tests {
     fn only_the_span_is_replaced_so_the_sentence_survives() {
         // The rule the server settled in T-014 and the log follows: what is masked is the
         // match, never the field, or a question would lose the question.
-        let redacted = redact(&format!("why does {AWS_KEY} not work?"));
+        let redacted = plain(&format!("why does {AWS_KEY} not work?"));
         assert!(redacted.text.starts_with("why does "));
         assert!(redacted.text.ends_with(" not work?"));
     }
@@ -121,7 +211,7 @@ mod tests {
     #[test]
     fn several_matches_are_all_replaced_and_each_family_named_once() {
         let text = format!("first {AWS_KEY} then {AWS_KEY}");
-        let redacted = redact(&text);
+        let redacted = plain(&text);
         assert_eq!(
             redacted.text,
             "first [REDACTED:api_key] then [REDACTED:api_key]"
@@ -143,7 +233,44 @@ mod tests {
     fn text_around_a_multi_byte_character_is_cut_on_character_boundaries() {
         // The spans are byte offsets; a slice on the wrong boundary would panic rather than
         // fail, and a user writing in Italian or pasting a → is the ordinary case.
-        let redacted = redact(&format!("però {AWS_KEY} → niente"));
+        let redacted = plain(&format!("però {AWS_KEY} → niente"));
         assert_eq!(redacted.text, "però [REDACTED:api_key] → niente");
+    }
+
+    #[test]
+    fn a_suspected_token_is_marked_and_still_sent() {
+        // DET-01: the user decides. The words reach the agent; the sheet says which ones
+        // the detector is unsure about.
+        let redacted = plain("the password is hunter2-tango");
+        assert_eq!(redacted.text, "the password is hunter2-tango");
+        assert_eq!(redacted.reasons, vec!["label".to_owned()]);
+        assert!(redacted.is_suspected());
+        assert_eq!(
+            redacted.segments,
+            vec![
+                TextSegment {
+                    text: "the password is ".to_owned(),
+                    suspected: false
+                },
+                TextSegment {
+                    text: "hunter2-tango".to_owned(),
+                    suspected: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_spec_value_the_agent_sent_is_not_a_suspicion() {
+        let text = "I cannot find we_1P9xTz2eZvKYlo2C0Sd8h4kL on the page";
+        assert!(plain(text).is_suspected());
+        let exempt = Exemptions::of_values(["we_1P9xTz2eZvKYlo2C0Sd8h4kL"]);
+        assert!(!redact(text, &exempt).is_suspected());
+    }
+
+    #[test]
+    fn a_mask_is_never_itself_flagged_as_a_long_random_token() {
+        let redacted = plain(&format!("{AWS_KEY} {AWS_KEY} {AWS_KEY}"));
+        assert!(redacted.reasons.is_empty(), "{:?}", redacted.reasons);
     }
 }

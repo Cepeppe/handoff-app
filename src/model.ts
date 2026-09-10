@@ -283,12 +283,28 @@ export type ActionName =
   | 'close_orphan'
   | 'relink';
 
-/** What the certain detector made of a typed text (§7.10). */
+/** One run of a typed text, marked when the suspected detector picked it out (DET-01). */
+export interface TextSegment {
+  text: string;
+  suspected: boolean;
+}
+
+/** What the two detectors made of a typed text (§7.10, DET-01). */
 export interface Redacted {
   /** The text as it would be sent, with every certain match replaced. */
   text: string;
   /** The families that matched, in order, without repetition. Never the matched text. */
   kinds: string[];
+  /**
+   * The suspected rules that fired, in order, without repetition.
+   *
+   * A suspected match is **not** replaced: DET-01 gives the decision to the user, and in a
+   * sheet the user's decision is their own hands on their own sentence. The sheet marks
+   * the words and sends what was typed.
+   */
+  reasons: string[];
+  /** `text`, cut into runs so the sheet can mark the suspected ones. */
+  segments: TextSegment[];
 }
 
 /** How loudly a notice is shown. */

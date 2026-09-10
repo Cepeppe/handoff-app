@@ -238,6 +238,8 @@ describe('the overlay', () => {
     vi.mocked(bridge.scanTypedText).mockResolvedValue({
       text: 'I pasted [REDACTED:api_key]',
       kinds: ['api_key'],
+      reasons: [],
+      segments: [{ text: 'I pasted [REDACTED:api_key]', suspected: false }],
     });
 
     screen.getByRole('button', { name: 'Ask' }).click();
@@ -246,10 +248,45 @@ describe('the overlay', () => {
 
     await waitFor(() => expect(screen.getByText('I pasted [REDACTED:api_key]')).toBeDefined());
     expect(screen.getByText('A secret was taken out before sending: api_key')).toBeDefined();
+    expect(bridge.scanTypedText).toHaveBeenCalledWith(ID, 'I pasted AKIAIOSFODNN7EXAMPLE');
 
     screen.getByRole('button', { name: 'Send' }).click();
     await waitFor(() =>
       expect(bridge.act).toHaveBeenCalledWith(ID, 'ask', 'I pasted [REDACTED:api_key]'),
+    );
+  });
+
+  it('marks a suspected passage and sends it as it was written (DET-01)', async () => {
+    // The two levels are not treated alike: a certain match is already gone from the
+    // preview, a suspected one is marked and the user's own sentence is what leaves.
+    const bridge = await open();
+    vi.mocked(bridge.scanTypedText).mockResolvedValue({
+      text: 'the password is hunter2-tango',
+      kinds: [],
+      reasons: ['label'],
+      segments: [
+        { text: 'the password is ', suspected: false },
+        { text: 'hunter2-tango', suspected: true },
+      ],
+    });
+
+    screen.getByRole('button', { name: 'Ask' }).click();
+    await tick();
+    await type('the password is hunter2-tango');
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Marked below: this may contain a secret. It is sent as written — edit it if it should not be.',
+        ),
+      ).toBeDefined(),
+    );
+    expect(screen.getByText('hunter2-tango').tagName).toBe('MARK');
+    expect(screen.queryByText(/A secret was taken out/)).toBeNull();
+
+    screen.getByRole('button', { name: 'Send' }).click();
+    await waitFor(() =>
+      expect(bridge.act).toHaveBeenCalledWith(ID, 'ask', 'the password is hunter2-tango'),
     );
   });
 

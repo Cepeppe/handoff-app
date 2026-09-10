@@ -420,6 +420,18 @@ body {
   color: var(--warning);
 }
 
+.sheet-suspected {
+  margin: 0;
+  font-size: 12px;
+  color: var(--warning);
+}
+
+.sheet-mark {
+  background: var(--warning);
+  color: var(--surface);
+  border-radius: 2px;
+}
+
 .sheet-preview {
   margin: 0;
   padding: 6px 8px;
