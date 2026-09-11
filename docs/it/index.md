@@ -19,6 +19,8 @@ sono ancora disponibili. [English](../index.md)
   fine turno, e come controllare la registrazione.
 - [Cursor](agents/cursor.md) — che cosa funziona con l'editor di Cursor e con la sua Agent CLI,
   che cosa cambia senza un hook di fine turno, e come controllare la registrazione.
+- [GitHub Copilot](agents/copilot.md) — che cosa funziona con Copilot in VS Code e nella Copilot
+  CLI, che cosa cambia senza un hook di fine turno, e come controllare la registrazione.
 - [OpenCode](agents/opencode.md) — che cosa funziona con OpenCode, che cosa cambia senza un
   hook di fine turno, e come controllare la registrazione.
 

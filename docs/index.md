@@ -19,6 +19,8 @@ yet. [Italiano](it/index.md)
   hook, and how to check the registration.
 - [Cursor](agents/cursor.md) — what works with Cursor's editor and its Agent CLI, what changes
   without an end-of-turn hook, and how to check the registration.
+- [GitHub Copilot](agents/copilot.md) — what works with Copilot in VS Code and in the Copilot
+  CLI, what changes without an end-of-turn hook, and how to check the registration.
 - [OpenCode](agents/opencode.md) — what works with OpenCode, what changes without an
   end-of-turn hook, and how to check the registration.
 

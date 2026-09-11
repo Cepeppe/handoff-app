@@ -39,8 +39,13 @@ const PAGES = [
   'third-party-notices.md',
 ] as const;
 
-/** The pages about one agent each, under `agents/` in both languages (T-067, T-074, T-070). */
-const AGENT_PAGES = ['agents/codex.md', 'agents/cursor.md', 'agents/opencode.md'] as const;
+/** The pages about one agent each, under `agents/` in both languages (T-067, T-074, T-070, T-072). */
+const AGENT_PAGES = [
+  'agents/codex.md',
+  'agents/copilot.md',
+  'agents/cursor.md',
+  'agents/opencode.md',
+] as const;
 
 /** A page, with its line endings normalised: the check is about the words. */
 function read(...path: string[]): string {
@@ -244,6 +249,22 @@ describe('what the pages must say', () => {
     }
     for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
       expect(page).toContain('"HANDOFF_AGENT": "cursor"');
+    }
+  });
+
+  it('tells a GitHub Copilot user what Baton writes on each surface and what it leaves to them (T-072)', () => {
+    for (const page of [read('agents', 'copilot.md'), read('it', 'agents', 'copilot.md')]) {
+      // The two files, one per surface, the project file that is not Claude Code's, the command
+      // that lists the entry, and the one allowance Baton leaves to the user for print mode.
+      expect(page).toContain('.copilot\\mcp-config.json');
+      expect(page).toContain('Code\\User\\mcp.json');
+      expect(page).toContain('.github\\mcp.json');
+      expect(page).toContain('copilot mcp list');
+      expect(page).toContain('--allow-tool=handoff');
+    }
+    for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
+      expect(page).toContain('"HANDOFF_AGENT": "copilot"');
+      expect(page).toContain('"type": "stdio"');
     }
   });
 

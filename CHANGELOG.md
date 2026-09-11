@@ -13,6 +13,37 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-11
+
+GitHub Copilot joins Claude Code, Codex, OpenCode and Cursor, in VS Code and in the Copilot CLI.
+
+### Added
+
+- The GitHub Copilot installation adapter: two changes, shown on the consent screen and
+  removable together from Settings → Agents, with every other server of each file kept in its
+  order. The MCP server entry for the Copilot CLI, in `~/.copilot/mcp-config.json` (or where
+  `COPILOT_HOME` points), with a 30-minute tool timeout and every tool of the server; and the MCP
+  server entry for VS Code, whose chat is Copilot's, in VS Code's user `mcp.json`. A project
+  installation writes `.github\mcp.json` and `.vscode\mcp.json` in the project, leaving the
+  `.mcp.json` Claude Code reads alone. A file with comments in it is refused rather than
+  rewritten. Copilot has base support, and `docs/agents/copilot.md` says what that changes:
+  nothing reminds the agent at the end of a turn, your requests reach it by the clipboard, and
+  the Copilot CLI's print mode needs `--allow-tool=handoff` to call Baton's tools.
+- A session VS Code starts is shown under the folder of its window, one session per window,
+  which VS Code gives to the server only as the roots of its MCP client.
+- A GitHub Copilot subset of the end-to-end suite, run by hand with
+  `scripts\e2e.ps1 -Agent copilot`: the session of VS Code, measured by launching a VS Code of
+  its own with no chat request, and five scenarios against the Copilot CLI.
+
+### Changed
+
+- A Stop hook is matched only to the nearest session above it in the process tree, and to none
+  when that session's agent runs no hook of Baton's: the Copilot CLI runs a project's Claude Code
+  hooks as its own, and such a hook can no longer be taken for one of a Claude Code session
+  further up.
+
+Bundles `handoff-mcp` 1.6.0.
+
 ## [1.5.0] - 2026-09-11
 
 Cursor joins Claude Code, Codex and OpenCode, in its editor and in its Agent CLI. `1.2.0` and

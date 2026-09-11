@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "handoff": {
+      "type": "local",
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "copilot",
+        "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+      },
+      "tools": [
+        "*"
+      ],
+      "timeout": 1800000
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "handoff": {
+      "type": "stdio",
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "copilot"
+      }
+    }
+  }
+}

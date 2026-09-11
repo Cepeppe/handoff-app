@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    self, survives_project_scope, Codex, Cursor, InstallAdapter, InstallError, Modification,
-    OpenCode, Registration, Scope,
+    self, survives_project_scope, Codex, Copilot, Cursor, InstallAdapter, InstallError,
+    Modification, OpenCode, Registration, Scope,
 };
 use serde_json::Value;
 
@@ -96,6 +96,17 @@ impl TempHome {
     fn cursor(&self) -> Cursor {
         Cursor::with(
             self.join(".cursor"),
+            SERVER,
+            self.join(".handoff/channel.token"),
+        )
+    }
+
+    /// The GitHub Copilot adapter over the same home: the CLI's folder is `<home>/.copilot`,
+    /// and VS Code's user folder is where Windows keeps it, `<home>/AppData/Roaming/Code/User`.
+    fn copilot(&self) -> Copilot {
+        Copilot::with(
+            self.join(".copilot"),
+            self.join("AppData/Roaming/Code/User"),
             SERVER,
             self.join(".handoff/channel.token"),
         )
@@ -1513,18 +1524,21 @@ fn cursor_detect_names_the_file_of_the_scope_and_finds_cursor_by_its_folder() {
 }
 
 #[test]
-fn four_agents_in_one_home_do_not_touch_each_others_files() {
-    // One machine, four agents: each adapter writes its own files and nothing of the others'.
+fn five_agents_in_one_home_do_not_touch_each_others_files() {
+    // One machine, five agents: each adapter writes its own files and nothing of the others'.
     let home = TempHome::from_case("populated");
     install(&home.adapter(), &Scope::User);
     install(&home.codex(), &Scope::User);
     install(&home.cursor(), &Scope::User);
+    install(&home.copilot(), &Scope::User);
     install(&home.opencode(), &Scope::User);
 
     assert_matches(&home, "populated", "out");
     for (case, relative) in [
         ("opencode-empty", OPENCODE_CONFIG),
         ("cursor-empty", CURSOR_CONFIG),
+        ("copilot-empty", COPILOT_CLI_CONFIG),
+        ("copilot-empty", COPILOT_VSCODE_CONFIG),
     ] {
         let golden = fs::read_to_string(fixture_dir(case).join("out").join(relative))
             .expect("the golden is readable")
@@ -1535,4 +1549,257 @@ fn four_agents_in_one_home_do_not_touch_each_others_files() {
             "{relative}"
         );
     }
+}
+
+// ------------------------------------------------------ the GitHub Copilot adapter (T-072)
+//
+// Two files, one per surface: the Copilot CLI's `mcp-config.json` under `mcpServers`, and VS
+// Code's `mcp.json` under `servers`, each keeping every server the user had, in order.
+
+/// The CLI's configuration inside a temporary home.
+const COPILOT_CLI_CONFIG: &str = ".copilot/mcp-config.json";
+
+/// VS Code's user configuration inside a temporary home.
+const COPILOT_VSCODE_CONFIG: &str = "AppData/Roaming/Code/User/mcp.json";
+
+#[test]
+fn copilot_on_a_machine_with_no_configuration_at_all() {
+    let home = TempHome::from_case("copilot-empty");
+    let plan = install(&home.copilot(), &Scope::User);
+
+    // Two modifications, one per surface, and no hook: none of Copilot's answers ours (T-072).
+    assert_eq!(plan.len(), 2);
+    assert!(plan
+        .iter()
+        .all(|modification| modification.before.is_none() && !modification.is_noop()));
+    assert_matches(&home, "copilot-empty", "out");
+    assert!(
+        home.join(".handoff/channel.token").is_file(),
+        "the channel token was not created"
+    );
+    assert!(backups_of(&home, COPILOT_CLI_CONFIG).is_empty());
+    assert!(backups_of(&home, COPILOT_VSCODE_CONFIG).is_empty());
+}
+
+#[test]
+fn copilot_keeps_every_server_the_user_had_in_both_files() {
+    let home = TempHome::from_case("copilot-populated");
+    install(&home.copilot(), &Scope::User);
+    assert_matches(&home, "copilot-populated", "out");
+    assert_eq!(backups_of(&home, COPILOT_CLI_CONFIG).len(), 1);
+    assert_eq!(backups_of(&home, COPILOT_VSCODE_CONFIG).len(), 1);
+}
+
+#[test]
+fn copilot_uninstall_gives_both_files_back_byte_for_byte() {
+    let home = TempHome::from_case("copilot-populated");
+    let adapter = home.copilot();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    assert_matches(&home, "copilot-populated", "in");
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+}
+
+#[test]
+fn copilot_applying_twice_writes_nothing_the_second_time() {
+    let home = TempHome::from_case("copilot-populated");
+    let adapter = home.copilot();
+    install(&adapter, &Scope::User);
+    let cli = fs::read_to_string(home.join(COPILOT_CLI_CONFIG)).expect("written");
+    let vscode = fs::read_to_string(home.join(COPILOT_VSCODE_CONFIG)).expect("written");
+
+    let second = adapter.plan(&Scope::User).expect("the plan is made");
+    assert_eq!(second.len(), 2);
+    assert!(
+        second.iter().all(Modification::is_noop),
+        "a second plan still wants to change something"
+    );
+    adapter.apply(&second).expect("the plan is applied");
+
+    assert_eq!(
+        fs::read_to_string(home.join(COPILOT_CLI_CONFIG)).expect("written"),
+        cli
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(COPILOT_VSCODE_CONFIG)).expect("written"),
+        vscode
+    );
+    assert_eq!(backups_of(&home, COPILOT_CLI_CONFIG).len(), 1);
+    assert_eq!(backups_of(&home, COPILOT_VSCODE_CONFIG).len(), 1);
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn copilot_uninstall_where_ours_was_the_only_server_leaves_the_empty_objects() {
+    let home = TempHome::from_case("copilot-empty");
+    let adapter = home.copilot();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    // `mcpServers` and `servers` were ours to create, so each goes with our entry.
+    for relative in [COPILOT_CLI_CONFIG, COPILOT_VSCODE_CONFIG] {
+        assert_eq!(
+            fs::read_to_string(home.join(relative)).expect("written"),
+            "{}\n",
+            "{relative}"
+        );
+    }
+}
+
+#[test]
+fn copilot_project_scope_writes_the_projects_files_and_not_the_users() {
+    let home = TempHome::from_case("copilot-project");
+    let project = home.path().to_path_buf();
+    let adapter = Copilot::with(
+        home.join("elsewhere/.copilot"),
+        home.join("elsewhere/Code/User"),
+        SERVER,
+        home.join(".handoff/channel.token"),
+    );
+    let scope = Scope::project(&project);
+
+    let plan = install(&adapter, &scope);
+    assert_eq!(plan[0].file, project.join(".github").join("mcp.json"));
+    assert_eq!(plan[1].file, project.join(".vscode").join("mcp.json"));
+    assert_matches(&home, "copilot-project", "out");
+    assert!(
+        !home.join("elsewhere/.copilot/mcp-config.json").exists()
+            && !home.join("elsewhere/Code/User/mcp.json").exists(),
+        "project scope wrote into the user's files"
+    );
+    // The CLI reads a project's `.mcp.json` too, and that one is Claude Code's.
+    assert!(!project.join(".mcp.json").exists());
+    assert_eq!(adapter.verify(&scope), Registration::Registered);
+}
+
+#[test]
+fn copilot_a_moved_bundle_is_a_path_mismatch_repaired_where_the_entries_stand() {
+    // FM-23: both entries are ours and name the old path. The repair rewrites each in place and
+    // changes nothing else.
+    let home = TempHome::from_case("copilot-moved");
+    let adapter = home.copilot();
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::PathMismatch {
+            registered: PathBuf::from(OLD_SERVER),
+            current: PathBuf::from(SERVER),
+        }
+    );
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    for modification in &plan {
+        assert!(
+            modification.diff.contains(OLD_SERVER) && modification.diff.contains(SERVER),
+            "the diff does not show the old path being replaced:\n{}",
+            modification.diff
+        );
+    }
+    adapter.apply(&plan).expect("the repair is applied");
+
+    assert_matches(&home, "copilot-moved", "out");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn copilot_one_surface_registered_is_partly_registered() {
+    // The CLI's entry is there and VS Code's is not: the repair offer names the missing one.
+    let home = TempHome::from_case("copilot-empty");
+    let adapter = home.copilot();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    adapter
+        .apply(&plan[..1])
+        .expect("the CLI's entry is applied");
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::Partial {
+            missing: vec!["mcp.json · servers.handoff".to_owned()],
+        }
+    );
+}
+
+#[test]
+fn copilot_a_vscode_file_with_comments_is_refused_and_nothing_is_written() {
+    // A JSON parse would lose the comments (INST-04): the file is the user's, so the adapter
+    // refuses the whole plan and writes neither file.
+    let home = TempHome::from_case("copilot-populated");
+    let adapter = home.copilot();
+    let commented = "{\n  // the servers I use\n  \"servers\": {}\n}\n";
+    fs::write(home.join(COPILOT_VSCODE_CONFIG), commented).expect("the file is rewritten");
+    let cli_before = fs::read_to_string(home.join(COPILOT_CLI_CONFIG)).expect("it is there");
+
+    assert!(matches!(
+        adapter.plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert!(matches!(
+        adapter.uninstall(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(home.join(COPILOT_VSCODE_CONFIG)).expect("it is still there"),
+        commented
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(COPILOT_CLI_CONFIG)).expect("it is still there"),
+        cli_before
+    );
+}
+
+#[test]
+fn copilot_servers_that_are_not_an_object_are_refused_rather_than_replaced() {
+    let home = TempHome::from_case("copilot-empty");
+    let file = home.join(COPILOT_CLI_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let odd = "{\n  \"mcpServers\": []\n}\n";
+    fs::write(&file, odd).expect("the file is written");
+
+    assert!(matches!(
+        home.copilot().plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), odd);
+}
+
+#[test]
+fn copilot_the_consent_screen_shows_one_line_per_surface() {
+    let home = TempHome::from_case("copilot-empty");
+    let adapter = home.copilot();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let lines = adapter.consent_lines(&plan);
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].description.key, "install.copilot.cliEntry");
+    assert_eq!(
+        lines[0].description.args.get("minutes").map(String::as_str),
+        Some("30")
+    );
+    assert_eq!(lines[1].description.key, "install.copilot.vscodeEntry");
+    assert!(!lines[1].description.args.contains_key("minutes"));
+    for line in &lines {
+        assert!(!line.diff.to_lowercase().contains("hook"), "{}", line.diff);
+    }
+}
+
+#[test]
+fn copilot_detect_names_both_files_of_the_scope() {
+    let home = TempHome::from_case("copilot-populated");
+    let detection = home.copilot().detect(&Scope::User);
+
+    assert_eq!(detection.agent_id, "copilot");
+    // `.copilot/` exists in the fixture, which is enough on a runner with neither surface.
+    assert!(detection.found);
+    assert_eq!(
+        detection.config_files,
+        vec![
+            home.join(COPILOT_CLI_CONFIG),
+            home.join(COPILOT_VSCODE_CONFIG)
+        ]
+    );
+    assert_eq!(detection.version, None);
 }

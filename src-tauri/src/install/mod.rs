@@ -14,6 +14,10 @@
 //! because OpenCode has none to register. Cursor writes one as well (T-070): its
 //! `mcpServers.handoff` entry in `mcp.json`, read by its editor and its Agent CLI alike, with no
 //! timeout, because Cursor reads none, and no hook, because none of Cursor's reaches ours.
+//! GitHub Copilot writes two (T-072), one per surface: the Copilot CLI's `mcpServers.handoff`
+//! in `mcp-config.json`, with the timeout in milliseconds, and VS Code's `servers.handoff` in
+//! its `mcp.json`, with none; and no hook, because neither surface answers ours in a way both
+//! act on.
 //!
 //! # Three rules that shape everything below
 //!
@@ -41,6 +45,7 @@
 pub mod claude_code;
 pub mod cleanup;
 pub mod codex;
+pub mod copilot;
 pub mod cursor;
 pub mod diff;
 pub mod error;
@@ -59,6 +64,7 @@ use sha2::{Digest as _, Sha256};
 
 pub use claude_code::ClaudeCode;
 pub use codex::Codex;
+pub use copilot::Copilot;
 pub use cursor::Cursor;
 pub use error::{InstallError, Result};
 pub use opencode::OpenCode;
@@ -527,7 +533,8 @@ pub fn apply(plan: &[Modification]) -> Result<()> {
 /// One configuration file as [`apply`] edits it, in the syntax its agent reads.
 enum Config {
     /// Claude Code's `~/.claude.json`, `settings.json`, a project's `.mcp.json`; OpenCode's
-    /// `opencode.json`; Cursor's `mcp.json`.
+    /// `opencode.json`; Cursor's `mcp.json`; the Copilot CLI's `mcp-config.json` and VS Code's
+    /// `mcp.json`.
     Json(Document),
     /// Codex's `config.toml`.
     Toml(toml::Document),

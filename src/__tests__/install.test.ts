@@ -115,6 +115,48 @@ function opencodePlan(): ConsentView {
   };
 }
 
+const COPILOT_CLI_DIFF =
+  '--- mcp-config.json · mcpServers.handoff (absent)\n+++ mcp-config.json · mcpServers.handoff\n' +
+  '+{\n+  "type": "local",\n+  "command": "/apps/Baton/handoff-mcp",\n+  "args": [],\n' +
+  '+  "env": {\n+    "HANDOFF_AGENT": "copilot",\n+    "HANDOFF_TOOL_TIMEOUT_MS": "1800000"\n+  },\n' +
+  '+  "tools": [\n+    "*"\n+  ],\n+  "timeout": 1800000\n+}\n';
+
+const COPILOT_VSCODE_DIFF =
+  '--- mcp.json · servers.handoff (absent)\n+++ mcp.json · servers.handoff\n' +
+  '+{\n+  "type": "stdio",\n+  "command": "/apps/Baton/handoff-mcp",\n+  "args": [],\n' +
+  '+  "env": {\n+    "HANDOFF_AGENT": "copilot"\n+  }\n+}\n';
+
+/** GitHub Copilot's plan on an empty machine: two modifications on two rows, one per surface. */
+function copilotPlan(): ConsentView {
+  return {
+    agentId: 'copilot',
+    nameKey: 'agent.copilot',
+    modificationCount: 2,
+    digest: 'g1',
+    alreadyInOrder: false,
+    lines: [
+      {
+        description: {
+          key: 'install.copilot.cliEntry',
+          args: { file: 'mcp-config.json', server: '/apps/Baton/handoff-mcp', minutes: '30' },
+        },
+        locations: ['mcp-config.json · mcpServers.handoff'],
+        diff: COPILOT_CLI_DIFF,
+        isNoop: false,
+      },
+      {
+        description: {
+          key: 'install.copilot.vscodeEntry',
+          args: { file: 'mcp.json', server: '/apps/Baton/handoff-mcp' },
+        },
+        locations: ['mcp.json · servers.handoff'],
+        diff: COPILOT_VSCODE_DIFF,
+        isNoop: false,
+      },
+    ],
+  };
+}
+
 const CURSOR_DIFF =
   '--- mcp.json · mcpServers.handoff (absent)\n+++ mcp.json · mcpServers.handoff\n' +
   '+{\n+  "command": "/apps/Baton/handoff-mcp",\n+  "args": [],\n' +
@@ -406,6 +448,59 @@ describe('the consent screen (INST-01, INST-02)', () => {
       expect(line, language).toContain('{server}');
       expect(line, language).not.toContain('{minutes}');
       expect(line.toLowerCase(), language).not.toMatch(/approv|timeout/u);
+    }
+  });
+
+  it('lists GitHub Copilot as two changes on two rows, one per surface (T-072)', async () => {
+    setBridge(
+      fakeBridge({
+        agents: vi.fn(async () => [
+          agent({
+            agentId: 'copilot',
+            nameKey: 'agent.copilot',
+            configFiles: [
+              '/home/x/.copilot/mcp-config.json',
+              '/home/x/.config/Code/User/mcp.json',
+            ],
+          }),
+        ]),
+        consentPlan: vi.fn(async () => copilotPlan()),
+      }),
+    );
+    render(AgentsSettings);
+
+    fireEvent.click(await screen.findByText(t('install.register')));
+
+    await screen.findByText(t('install.consentIntro', { count: 2, agent: t('agent.copilot') }));
+    expect(screen.getAllByText(t('install.show'))).toHaveLength(2);
+    expect(
+      screen.getByText(
+        t('install.copilot.cliEntry', {
+          file: 'mcp-config.json',
+          server: '/apps/Baton/handoff-mcp',
+          minutes: '30',
+        }),
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        t('install.copilot.vscodeEntry', { file: 'mcp.json', server: '/apps/Baton/handoff-mcp' }),
+      ),
+    ).toBeTruthy();
+  });
+
+  it('names the timeout on the CLI line alone, and grants nothing on either (T-072)', () => {
+    // The CLI honours the entry's timeout and VS Code's file has none (T-072): a minute count on
+    // VS Code's line would promise a limit never set, and neither line grants a permission.
+    for (const language of LANGUAGES) {
+      const cli = catalogue(language)['install.copilot.cliEntry'] ?? '';
+      const vscode = catalogue(language)['install.copilot.vscodeEntry'] ?? '';
+      expect(cli, language).toContain('{minutes}');
+      expect(vscode, language).not.toContain('{minutes}');
+      for (const line of [cli, vscode]) {
+        expect(line, language).toContain('{server}');
+        expect(line.toLowerCase(), language).not.toMatch(/approv/u);
+      }
     }
   });
 

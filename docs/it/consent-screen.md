@@ -137,6 +137,66 @@ Baton aggiunge questa voce dentro `"mcpServers"`, o crea il file con questa voce
 - Non c'è nessuna riga di approvazione: Cursor chiede prima di usare uno degli strumenti di
   Baton, come per qualunque server.
 
+## Le modifiche per GitHub Copilot
+
+Sono due, una per ogni posto in cui gira Copilot, e nessuna è un hook: nessuno degli hook di
+Copilot può arrivare a Baton; [GitHub Copilot](agents/copilot.md) spiega che cosa cambia.
+
+### 1. La voce del server MCP per la Copilot CLI, in `%USERPROFILE%\.copilot\mcp-config.json`
+
+> La voce del server MCP “handoff” per la Copilot CLI, in `mcp-config.json`, che esegue
+> `C:\Users\tu\AppData\Local\Baton\handoff-mcp.exe` con un timeout degli strumenti di 30 minuti
+
+Baton aggiunge questa voce dentro `"mcpServers"`, o crea il file con questa voce:
+
+```json
+"handoff": {
+  "type": "local",
+  "command": "C:\\Users\\you\\AppData\\Local\\Baton\\handoff-mcp.exe",
+  "args": [],
+  "env": {
+    "HANDOFF_AGENT": "copilot",
+    "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+  },
+  "tools": [
+    "*"
+  ],
+  "timeout": 1800000
+}
+```
+
+- `command`, `HANDOFF_AGENT` e `HANDOFF_TOOL_TIMEOUT_MS` fanno quello che fanno per Claude
+  Code, sopra. `"tools": ["*"]` offre tutti gli strumenti del server di Baton, ed è così che la
+  CLI scrive una voce da sé.
+- `"timeout": 1800000` sono gli stessi 30 minuti di Claude Code, in millisecondi.
+- Non c'è nessuna riga di approvazione: niente qui permette alla CLI di usare uno degli
+  strumenti di Baton senza chiedere.
+
+### 2. La voce del server MCP per VS Code, in `%APPDATA%\Code\User\mcp.json`
+
+> La voce del server MCP “handoff” per VS Code, in `mcp.json`, che esegue
+> `C:\Users\tu\AppData\Local\Baton\handoff-mcp.exe`
+
+Baton aggiunge questa voce dentro `"servers"`, o crea il file con questa voce:
+
+```json
+"handoff": {
+  "type": "stdio",
+  "command": "C:\\Users\\you\\AppData\\Local\\Baton\\handoff-mcp.exe",
+  "args": [],
+  "env": {
+    "HANDOFF_AGENT": "copilot"
+  }
+}
+```
+
+- Non c'è nessun timeout: VS Code non ne legge nessuno da una voce, quindi non c'è niente da
+  alzare, e `HANDOFF_TOOL_TIMEOUT_MS` è lasciato fuori apposta, perché il server di Baton tenga
+  il suo battito di cinquanta secondi
+  ([GitHub Copilot](agents/copilot.md#quanto-dura-una-chiamata)).
+- Non c'è nessuna riga di approvazione: VS Code chiede prima che una chat usi uno degli
+  strumenti di Baton, come per qualunque server.
+
 ## La modifica per OpenCode
 
 Anche qui è una sola, perché OpenCode non ha nessun hook da registrare;
@@ -191,12 +251,12 @@ com'è, all'installazione e alla rimozione.
 - Tutto il resto del file rimane: ogni chiave e ogni valore che avevi, nello stesso ordine e
   con la stessa indentazione. Le righe vuote tra una voce e l'altra non vengono conservate. Nel
   `config.toml` di Codex restano anche i commenti e le righe vuote, e il modo in cui è scritto
-  ogni valore. L'`opencode.json` di OpenCode e il `mcp.json` di Cursor vengono modificati come i
-  file di Claude Code, e uno che contiene dei commenti non viene modificato affatto: Baton lo
-  dice invece.
-- Claude Code, Codex, Cursor e OpenCode leggono le loro impostazioni quando una sessione parte —
-  l'editor di Cursor quando si apre una finestra — quindi riavvia le sessioni che erano già
-  aperte.
+  ogni valore. L'`opencode.json` di OpenCode, il `mcp.json` di Cursor e i due file di GitHub
+  Copilot vengono modificati come i file di Claude Code, e uno che contiene dei commenti non
+  viene modificato affatto: Baton lo dice invece.
+- Claude Code, Codex, Cursor, la Copilot CLI e OpenCode leggono le loro impostazioni quando una
+  sessione parte — l'editor di Cursor quando si apre una finestra, VS Code quando una chat ha
+  bisogno del server la prima volta — quindi riavvia le sessioni che erano già aperte.
 
 ## Dove: questo utente o un progetto
 
@@ -207,6 +267,9 @@ con lo stesso contenuto, e lo vedono solo le sessioni che lavorano lì. Per Code
 `.codex\config.toml`, che Codex legge solo per un progetto che hai segnato come attendibile in
 Codex; Baton non ne segna mai uno al posto tuo. Per Cursor scrive lì `.cursor\mcp.json`, che
 Cursor carica dopo che l'hai approvato in Cursor; Baton non lo approva mai al posto tuo. Per
+GitHub Copilot scrive `.github\mcp.json` per la Copilot CLI, che lo legge solo in una cartella
+di cui le hai detto di fidarsi, e `.vscode\mcp.json` per VS Code, che ti chiede di fidarti del
+server prima del suo primo avvio; Baton non si fida di nessuno dei due al posto tuo. Per
 OpenCode scrive `opencode.json` in cima a quella cartella.
 
 ## Tornare indietro
@@ -217,9 +280,10 @@ loro comando. Nient'altro viene toccato — gli altri server e hook restano, e `
 non è mai di Baton da ripristinare. Se la voce di Baton era l'unica dentro `"mcpServers"` o
 `"hooks"`, anche la chiave rimasta vuota viene tolta. Per Codex, **Rimuovi** cancella la
 sezione `[mcp_servers.handoff]`, riconosciuta allo stesso modo, e nient'altro del
-`config.toml`; per Cursor, la voce `"handoff"` dentro `"mcpServers"` in `mcp.json`; per
-OpenCode, la voce `"handoff"` dentro `"mcp"` in `opencode.json`. Le copie di backup restano
-dove sono.
+`config.toml`; per Cursor, la voce `"handoff"` dentro `"mcpServers"` in `mcp.json`; per GitHub
+Copilot, la voce `"handoff"` dentro `"mcpServers"` in `mcp-config.json` e quella dentro
+`"servers"` nel `mcp.json` di VS Code; per OpenCode, la voce `"handoff"` dentro `"mcp"` in
+`opencode.json`. Le copie di backup restano dove sono.
 
 ## Lo stato di ogni agente
 

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "project-db": {
+      "type": "local",
+      "command": "node",
+      "args": [
+        "scripts/db-mcp.js"
+      ],
+      "tools": [
+        "*"
+      ]
+    }
+  }
+}
