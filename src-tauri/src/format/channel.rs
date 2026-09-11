@@ -189,6 +189,28 @@ pub struct CapabilityRow {
     pub cancellation_notifications: Option<bool>,
 }
 
+/// The `session_identity` a server sends for a session an editor started (§5.6, R-12).
+///
+/// `handoff-mcp` 1.5.0 resolves it per session (`src/adapters/editor.ts`, T-069) and sends it
+/// only for that key: the app keys such a session on the editor in its chain and on its
+/// workspace folder rather than on the server's parent, which is the editor's extension host
+/// (`protocol/channel/README.md`). A row without it is keyed on the parent.
+pub const EDITOR_SESSION_IDENTITY: &str = "ancestor_chain:editor";
+
+impl CapabilityRow {
+    /// Whether the session is one an editor started (`ancestor_chain:editor`).
+    #[must_use]
+    pub fn is_editor_hosted(&self) -> bool {
+        self.session_identity.as_deref() == Some(EDITOR_SESSION_IDENTITY)
+    }
+
+    /// Whether the agent runs an end-of-turn hook of ours at all, `Stop` or `SubagentStop`.
+    #[must_use]
+    pub fn runs_a_hook(&self) -> bool {
+        self.stop_hook || self.subagent_stop_hook == Some(true)
+    }
+}
+
 /// Which of the agent's two hook events fired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HookEventName {

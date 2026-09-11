@@ -131,9 +131,11 @@ impl RequestDelivery {
         }
 
         let session = session_ref.and_then(|session_ref| self.session(session_ref));
-        let raised = session
-            .as_ref()
-            .is_some_and(|session| self.inner.focus.focus(&session.chain));
+        let raised = session.as_ref().is_some_and(|session| {
+            self.inner
+                .focus
+                .focus(&session.chain, session.folder.as_deref())
+        });
 
         if let (Some(key), Some(session)) = (what_to_say(copied, raised), session) {
             self.notify(app, language, key, &session.label);
@@ -151,8 +153,9 @@ impl RequestDelivery {
         }
     }
 
-    /// What the delivery needs to know about a session: where to point the focus, and what to
-    /// call it in the notification (OPEN-02).
+    /// What the delivery needs to know about a session: where to point the focus — its chain,
+    /// and the name of its folder, which picks the window among an editor's (T-070) — and what
+    /// to call it in the notification (OPEN-02).
     fn session(&self, session_ref: &str) -> Option<SessionTarget> {
         let registry = self
             .inner
@@ -162,6 +165,9 @@ impl RequestDelivery {
         let session = registry.get(session_ref)?;
         Some(SessionTarget {
             chain: session.pid_chain.clone(),
+            folder: session
+                .project_folder()
+                .map(|folder| crate::sessions::registry::base_name(folder).to_owned()),
             label: session.display_name(),
         })
     }
@@ -183,9 +189,11 @@ impl RequestDelivery {
     }
 }
 
-/// The two things a notification and a focus attempt need from the registry.
+/// What a notification and a focus attempt need from the registry.
 struct SessionTarget {
     chain: Vec<AncestorProcess>,
+    /// The name of the session's folder, which picks its window among an editor's (T-070).
+    folder: Option<String>,
     label: String,
 }
 

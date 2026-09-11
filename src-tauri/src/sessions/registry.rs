@@ -26,6 +26,29 @@
 //! The rest is the design's, in its order: a unique pid match binds `session_id` for the
 //! rest of the session's life, the working directory is only a fallback key (SRV-18), and
 //! anything still ambiguous is answered neutrally with the picker of FM-22 left to the UI.
+//!
+//! # A hook belongs to an agent that runs one
+//!
+//! Only a session whose capability row says its agent runs an end-of-turn hook of ours can be
+//! the one a hook came from ([`Session::can_own_a_hook`]). Codex, OpenCode and Cursor run none,
+//! and each of them can share generations with a Claude Code session: a shell, a terminal, an
+//! editor's extension host. Were they candidates, the hook of a Claude Code chat whose server
+//! had gone would walk up past its own agent and could be bound, for the rest of that chat's
+//! life, to a Cursor window above it.
+//!
+//! # Sessions an editor started (T-070, §5.6, R-12)
+//!
+//! An editor of the VS Code family starts one server per window from that window's extension
+//! host, and `hello` says so (`session_identity: ancestor_chain:editor`, T-069). Such a session
+//! is keyed on the editor in its chain and on its workspace folder, not on the server's parent.
+//! Every window has the editor's main process in its chain, so a hook whose nearest owned
+//! generation is the editor reaches every window at once: the workspace folder is what separates
+//! them, and the picker is what is left. The working directory is no key for such a session:
+//! the editor starts every server in the user's home folder, which two windows share, and so
+//! does every agent a person starts from there ([`Session::project_folder`]). Nothing here names
+//! an agent — one agent can arrive with or without an editor above it (Cursor's editor and its
+//! CLI share a row) — so GitHub Copilot's and Kilo Code's editor surfaces get the same rule
+//! (T-072, T-081).
 
 use std::collections::HashMap;
 
@@ -140,6 +163,47 @@ impl Session {
         self.pid_chain.iter().any(|ancestor| ancestor.pid == pid)
     }
 
+    /// Whether an editor started this session's server, which keys it at the editor
+    /// (`ancestor_chain:editor`, §5.6, R-12).
+    ///
+    /// Read from the capability row `hello` carried, never from the agent id: the server
+    /// resolves it per session (T-069), because one agent can arrive with or without an editor
+    /// above it.
+    #[must_use]
+    pub fn is_editor_hosted(&self) -> bool {
+        self.capability_row
+            .as_ref()
+            .is_some_and(CapabilityRow::is_editor_hosted)
+    }
+
+    /// The folder a person would say this session works on (OPEN-02, SRV-18).
+    ///
+    /// The project folder of §5.8, except for a session an editor started: there it is the
+    /// workspace folder the editor named, and there is none when the project folder is still
+    /// the working directory the editor started the server in — a window with no folder open,
+    /// where the server fell back to that directory, which is the user's home folder (T-069).
+    #[must_use]
+    pub fn project_folder(&self) -> Option<&str> {
+        let project = self.project_dir.as_deref();
+        if self.is_editor_hosted() {
+            project.filter(|project| !same_folder(project, &self.cwd))
+        } else {
+            project
+        }
+    }
+
+    /// Whether a hook can be this session's at all (§7.5).
+    ///
+    /// Only an agent that runs an end-of-turn hook of ours can be where a hook came from, and
+    /// the capability row says whether it does. A session with no row is a candidate, as every
+    /// session was before this rule.
+    #[must_use]
+    pub fn can_own_a_hook(&self) -> bool {
+        self.capability_row
+            .as_ref()
+            .is_none_or(CapabilityRow::runs_a_hook)
+    }
+
     /// Whether a hook that reported `cwd` is working in this session's folder (SRV-18).
     ///
     /// Both the working directory and the project folder count. §7.5 writes the fallback
@@ -147,7 +211,17 @@ impl Session {
     /// working directory, and a server whose agent set `CLAUDE_PROJECT_DIR` reports a
     /// project folder that differs from it, so accepting either is the only reading under
     /// which both sections describe a key that can match.
+    ///
+    /// A session an editor started counts its workspace folder alone (T-070): the editor
+    /// starts every server in the user's home folder, whichever window it serves, so that
+    /// working directory is shared by every window and by every agent started from there, and
+    /// says nothing about the session.
     fn works_in(&self, cwd: &str) -> bool {
+        if self.is_editor_hosted() {
+            return self
+                .project_folder()
+                .is_some_and(|folder| same_folder(folder, cwd));
+        }
         same_folder(&self.cwd, cwd)
             || self
                 .project_dir
@@ -365,15 +439,18 @@ impl Registry {
     /// Which session a hook belongs to (§7.5, SRV-17, SRV-18, FM-22).
     ///
     /// Three keys, strongest first, and every one of them looks only at **connected**
-    /// sessions: a disconnected session's chain is a list of processes that are gone, and a
-    /// pid the operating system has since handed to somebody else would bind a hook to the
-    /// wrong session for good.
+    /// sessions whose agent runs a hook: a disconnected session's chain is a list of processes
+    /// that are gone, and a pid the operating system has since handed to somebody else would
+    /// bind a hook to the wrong session for good; and a session whose agent runs no hook of
+    /// ours cannot be where one came from ([`Session::can_own_a_hook`], T-070).
     ///
     /// 1. the agent's own `session_id`, once a pid intersection has bound it — §7.5 binds it
     ///    "for the rest of its life", so a later hook of the same agent needs nothing else;
     /// 2. the pid intersection of SRV-17, nearest generation to the hook first (see the
     ///    module documentation for why the order is what makes the rule work at all). Where
-    ///    a generation is shared by several sessions, the working directory separates them;
+    ///    a generation is shared by several sessions, the working directory separates them —
+    ///    for a session an editor started, its workspace folder, which is what tells two
+    ///    windows of one editor apart;
     /// 3. the working directory alone (SRV-18), when no generation matched.
     ///
     /// A unique **pid** match binds `session_id` to the session and writes it through. A
@@ -396,7 +473,7 @@ impl Registry {
 
         let chain = complete_chain(table, identity);
         for ancestor in &chain {
-            let candidates = self.connected_refs(|session| session.owns_pid(ancestor.pid));
+            let candidates = self.hook_candidates(|session| session.owns_pid(ancestor.pid));
             if candidates.is_empty() {
                 continue;
             }
@@ -405,9 +482,10 @@ impl Registry {
                 self.bind_session_id(db, &session_ref, &hook.session_id)?;
                 return Ok(HookBinding::Bound(session_ref));
             }
-            // Several sessions live under the same process. §7.5 lets the working
-            // directory separate what the chain could not.
-            let narrowed = self.connected_refs(|session| {
+            // Several sessions live under the same process — every window of an editor lives
+            // under the editor. §7.5 lets the folder separate what the chain could not: the
+            // working directory, or an editor window's workspace folder.
+            let narrowed = self.hook_candidates(|session| {
                 session.owns_pid(ancestor.pid) && session.works_in(&identity.cwd)
             });
             if let [session_ref] = narrowed.as_slice() {
@@ -418,12 +496,20 @@ impl Registry {
             return Ok(HookBinding::Ambiguous(candidates));
         }
 
-        let candidates = self.connected_refs(|session| session.works_in(&identity.cwd));
+        let candidates = self.hook_candidates(|session| session.works_in(&identity.cwd));
         match candidates.as_slice() {
             [] => Ok(HookBinding::None),
             [session_ref] => Ok(HookBinding::Bound(session_ref.clone())),
             _ => Ok(HookBinding::Ambiguous(candidates)),
         }
+    }
+
+    /// The connected sessions a hook can belong to that `wanted` accepts (§7.5).
+    ///
+    /// Every key of [`Registry::bind_hook`] goes through here, so no key can reach a session
+    /// whose agent runs no hook of ours ([`Session::can_own_a_hook`]).
+    fn hook_candidates(&self, mut wanted: impl FnMut(&Session) -> bool) -> Vec<String> {
+        self.connected_refs(|session| session.can_own_a_hook() && wanted(session))
     }
 
     /// Forgets disconnected sessions older than seven days that no handoff cites (§8.3).
@@ -1418,5 +1504,310 @@ mod tests {
         assert_eq!(base_name("/"), "");
         assert!(same_folder("C:\\Projects\\Baton", "c:\\projects\\baton\\"));
         assert!(!same_folder("C:\\projects\\baton", "C:\\projects\\other"));
+    }
+
+    // ------------------------------------------------------------ editor sessions (T-070)
+
+    /// The home folder an editor starts every one of its servers in (T-069).
+    const HOME: &str = "C:\\Users\\someone";
+
+    /// One Cursor editor with two windows, and around it the agents a person runs beside it.
+    ///
+    /// `explorer` → the editor's main process → one extension host per window, each hosting
+    /// our server; a pty host whose shell runs Claude Code in the editor's terminal; a Claude
+    /// Code chat of its VS Code extension, started by window A's extension host; and a process
+    /// the editor itself starts beside its windows.
+    fn editor_machine() -> SyntheticProcessTable {
+        SyntheticProcessTable::new()
+            .with(9000, None, "explorer.exe")
+            .with(3000, Some(9000), "Cursor.exe")
+            // Window A: its extension host, and the server it started.
+            .with(3100, Some(3000), "Cursor.exe")
+            .with(3101, Some(3100), "handoff-mcp.exe")
+            // Window B.
+            .with(3200, Some(3000), "Cursor.exe")
+            .with(3201, Some(3200), "handoff-mcp.exe")
+            // Claude Code in the editor's terminal: its server, and its hook under a bash.
+            .with(3300, Some(3000), "Cursor.exe")
+            .with(3310, Some(3300), "pwsh.exe")
+            .with(3320, Some(3310), "claude.exe")
+            .with(3321, Some(3320), "handoff-mcp.exe")
+            .with(3322, Some(3320), "bash.exe")
+            .with(3323, Some(3322), "handoff-mcp.exe")
+            // A Claude Code chat of the extension, under window A's extension host.
+            .with(3130, Some(3100), "claude.exe")
+            .with(3131, Some(3130), "handoff-mcp.exe")
+            .with(3132, Some(3130), "bash.exe")
+            .with(3133, Some(3132), "handoff-mcp.exe")
+            // Something the editor itself starts, beside its windows.
+            .with(3900, Some(3000), "handoff-mcp.exe")
+    }
+
+    /// The row a server sends for a session an editor started: the editor key, and whether the
+    /// agent runs a hook — Cursor's does not (T-069); a later editor agent may (T-072).
+    fn editor_row(runs_a_hook: bool) -> CapabilityRow {
+        CapabilityRow {
+            agent_id: "cursor".to_owned(),
+            support: SupportLevel::Base,
+            images_in_results: true,
+            stop_hook: runs_a_hook,
+            tool_timeout_ms: Some(60_000),
+            display_name: Some("Cursor".to_owned()),
+            subagent_stop_hook: Some(false),
+            session_identity: Some(crate::format::channel::EDITOR_SESSION_IDENTITY.to_owned()),
+            user_request_delivery: None,
+            cancellation_notifications: Some(true),
+        }
+    }
+
+    /// The server an editor started for one window: in the home folder, on the window's folder.
+    fn editor_peer(
+        conn_id: ConnId,
+        session_ref: &str,
+        (pid, ppid): (u32, u32),
+        workspace: &str,
+        runs_a_hook: bool,
+    ) -> Peer {
+        let mut peer = server_peer(conn_id, session_ref, pid, ppid, HOME);
+        peer.identity.project_dir = Some(workspace.to_owned());
+        peer.agent_id = Some("cursor".to_owned());
+        peer.client = Some(ClientInfo {
+            name: "cursor-vscode".to_owned(),
+            version: "1.0.0".to_owned(),
+        });
+        peer.capability_row = Some(editor_row(runs_a_hook));
+        peer
+    }
+
+    fn register_all(fixture: &mut Fixture, table: &SyntheticProcessTable, peers: &[Peer]) {
+        for peer in peers {
+            fixture
+                .registry
+                .register(&fixture.db, peer, table)
+                .expect("a registration");
+        }
+    }
+
+    #[test]
+    fn a_session_an_editor_started_is_keyed_at_the_editor_and_named_by_its_folder() {
+        let mut fixture = Fixture::new();
+        let window = editor_peer(1, "ses_0000000a", (3101, 3100), "C:\\work\\shop", false);
+        register_all(&mut fixture, &editor_machine(), &[window]);
+
+        let session = fixture.registry.get("ses_0000000a").expect("the session");
+        assert!(session.is_editor_hosted());
+        assert_eq!(
+            session.display_name(),
+            "Cursor · shop",
+            "OPEN-02: the window's folder, not the home folder the server runs in"
+        );
+        assert_eq!(session.project_folder(), Some("C:\\work\\shop"));
+        assert_eq!(
+            session
+                .pid_chain
+                .iter()
+                .map(|ancestor| ancestor.pid)
+                .collect::<Vec<u32>>(),
+            [3100, 3000, 9000],
+            "the window's extension host, the editor, the desktop"
+        );
+    }
+
+    #[test]
+    fn a_window_with_no_folder_open_has_no_folder_to_be_matched_by() {
+        // The server fell back to its working directory, the home folder (§5.8, T-069).
+        let mut fixture = Fixture::new();
+        let window = editor_peer(1, "ses_0000000a", (3101, 3100), HOME, false);
+        register_all(&mut fixture, &editor_machine(), &[window]);
+        let session = fixture.registry.get("ses_0000000a").expect("the session");
+        assert!(session.is_editor_hosted());
+        assert_eq!(session.project_folder(), None);
+
+        // A session of any other kind keeps its project folder, whatever it is.
+        let mut other = Fixture::new();
+        let agent = server_peer(1, "ses_00000001", 1001, 1000, HOME);
+        register_all(&mut other, &one_machine(), &[agent]);
+        let session = other.registry.get("ses_00000001").expect("the session");
+        assert!(!session.is_editor_hosted());
+        assert_eq!(session.project_folder(), Some(HOME));
+    }
+
+    #[test]
+    fn two_windows_of_one_editor_are_told_apart_by_their_folder_then_by_the_picker() {
+        // A hook the editor itself started reaches both windows at the editor; the workspace
+        // folder decides, and the home folder every window runs in decides nothing. The row is
+        // a hook-capable editor agent's: Cursor runs none (T-069), a later editor agent may.
+        let mut fixture = Fixture::new();
+        let table = editor_machine();
+        let windows = [
+            editor_peer(1, "ses_0000000a", (3101, 3100), "C:\\work\\shop", true),
+            editor_peer(2, "ses_0000000b", (3201, 3200), "C:\\work\\blog", true),
+        ];
+        register_all(&mut fixture, &table, &windows);
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3900, 3000, "C:\\work\\blog"),
+                &hook_input("chat-b"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_0000000b".to_owned()));
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3900, 3000, HOME),
+                &hook_input("chat-x"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(
+            bound,
+            HookBinding::Ambiguous(vec!["ses_0000000a".to_owned(), "ses_0000000b".to_owned()]),
+            "FM-22: the picker asks which window"
+        );
+    }
+
+    #[test]
+    fn a_hook_through_one_windows_extension_host_is_that_windows() {
+        let mut fixture = Fixture::new();
+        let table = editor_machine().with(3190, Some(3100), "handoff-mcp.exe");
+        let windows = [
+            editor_peer(1, "ses_0000000a", (3101, 3100), "C:\\work\\shop", true),
+            editor_peer(2, "ses_0000000b", (3201, 3200), "C:\\work\\blog", true),
+        ];
+        register_all(&mut fixture, &table, &windows);
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3190, 3100, HOME),
+                &hook_input("chat-a"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_0000000a".to_owned()));
+    }
+
+    #[test]
+    fn a_claude_code_session_inside_the_editor_keeps_its_own_hooks() {
+        // The regression the task's risk is about (T-070): the editor's windows share the
+        // editor, and Claude Code runs inside it, in its terminal and in its extension.
+        let mut fixture = Fixture::new();
+        let table = editor_machine();
+        let sessions = [
+            editor_peer(1, "ses_0000000a", (3101, 3100), "C:\\work\\shop", false),
+            editor_peer(2, "ses_0000000b", (3201, 3200), "C:\\work\\blog", false),
+            server_peer(3, "ses_0000000c", 3321, 3320, "C:\\work\\shop"),
+            server_peer(4, "ses_0000000d", 3131, 3130, "C:\\work\\shop"),
+        ];
+        register_all(&mut fixture, &table, &sessions);
+
+        let terminal = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3323, 3322, "C:\\work\\shop"),
+                &hook_input("terminal"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(terminal, HookBinding::Bound("ses_0000000c".to_owned()));
+
+        let extension = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3133, 3132, "C:\\work\\shop"),
+                &hook_input("extension"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(extension, HookBinding::Bound("ses_0000000d".to_owned()));
+    }
+
+    #[test]
+    fn a_session_whose_agent_runs_no_hook_is_never_given_one() {
+        // Cursor runs none (T-069). Without the rule, the hook of a Claude Code chat whose
+        // server had gone walked up past its own agent to the extension host it shares with a
+        // Cursor window, found that window alone there, and bound itself to it for good.
+        let mut fixture = Fixture::new();
+        let table = editor_machine();
+        let sessions = [
+            editor_peer(1, "ses_0000000a", (3101, 3100), "C:\\work\\shop", false),
+            server_peer(2, "ses_0000000d", 3131, 3130, "C:\\work\\shop"),
+        ];
+        register_all(&mut fixture, &table, &sessions);
+        fixture
+            .registry
+            .disconnect(&fixture.db, 2, &at("2026-09-11T12:00:00Z"))
+            .expect("a disconnection");
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(3133, 3132, "C:\\work\\shop"),
+                &hook_input("extension"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::None);
+        assert_eq!(
+            fixture
+                .registry
+                .get("ses_0000000a")
+                .expect("the window")
+                .claude_session_id,
+            None
+        );
+    }
+
+    #[test]
+    fn an_agent_started_in_the_home_folder_is_not_taken_for_an_editor_window() {
+        // The editor starts its servers in the home folder, where a person starts agents too:
+        // the fallback of SRV-18 finds the agent and not the window. The editor row runs a hook
+        // here, so that it is the folder rule that keeps the window out, not the hook rule.
+        let mut fixture = Fixture::new();
+        let agent = server_peer(1, "ses_00000001", 1001, 1000, HOME);
+        register_all(&mut fixture, &one_machine(), &[agent]);
+        let window = editor_peer(2, "ses_0000000a", (3101, 3100), "C:\\work\\shop", true);
+        register_all(&mut fixture, &editor_machine(), &[window]);
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(5003, 5002, HOME),
+                &hook_input("home"),
+                &SyntheticProcessTable::new(),
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_00000001".to_owned()));
+    }
+
+    #[test]
+    fn a_session_with_no_capability_row_is_a_candidate_as_before() {
+        let mut fixture = Fixture::new();
+        let table = one_machine();
+        let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        peer.capability_row = None;
+        register_all(&mut fixture, &table, &[peer]);
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(1003, 1002, "C:\\projects\\baton"),
+                &hook_input("session-a"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_00000001".to_owned()));
     }
 }
