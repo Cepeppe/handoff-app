@@ -86,10 +86,12 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
 
 /**
  * The `clientInfo.name` each agent sends in its handshake, measured by `handoff-mcp`'s canaries:
- * Codex 0.153.4 (T-066) and OpenCode 1.18.29 (T-074).
+ * Codex 0.153.4 (T-066), OpenCode 1.18.29 (T-074) and the Cursor Agent CLI 2026.09.10 (T-069),
+ * whose editor sends `cursor-vscode` instead.
  */
 const CLIENT_NAMES: Readonly<Record<string, string>> = {
   codex: 'codex-mcp-client',
+  cursor: 'Cursor',
   opencode: 'opencode',
 };
 

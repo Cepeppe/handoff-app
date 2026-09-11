@@ -3,9 +3,11 @@
 `pnpm e2e` runs the scenarios of the design's §11.5 against a **real Claude Code** and a
 **real build of the app**, with the person at the machine played by an automation channel
 that only exists in an `--features e2e` build. `pnpm e2e -- --agent codex` runs a subset of
-them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067), and
+them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067),
 `--agent opencode` the same subset against a **real OpenCode**
-([The OpenCode subset](#the-opencode-subset), T-074).
+([The OpenCode subset](#the-opencode-subset), T-074), and `--agent cursor` the same subset
+against the **real Cursor Agent CLI**, after one scenario that launches **Cursor's editor**
+([The Cursor subset](#the-cursor-subset), T-070).
 
 It is the only check that exercises the whole system at once. `cargo test` drives the core
 with a fake server on one side and a fake window on the other; the frontend suite draws
@@ -23,6 +25,7 @@ turning it on later is a secret rather than a task.
 - [What it runs](#what-it-runs)
 - [The Codex subset](#the-codex-subset)
 - [The OpenCode subset](#the-opencode-subset)
+- [The Cursor subset](#the-cursor-subset)
 - [Running it](#running-it)
 - [How a scenario works](#how-a-scenario-works)
 - [The automation channel](#the-automation-channel)
@@ -116,6 +119,52 @@ project, and the session each run leaves in OpenCode's history deleted afterward
 a free OpenRouter model unless `HANDOFF_E2E_OPENCODE_MODEL` names another, so a run costs
 nothing. The report is `tests/e2e/results/last-run-opencode.json`.
 
+## The Cursor subset
+
+`pnpm e2e -- --agent cursor` runs six scenarios: one against **Cursor's editor**, then the five
+of the Codex subset against the real **Cursor Agent CLI** (`tests/e2e/cursor.ts`). No hook of
+Cursor's reaches ours either — the `cursor` row of `handoff-mcp` says `stop_hook: false` — so
+the reasons are the Codex subset's.
+
+| Scenario | What it proves for Cursor |
+|---|---|
+| `cursor-editor-session` | a session Cursor's editor starts registers as the editor (`cursor-vscode`), keyed at the editor (`ancestor_chain:editor`) with the launched editor in its chain, named after the window's folder (*Cursor · baton-cursor-window*) while it runs in the home folder; and the window's title names that folder, which is how a request finds the window |
+| `e2e-01`, `02`, `04`, `07`, `09-request-clipboard` | as for Codex, through `agent -p`; each also checks that the session registered as Cursor (`clientInfo` `Cursor`) and that its tab says *Cursor* |
+
+**The editor scenario** launches an editor of the harness's own on a project folder named
+`baton-cursor-window`, with a fresh `--user-data-dir` and extensions folder, and with
+`USERPROFILE` and `HOME` pointed at a folder of the run whose `.cursor\mcp.json` holds the
+installer's entry and the run's `HANDOFF_HOME`. It is a separate instance from the owner's
+Cursor, it opens a window for the seconds it takes, and it is closed with everything it
+started. It spends no agent request: the editor starts its servers as the window opens, before
+any chat — and the editor's chat cannot be driven from a script anyway. It is the recipe of the
+Cursor canary of `handoff-mcp` (T-069).
+
+**E2E-7 injects nothing** for Cursor. No entry can raise Cursor's limit and the installer writes
+no `HANDOFF_TOOL_TIMEOUT_MS`, so the runner does not either: the row's 60 000 ms, which is the
+Agent CLI's own cut, puts the heartbeat at the same 50 s floor, and the report records 60 000 as
+the timeout the run had.
+
+Before the scenarios, a **preflight** puts the golden `mcp.json` of
+`src-tauri/tests/fixtures/install/cursor-empty/out/` in a throw-away project and asks the real
+`agent mcp list` what it read there, with the home folder pointed at an empty one so that the
+golden file is the only one it can read. The answer is `handoff: not loaded (needs approval)`:
+a server of a project file waits for an approval the preflight never gives. No model is involved
+and no request is spent.
+
+Every `agent -p` runs with what the Cursor canary of `handoff-mcp` measured: our server declared
+in the run's project, `.cursor\mcp.json`, and approved for that run with `--approve-mcps`; the one
+permission rule `Mcp(handoff:*)` in the project's `.cursor\cli.json`, because print mode refuses a
+tool that is not read-only, and never `--force`; `--trust`; the model `auto` unless
+`HANDOFF_E2E_CURSOR_MODEL` names another. Each run leaves a folder under `~/.cursor/projects` and
+a conversation under `~/.cursor/chats`, which the runner deletes; the stream-json transcript is
+written to `agent-cursor-<session id>.jsonl` in the run's root first. The report is
+`tests/e2e/results/last-run-cursor.json`.
+
+**Each CLI scenario spends one request** of the Cursor account, which the owner keeps on the Free
+plan: the subset is run by hand, and rarely — after a Cursor update, or when the adapter changes.
+`e2e.yml` has no `cursor` choice for the same reason.
+
 ## Running it
 
 From the workspace root, which builds everything first:
@@ -125,6 +174,7 @@ scripts\e2e.ps1                    # all ten
 scripts\e2e.ps1 e2e-01-verified    # one
 scripts\e2e.ps1 -Agent codex       # the Codex subset
 scripts\e2e.ps1 -Agent opencode    # the OpenCode subset
+scripts\e2e.ps1 -Agent cursor      # the Cursor subset
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
@@ -136,6 +186,7 @@ pnpm e2e
 pnpm e2e -- e2e-05-parked
 pnpm e2e -- --agent codex
 pnpm e2e -- --agent opencode
+pnpm e2e -- --agent cursor
 pnpm e2e -- --list
 ```
 
@@ -146,17 +197,27 @@ Four things must exist, and `missingPrerequisites()` names the two it can check:
 3. `dist/`, from `pnpm build` — a release binary loads it, a debug one looks for a Vite dev
    server on port 1420 and comes up empty (the T-040 handoff entry), which is why the suite
    uses the release profile;
-4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets.
+4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets, or
+   Cursor's `cursor-agent`, signed in with `agent login`, and Cursor's editor, for the Cursor
+   subset.
+
+For the Cursor subset one thing must **not** exist: a `handoff` server in `~/.cursor/mcp.json`.
+The Agent CLI reads that file into every run and has no switch to leave it out, so Baton
+registered there would load beside the run's server, under the same name, and could open a
+scenario's handoff in the Baton you use every day. The suite refuses to start the subset then
+(exit 2); remove Baton's registration for Cursor for the length of the run.
 
 Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
 `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`, at low reasoning effort),
 `HANDOFF_E2E_OPENCODE_MODEL` OpenCode's (default `openrouter/thinkingmachines/inkling-small:free`),
-`HANDOFF_E2E_KEEP=1` keeps each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry
-at another server binary, `HANDOFF_E2E_RUST_LOG` changes what the app logs.
+`HANDOFF_E2E_CURSOR_MODEL` Cursor's (default `auto`), `HANDOFF_E2E_CURSOR` another Cursor Agent
+launcher and `HANDOFF_E2E_CURSOR_EDITOR` another editor executable, `HANDOFF_E2E_KEEP=1` keeps
+each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry at another server binary,
+`HANDOFF_E2E_RUST_LOG` changes what the app logs.
 
 A whole run is about four minutes and a few cents. The report is
-`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json` and
-`last-run-opencode.json` for the subsets):
+`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json`, `last-run-opencode.json`
+and `last-run-cursor.json` for the subsets):
 verdicts, every assertion, the measured facts, and the **transcript ids** — with which the agent's own transcript can be read at
 `~/.claude/projects/<slug>/<session-id>.jsonl`, the one place a hook error is written down.
 
@@ -305,3 +366,17 @@ Each of these cost a run.
 - **A free model is a shared one.** A busy one answers "temporarily rate-limited upstream"
   before any tool is called, and the scenario fails on its first assertion. Run it again, or
   name another model with `HANDOFF_E2E_OPENCODE_MODEL`.
+- **Cursor's print mode refuses our tools without a permission rule**, and the refusal reads as
+  if a person had said no: `User rejected MCP: handoff-handoff_to_user`, after about two
+  minutes. The run's `.cursor\cli.json` carries `Mcp(handoff:*)`; `--force` would also allow
+  every shell command and is never passed (T-068, T-069).
+- **Start the Cursor CLI through its `node.exe`, not through `agent.cmd`.** The shim goes
+  through `cmd.exe` and PowerShell, whose quoting mangles the JSON a prompt carries;
+  `tests/e2e/cursor.ts` finds the newest `versions\<date>-<commit>\node.exe` and `index.js`
+  beside the shim, as the CLI's own launcher does.
+- **Every `agent -p` leaves state behind** — a folder under `~/.cursor/projects` and a
+  conversation under `~/.cursor/chats` — and has no ephemeral mode. The runner lists both
+  folders before a run and deletes only what the run added.
+- **The editor scenario opens a real window** for the seconds it takes to register. It is a
+  separate instance with a user-data folder of its own, so the owner's Cursor is never touched,
+  and it is closed with `taskkill /T /F` together with the server it started.

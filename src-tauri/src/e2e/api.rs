@@ -199,6 +199,14 @@ pub struct SessionState {
     pub agent_id: Option<String>,
     /// The MCP client's own name.
     pub client_name: Option<String>,
+    /// The agent and the project folder, as the tab, the request sheet and the FM-22 picker
+    /// print them (OPEN-02).
+    pub label: String,
+    /// `ancestor_chain:editor` for a session an editor started, else nothing: how the
+    /// registry keys the session (§5.6, T-069, T-070).
+    pub session_identity: Option<String>,
+    /// The completed ancestor chain, nearest parent first (DD-22).
+    pub pid_chain: Vec<crate::format::channel::AncestorProcess>,
     /// Whether the connection is live (§8.3).
     pub connected: bool,
     /// The server's working directory.
@@ -351,6 +359,12 @@ async fn state(app: &AppHandle) -> MethodResult {
                 session_ref: session.session_ref.clone(),
                 agent_id: session.agent_id.clone(),
                 client_name: session.client.as_ref().map(|client| client.name.clone()),
+                label: session.display_name(),
+                session_identity: session
+                    .capability_row
+                    .as_ref()
+                    .and_then(|row| row.session_identity.clone()),
+                pid_chain: session.pid_chain.clone(),
                 connected: session.connected,
                 cwd: session.cwd.clone(),
                 project_dir: session.project_dir.clone(),

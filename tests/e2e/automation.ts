@@ -91,6 +91,12 @@ export interface SessionState {
   readonly sessionRef: string;
   readonly agentId: string | null;
   readonly clientName: string | null;
+  /** The agent and the project folder, as the tab and the request sheet print them (OPEN-02). */
+  readonly label: string;
+  /** `ancestor_chain:editor` for a session an editor started, else `null` (T-069, T-070). */
+  readonly sessionIdentity: string | null;
+  /** The completed ancestor chain, nearest parent first. */
+  readonly pidChain: readonly { readonly pid: number; readonly name: string }[];
   readonly connected: boolean;
   readonly cwd: string;
   readonly projectDir: string | null;

@@ -11,6 +11,7 @@
  * answered "arrives with T-049" until it did.
  */
 import type { Scenario } from '../scenario.ts';
+import { cursorEditorScenario } from './cursor-editor-session.ts';
 import { verifiedScenario } from './e2e-01-verified.ts';
 import { questionScenario } from './e2e-02-question.ts';
 import { screenshotScenario } from './e2e-03-screenshot.ts';
@@ -62,3 +63,15 @@ export const CODEX_SCENARIOS: readonly Scenario[] = [
  * says, which an OpenCode session never hears.
  */
 export const OPENCODE_SCENARIOS: readonly Scenario[] = CODEX_SCENARIOS;
+
+/**
+ * The Cursor subset (T-070): the session of Cursor's editor first, then the Codex subset through
+ * the Agent CLI, for the same reasons — no hook of Cursor reaches ours (T-069), so E2E-9 runs by
+ * the clipboard.
+ *
+ * The editor's chat cannot be driven from a script, but the moment its session registers can,
+ * and it is the half of the adapter the CLI cannot show: a session keyed at the editor and named
+ * after its window's folder. It spends no request. Each CLI scenario spends one request of the
+ * account, which the owner keeps on the Free plan (T-068), so the subset runs by hand, rarely.
+ */
+export const CURSOR_SCENARIOS: readonly Scenario[] = [cursorEditorScenario, ...CODEX_SCENARIOS];

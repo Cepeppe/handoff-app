@@ -11,12 +11,14 @@
  * pnpm e2e -- e2e-01-verified       # only these
  * pnpm e2e -- --agent codex         # the Codex subset, against the Codex CLI (T-067)
  * pnpm e2e -- --agent opencode      # the OpenCode subset, against OpenCode (T-074)
+ * pnpm e2e -- --agent cursor        # the Cursor subset, against Cursor's editor and CLI (T-070)
  * pnpm e2e -- --list                # what exists, without running anything
  * ```
  *
  * Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
  * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_OPENCODE_MODEL`
- * OpenCode's (default a free OpenRouter model, see `opencode.ts`), `HANDOFF_E2E_KEEP=1` keeps
+ * OpenCode's (default a free OpenRouter model, see `opencode.ts`), `HANDOFF_E2E_CURSOR_MODEL`
+ * Cursor's (default `auto`), `HANDOFF_E2E_KEEP=1` keeps
  * each run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the
  * MCP entry at a server binary other than the pinned one.
  *
@@ -35,6 +37,13 @@ import { cleanUp, makeWorkspace, startApp } from './app.ts';
 import { classify, failures, label, reported, shouldRetry, type Assertion, type RunVerdict } from './classify.ts';
 import { CODEX, CODEX_DEFAULT_MODEL, codexOnPath, codexReadsTheInstalledEntry } from './codex.ts';
 import {
+  CURSOR,
+  CURSOR_DEFAULT_MODEL,
+  cursorOnPath,
+  cursorReadsTheInstalledEntry,
+  cursorUserConfigProblem,
+} from './cursor.ts';
+import {
   OPENCODE,
   OPENCODE_DEFAULT_MODEL,
   opencodeOnPath,
@@ -42,7 +51,12 @@ import {
 } from './opencode.ts';
 import { missingPrerequisites, REPO_ROOT } from './paths.ts';
 import { logInvariants, zeroEgress, type Scenario } from './scenario.ts';
-import { CODEX_SCENARIOS, OPENCODE_SCENARIOS, SCENARIOS } from './scenarios/index.ts';
+import {
+  CODEX_SCENARIOS,
+  CURSOR_SCENARIOS,
+  OPENCODE_SCENARIOS,
+  SCENARIOS,
+} from './scenarios/index.ts';
 
 /** Where the reports are written. Git-ignored. */
 export const RESULTS_DIR = join(REPO_ROOT, 'tests', 'e2e', 'results');
@@ -84,16 +98,23 @@ const AGENTS: Readonly<
     model: () => process.env['HANDOFF_E2E_OPENCODE_MODEL'] ?? OPENCODE_DEFAULT_MODEL,
     results: 'last-run-opencode.json',
   },
+  cursor: {
+    runner: CURSOR,
+    scenarios: CURSOR_SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_CURSOR_MODEL'] ?? CURSOR_DEFAULT_MODEL,
+    results: 'last-run-cursor.json',
+  },
 };
 
 /**
  * The one check a scenario cannot make, because every scenario must stay off the user's
- * configuration: that the agent itself reads what its installer writes (T-067, T-074). Claude
- * Code's is the golden-file suite's plus the smoke of T-042.
+ * configuration: that the agent itself reads what its installer writes (T-067, T-074, T-070).
+ * Claude Code's is the golden-file suite's plus the smoke of T-042.
  */
 const PREFLIGHTS: Readonly<Record<string, () => Assertion>> = {
   codex: codexReadsTheInstalledEntry,
   opencode: opencodeReadsTheInstalledEntry,
+  cursor: cursorReadsTheInstalledEntry,
 };
 
 /** The program each agent is, for the prerequisite check. */
@@ -106,6 +127,19 @@ const ON_PATH: Readonly<Record<string, { readonly found: () => boolean; readonly
     found: opencodeOnPath,
     why: 'opencode is not on PATH. The OpenCode subset drives the real OpenCode, logged in.',
   },
+  cursor: {
+    found: cursorOnPath,
+    why: "cursor-agent is not on PATH. The Cursor subset drives Cursor's real Agent CLI, logged in.",
+  },
+};
+
+/**
+ * What else must hold on this machine before an agent's subset may run, as a sentence for the
+ * report, or nothing (T-070): the Cursor CLI reads the user's own `~/.cursor/mcp.json` into
+ * every run, so Baton registered there would load beside the run's server.
+ */
+const MACHINE_CHECKS: Readonly<Record<string, () => string | undefined>> = {
+  cursor: () => cursorUserConfigProblem(),
 };
 
 interface ScenarioReport {
@@ -257,6 +291,8 @@ async function main(argv: readonly string[]): Promise<number> {
   const missing = missingPrerequisites();
   const program = ON_PATH[chosen.runner.id];
   if (program !== undefined && !program.found()) missing.push(program.why);
+  const machine = MACHINE_CHECKS[chosen.runner.id]?.();
+  if (machine !== undefined) missing.push(machine);
   if (missing.length > 0) {
     for (const problem of missing) line(`e2e: ${problem}`);
     return 2;

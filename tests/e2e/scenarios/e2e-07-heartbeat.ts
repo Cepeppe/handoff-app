@@ -15,6 +15,10 @@
  * the heartbeat arrives between 40 s and 75 s, and the measured value is recorded — a
  * scenario that asserted 30 s would have been red for a correct implementation. `TASKS.md`
  * and `DEVIATIONS.md` carry the correction.
+ *
+ * An agent whose entry has no timeout field takes no injected timeout at all (T-070): Cursor's
+ * runner passes none on, the row's own 60 000 ms — the CLI's cut — decides, and the floor lands
+ * the heartbeat at the same 50 s. The report records the timeout the agent actually ran with.
  */
 import { callsTo, statuses } from '../agent.ts';
 import { sleep } from '../automation.ts';
@@ -42,6 +46,9 @@ export const heartbeatScenario: Scenario = {
   async run({ workspace, app, agent, forbidden, facts, say }) {
     const planted = plantedSpec('07');
     forbidden.push(...planted.forbidden);
+    // The timeout the agent really runs with: the injected one, unless its entry cannot carry
+    // one and the agent's own limit decides (Cursor, T-070).
+    const toolTimeoutMs = agent.fixedToolTimeoutMs ?? TOOL_TIMEOUT_MS;
 
     const prompt = [
       openPrompt(planted.spec, agent),
@@ -52,7 +59,11 @@ export const heartbeatScenario: Scenario = {
       REPORT_LINE,
     ].join(' ');
 
-    say(`starting the agent with HANDOFF_TOOL_TIMEOUT_MS=${String(TOOL_TIMEOUT_MS)}`);
+    say(
+      agent.fixedToolTimeoutMs === undefined
+        ? `starting the agent with HANDOFF_TOOL_TIMEOUT_MS=${String(TOOL_TIMEOUT_MS)}`
+        : `starting the agent, whose own limit of ${String(toolTimeoutMs)} ms no entry changes`,
+    );
     const startedAt = Date.now();
     const running = agent.start(workspace, {
       prompt,
@@ -87,7 +98,7 @@ export const heartbeatScenario: Scenario = {
     );
     facts['heartbeat_after_ms'] = detachedAt === undefined ? null : detachedAt - openedAt;
     facts['heartbeat_floor_ms'] = HEARTBEAT_FLOOR_MS;
-    facts['tool_timeout_ms'] = TOOL_TIMEOUT_MS;
+    facts['tool_timeout_ms'] = toolTimeoutMs;
 
     say('finishing the handoff');
     await walkTheSteps(app, id, say);
@@ -126,8 +137,8 @@ export const heartbeatScenario: Scenario = {
         'protocol',
         typeof elapsed === 'number' && elapsed > 40_000 && elapsed < 75_000,
         `measured ${String(elapsed)} ms after the handoff appeared; ` +
-          `max(${String(TOOL_TIMEOUT_MS)} − 60000, ${String(HEARTBEAT_FLOOR_MS)}) = ${String(
-            Math.max(TOOL_TIMEOUT_MS - 60_000, HEARTBEAT_FLOOR_MS),
+          `max(${String(toolTimeoutMs)} − 60000, ${String(HEARTBEAT_FLOOR_MS)}) = ${String(
+            Math.max(toolTimeoutMs - 60_000, HEARTBEAT_FLOOR_MS),
           )} ms`,
       ),
       check(
