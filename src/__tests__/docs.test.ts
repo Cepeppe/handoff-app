@@ -39,8 +39,8 @@ const PAGES = [
   'third-party-notices.md',
 ] as const;
 
-/** The pages about one agent each, under `agents/` in both languages (T-067, T-074). */
-const AGENT_PAGES = ['agents/codex.md', 'agents/opencode.md'] as const;
+/** The pages about one agent each, under `agents/` in both languages (T-067, T-074, T-070). */
+const AGENT_PAGES = ['agents/codex.md', 'agents/cursor.md', 'agents/opencode.md'] as const;
 
 /** A page, with its line endings normalised: the check is about the words. */
 function read(...path: string[]): string {
@@ -228,6 +228,22 @@ describe('what the pages must say', () => {
     for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
       expect(page).toContain('"environment"');
       expect(page).toContain('"timeout": 1800000');
+    }
+  });
+
+  it('tells a Cursor user what Baton writes and what Cursor does not do (T-070)', () => {
+    for (const page of [read('agents', 'cursor.md'), read('it', 'agents', 'cursor.md')]) {
+      // The file both of Cursor's surfaces read, the command that lists the entry, and the one
+      // rule Baton leaves to the user for the Agent CLI's print mode.
+      expect(page).toContain('.cursor\\mcp.json');
+      expect(page).toContain('agent mcp list');
+      expect(page).toContain('Mcp(handoff:*)');
+      // Cursor reads no timeout from an entry, so none is written or promised (T-069).
+      expect(page).not.toContain('HANDOFF_TOOL_TIMEOUT_MS');
+      expect(page).not.toContain('1800000');
+    }
+    for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
+      expect(page).toContain('"HANDOFF_AGENT": "cursor"');
     }
   });
 

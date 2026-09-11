@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/work"
+      ]
+    },
+    "docs": {
+      "url": "https://docs.example.com/mcp",
+      "headers": {
+        "X-Team": "platform"
+      }
+    },
+    "handoff": {
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "cursor"
+      }
+    }
+  }
+}

@@ -13,10 +13,44 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-11
+
+Cursor joins Claude Code, Codex and OpenCode, in its editor and in its Agent CLI. `1.2.0` and
+`1.3.0` stay unreleased for good: a number below `1.4.0` would read as a downgrade to the
+in-place update of an installation, so the adapters that follow `1.4.0` take `1.5.0` onward.
+
+### Added
+
+- The Cursor installation adapter: one change to Cursor's `mcp.json`, the MCP server entry,
+  shown on the consent screen and removable from Settings → Agents, with every other server of
+  the file kept in its order. Cursor's editor and its Agent CLI both read that file, so one
+  registration covers the two. The entry carries no timeout, because Cursor reads none, and no
+  permission: Cursor asks before it runs a tool, as it does for every server. A file with
+  comments in it is refused rather than rewritten. Cursor has base support, and
+  `docs/agents/cursor.md` says what that changes: nothing reminds the agent at the end of a
+  turn, a call lasts a minute before the agent is told to pick the handoff up again, and your
+  requests reach it by the clipboard.
+- A session started by Cursor's editor is shown under the folder of its window, one session per
+  window, and is told apart from the other windows of the same editor by that folder.
+- A Cursor subset of the end-to-end suite, run by hand with `scripts\e2e.ps1 -Agent cursor`: the
+  session of Cursor's editor, measured by launching an editor of its own with no agent request,
+  and five scenarios against the Agent CLI.
+
+### Changed
+
+- A request you open with the shortcut brings forward the window whose title names the
+  session's project folder, when the program in front of the session has several windows: the
+  right Cursor or VS Code window rather than the last one used.
+- A Stop hook is matched only to a session whose agent runs one, so a Cursor, Codex or OpenCode
+  session can no longer be taken for the owner of a Claude Code hook, and the home folder Cursor
+  starts its servers in is never the folder a hook is matched by.
+
+Bundles `handoff-mcp` 1.5.0.
+
 ## [1.4.0] - 2026-09-11
 
-OpenCode joins Claude Code and Codex. `1.2.0` and `1.3.0` are not released: they are kept for
-the Cursor and GitHub Copilot adapters, which come later.
+OpenCode joins Claude Code and Codex. `1.2.0` and `1.3.0` are not released, and will not be:
+the adapters that follow take `1.5.0` onward.
 
 ### Added
 

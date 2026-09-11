@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "cursor"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/work"
+      ]
+    }
+  }
+}

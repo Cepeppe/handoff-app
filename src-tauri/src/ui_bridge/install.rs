@@ -113,7 +113,7 @@ pub struct ConsentView {
     /// Its name, as a catalogue key.
     pub name_key: &'static str,
     /// How many modifications: the number INST-02 fixes at three for Claude Code, and one for
-    /// Codex (T-067) and for OpenCode (T-074).
+    /// Codex (T-067), for OpenCode (T-074) and for Cursor (T-070).
     pub modification_count: usize,
     /// The rows the user reads. Fewer than the modifications when an adapter groups some.
     pub lines: Vec<ConsentLine>,

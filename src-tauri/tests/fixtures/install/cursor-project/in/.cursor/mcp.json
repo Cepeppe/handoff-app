@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "project-db": {
+      "command": "node",
+      "args": [
+        "scripts/db-mcp.js"
+      ]
+    }
+  }
+}

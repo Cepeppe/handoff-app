@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "project-db": {
+      "command": "node",
+      "args": [
+        "scripts/db-mcp.js"
+      ]
+    },
+    "handoff": {
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "cursor"
+      }
+    }
+  }
+}

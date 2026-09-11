@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    self, survives_project_scope, Codex, InstallAdapter, InstallError, Modification, OpenCode,
-    Registration, Scope,
+    self, survives_project_scope, Codex, Cursor, InstallAdapter, InstallError, Modification,
+    OpenCode, Registration, Scope,
 };
 use serde_json::Value;
 
@@ -87,6 +87,15 @@ impl TempHome {
     fn opencode(&self) -> OpenCode {
         OpenCode::with(
             self.join(".config/opencode"),
+            SERVER,
+            self.join(".handoff/channel.token"),
+        )
+    }
+
+    /// The Cursor adapter over the same home: its folder is `<home>/.cursor`.
+    fn cursor(&self) -> Cursor {
+        Cursor::with(
+            self.join(".cursor"),
             SERVER,
             self.join(".handoff/channel.token"),
         )
@@ -1219,26 +1228,311 @@ fn opencode_detect_names_the_file_of_the_scope_and_finds_opencode_by_its_folder(
     assert_eq!(detection.version, None);
 }
 
+// ------------------------------------------------------------ the Cursor adapter (T-070)
+//
+// The Claude Code promises over Cursor's JSON: `<home>/.cursor/mcp.json`, one
+// `mcpServers.handoff` entry, and every server the user had still there, in order.
+
+/// Cursor's configuration inside a temporary home.
+const CURSOR_CONFIG: &str = ".cursor/mcp.json";
+
 #[test]
-fn three_agents_in_one_home_do_not_touch_each_others_files() {
-    // One machine, three agents: each adapter writes its own files and nothing of the others'.
+fn cursor_on_a_machine_with_no_configuration_at_all() {
+    let home = TempHome::from_case("cursor-empty");
+    let plan = install(&home.cursor(), &Scope::User);
+
+    // One modification and no hook: none of Cursor's reaches ours (T-069).
+    assert_eq!(plan.len(), 1);
+    assert!(plan[0].before.is_none() && !plan[0].is_noop());
+    assert_matches(&home, "cursor-empty", "out");
+
+    // INST-07 holds for every adapter: the first apply creates the token.
+    assert!(
+        home.join(".handoff/channel.token").is_file(),
+        "the channel token was not created"
+    );
+    assert!(backups_of(&home, CURSOR_CONFIG).is_empty());
+}
+
+#[test]
+fn cursor_keeps_every_server_the_user_had() {
+    let home = TempHome::from_case("cursor-populated");
+    install(&home.cursor(), &Scope::User);
+    assert_matches(&home, "cursor-populated", "out");
+    assert_eq!(backups_of(&home, CURSOR_CONFIG).len(), 1);
+}
+
+#[test]
+fn cursor_uninstall_gives_the_file_back_byte_for_byte() {
+    let home = TempHome::from_case("cursor-populated");
+    let adapter = home.cursor();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    assert_matches(&home, "cursor-populated", "in");
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+}
+
+#[test]
+fn cursor_applying_twice_writes_nothing_the_second_time() {
+    let home = TempHome::from_case("cursor-populated");
+    let adapter = home.cursor();
+    install(&adapter, &Scope::User);
+    let after_first = fs::read_to_string(home.join(CURSOR_CONFIG)).expect("written");
+
+    let second = adapter.plan(&Scope::User).expect("the plan is made");
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0].is_noop(),
+        "a second plan still wants to change something:\n{}",
+        second[0].diff
+    );
+    adapter.apply(&second).expect("the plan is applied");
+
+    assert_eq!(
+        fs::read_to_string(home.join(CURSOR_CONFIG)).expect("written"),
+        after_first
+    );
+    assert_eq!(backups_of(&home, CURSOR_CONFIG).len(), 1);
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn cursor_uninstall_where_ours_was_the_only_server_leaves_the_empty_object() {
+    let home = TempHome::from_case("cursor-empty");
+    let adapter = home.cursor();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    // `mcpServers` was ours to create, so it goes with our entry, as for Claude Code.
+    assert_eq!(
+        fs::read_to_string(home.join(CURSOR_CONFIG)).expect("written"),
+        "{}\n"
+    );
+}
+
+#[test]
+fn cursor_project_scope_writes_the_projects_file_and_not_the_users() {
+    let home = TempHome::from_case("cursor-project");
+    let project = home.path().to_path_buf();
+    let adapter = Cursor::with(
+        home.join("elsewhere/.cursor"),
+        SERVER,
+        home.join(".handoff/channel.token"),
+    );
+    let scope = Scope::project(&project);
+
+    let plan = install(&adapter, &scope);
+    assert_eq!(plan[0].file, project.join(".cursor").join("mcp.json"));
+    assert_matches(&home, "cursor-project", "out");
+    assert!(
+        !home.join("elsewhere/.cursor/mcp.json").exists(),
+        "project scope wrote into the user's Cursor folder"
+    );
+    assert_eq!(adapter.verify(&scope), Registration::Registered);
+}
+
+#[test]
+fn cursor_a_moved_bundle_is_a_path_mismatch_repaired_where_the_entry_stands() {
+    // FM-23: the entry is ours and names the old path. The repair rewrites it in place, before
+    // the user's other server, and changes nothing else.
+    let home = TempHome::from_case("cursor-moved");
+    let adapter = home.cursor();
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::PathMismatch {
+            registered: PathBuf::from(OLD_SERVER),
+            current: PathBuf::from(SERVER),
+        }
+    );
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains(OLD_SERVER) && plan[0].diff.contains(SERVER),
+        "the diff does not show the old path being replaced:\n{}",
+        plan[0].diff
+    );
+    adapter.apply(&plan).expect("the repair is applied");
+
+    assert_matches(&home, "cursor-moved", "out");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn cursor_an_entry_somebody_wrote_by_hand_is_theirs_until_the_plan_shows_it_replaced() {
+    // `handoff-mcp`'s install-without-app page tells a person to write `mcpServers.handoff`
+    // with `npx`. Its command is not our fixed path, so it is not our registration, an
+    // uninstall leaves it alone, and a plan replaces it only with its old lines in the diff.
+    let home = TempHome::from_case("cursor-empty");
+    let file = home.join(CURSOR_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let theirs = concat!(
+        "{\n",
+        "  \"mcpServers\": {\n",
+        "    \"handoff\": {\n",
+        "      \"command\": \"npx\",\n",
+        "      \"args\": [\n",
+        "        \"-y\",\n",
+        "        \"baton-handoff-mcp\"\n",
+        "      ],\n",
+        "      \"env\": {\n",
+        "        \"HANDOFF_AGENT\": \"cursor\"\n",
+        "      }\n",
+        "    }\n",
+        "  }\n",
+        "}\n",
+    );
+    fs::write(&file, theirs).expect("the file is written");
+    let adapter = home.cursor();
+
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+    adapter.uninstall(&Scope::User).expect("nothing to remove");
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), theirs);
+
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains("\"npx\""),
+        "the diff hides what it replaces:\n{}",
+        plan[0].diff
+    );
+}
+
+#[test]
+fn cursor_a_plan_applied_against_a_file_that_moved_on_is_refused() {
+    let home = TempHome::from_case("cursor-populated");
+    let adapter = home.cursor();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+
+    fs::write(
+        home.join(CURSOR_CONFIG),
+        "{\n  \"mcpServers\": {\n    \"handoff\": { \"command\": \"elsewhere\" }\n  }\n}\n",
+    )
+    .expect("the file is rewritten");
+
+    match adapter.apply(&plan) {
+        Err(InstallError::Stale { location, .. }) => {
+            assert_eq!(location, "mcp.json · mcpServers.handoff");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn cursor_a_file_with_comments_is_refused_rather_than_rewritten() {
+    // A JSON parse would lose the comments (INST-04): the file is the user's, so the adapter
+    // refuses it and never writes a byte into it.
+    let home = TempHome::from_case("cursor-populated");
+    let adapter = home.cursor();
+    let commented = "{\n  // the servers I use\n  \"mcpServers\": {}\n}\n";
+    fs::write(home.join(CURSOR_CONFIG), commented).expect("the file is rewritten");
+
+    assert!(matches!(
+        adapter.plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert!(matches!(
+        adapter.uninstall(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(home.join(CURSOR_CONFIG)).expect("it is still there"),
+        commented
+    );
+}
+
+#[test]
+fn cursor_mcp_servers_that_are_not_an_object_are_refused_rather_than_replaced() {
+    // Valid JSON that Cursor itself would not accept: writing our entry would replace the
+    // user's value, so the adapter refuses and leaves it for the user to see.
+    let home = TempHome::from_case("cursor-empty");
+    let file = home.join(CURSOR_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let odd = "{\n  \"mcpServers\": []\n}\n";
+    fs::write(&file, odd).expect("the file is written");
+
+    assert!(matches!(
+        home.cursor().plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), odd);
+}
+
+#[test]
+fn cursor_the_consent_path_shows_one_line_that_grants_and_raises_nothing() {
+    let home = TempHome::from_case("cursor-empty");
+    let adapter = home.cursor();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let shown = install::digest(&plan);
+
+    let lines = adapter.consent_lines(&plan);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].description.key, "install.cursor.mcpEntry");
+    assert_eq!(
+        lines[0].description.args.get("file").map(String::as_str),
+        Some("mcp.json")
+    );
+    assert!(
+        !lines[0].description.args.contains_key("minutes"),
+        "Cursor reads no timeout from an entry (T-069)"
+    );
+    assert!(
+        lines[0].diff.contains("\"HANDOFF_AGENT\": \"cursor\""),
+        "Show does not reveal the agent:\n{}",
+        lines[0].diff
+    );
+    for absent in ["timeout", "HANDOFF_TOOL_TIMEOUT_MS", "Mcp("] {
+        assert!(
+            !lines[0].diff.contains(absent),
+            "Show reveals {absent}:\n{}",
+            lines[0].diff
+        );
+    }
+
+    adapter.apply(&plan).expect("the plan is applied");
+    assert_matches(&home, "cursor-empty", "out");
+
+    let again = adapter.plan(&Scope::User).expect("the plan is made again");
+    assert!(again.iter().all(Modification::is_noop));
+    assert_ne!(install::digest(&again), shown);
+}
+
+#[test]
+fn cursor_detect_names_the_file_of_the_scope_and_finds_cursor_by_its_folder() {
+    let home = TempHome::from_case("cursor-populated");
+    let detection = home.cursor().detect(&Scope::User);
+
+    assert_eq!(detection.agent_id, "cursor");
+    // `.cursor/` exists in the fixture, which is enough on a runner with no Cursor on PATH.
+    assert!(detection.found);
+    assert_eq!(detection.config_files, vec![home.join(CURSOR_CONFIG)]);
+    assert_eq!(detection.version, None);
+}
+
+#[test]
+fn four_agents_in_one_home_do_not_touch_each_others_files() {
+    // One machine, four agents: each adapter writes its own files and nothing of the others'.
     let home = TempHome::from_case("populated");
     install(&home.adapter(), &Scope::User);
     install(&home.codex(), &Scope::User);
+    install(&home.cursor(), &Scope::User);
     install(&home.opencode(), &Scope::User);
 
     assert_matches(&home, "populated", "out");
-    let opencode_golden = fs::read_to_string(
-        fixture_dir("opencode-empty")
-            .join("out")
-            .join(".config")
-            .join("opencode")
-            .join("opencode.json"),
-    )
-    .expect("the golden is readable")
-    .replace("\r\n", "\n");
-    assert_eq!(
-        fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("written"),
-        opencode_golden
-    );
+    for (case, relative) in [
+        ("opencode-empty", OPENCODE_CONFIG),
+        ("cursor-empty", CURSOR_CONFIG),
+    ] {
+        let golden = fs::read_to_string(fixture_dir(case).join("out").join(relative))
+            .expect("the golden is readable")
+            .replace("\r\n", "\n");
+        assert_eq!(
+            fs::read_to_string(home.join(relative)).expect("written"),
+            golden,
+            "{relative}"
+        );
+    }
 }

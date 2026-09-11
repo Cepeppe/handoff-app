@@ -11,7 +11,9 @@
 //! `[mcp_servers.handoff]` section in `config.toml`, with the approval mode and the timeout in
 //! seconds, and no hook, because `codex exec` runs none. OpenCode writes one too (T-074): its
 //! `mcp.handoff` entry in `opencode.json`, with the timeout in milliseconds, and no hook,
-//! because OpenCode has none to register.
+//! because OpenCode has none to register. Cursor writes one as well (T-070): its
+//! `mcpServers.handoff` entry in `mcp.json`, read by its editor and its Agent CLI alike, with no
+//! timeout, because Cursor reads none, and no hook, because none of Cursor's reaches ours.
 //!
 //! # Three rules that shape everything below
 //!
@@ -39,6 +41,7 @@
 pub mod claude_code;
 pub mod cleanup;
 pub mod codex;
+pub mod cursor;
 pub mod diff;
 pub mod error;
 pub mod fixed_path;
@@ -56,6 +59,7 @@ use sha2::{Digest as _, Sha256};
 
 pub use claude_code::ClaudeCode;
 pub use codex::Codex;
+pub use cursor::Cursor;
 pub use error::{InstallError, Result};
 pub use opencode::OpenCode;
 pub use scan::{scan, AgentStatus, MovedRegistration};
@@ -193,10 +197,10 @@ impl Description {
 
 /// The syntax of the file a modification is written into.
 ///
-/// Claude Code's configuration is JSON, Codex's TOML and OpenCode's JSON again (§7.15). A plan
-/// never mixes the two
-/// inside one file, and [`apply`] reads, edits and verifies each file in its own syntax, so the
-/// rules around the edit — the stale check, the backup, the re-read — stay one piece of code.
+/// Claude Code's configuration is JSON, Codex's TOML, and OpenCode's and Cursor's JSON again
+/// (§7.15). A plan never mixes the two inside one file, and [`apply`] reads, edits and
+/// verifies each file in its own syntax, so the rules around the edit — the stale check, the
+/// backup, the re-read — stay one piece of code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
@@ -523,7 +527,7 @@ pub fn apply(plan: &[Modification]) -> Result<()> {
 /// One configuration file as [`apply`] edits it, in the syntax its agent reads.
 enum Config {
     /// Claude Code's `~/.claude.json`, `settings.json`, a project's `.mcp.json`; OpenCode's
-    /// `opencode.json`.
+    /// `opencode.json`; Cursor's `mcp.json`.
     Json(Document),
     /// Codex's `config.toml`.
     Toml(toml::Document),

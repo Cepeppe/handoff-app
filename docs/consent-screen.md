@@ -102,6 +102,36 @@ tool_timeout_sec = 1800
 - `tool_timeout_sec` is the same 30 minutes as Claude Code's `timeout`, in seconds, which is
   what Codex counts in.
 
+## The change for Cursor
+
+There is one, because none of Cursor's hooks can reach Baton; [Cursor](agents/cursor.md) says
+what that changes.
+
+### The MCP server entry, in `%USERPROFILE%\.cursor\mcp.json`
+
+> The MCP server entry “handoff” in `mcp.json`, running
+> `C:\Users\you\AppData\Local\Baton\handoff-mcp.exe`
+
+Baton adds this entry under `"mcpServers"`, or creates the file with it:
+
+```json
+"handoff": {
+  "command": "C:\\Users\\you\\AppData\\Local\\Baton\\handoff-mcp.exe",
+  "args": [],
+  "env": {
+    "HANDOFF_AGENT": "cursor"
+  }
+}
+```
+
+- `command` and `HANDOFF_AGENT` do what they do for Claude Code, above. Cursor's editor and its
+  Agent CLI both read this file.
+- There is no timeout: Cursor reads none from an entry, so there is nothing to raise, and
+  `HANDOFF_TOOL_TIMEOUT_MS` is left out on purpose, so that Baton's server keeps inside the
+  minute Cursor gives a call ([Cursor](agents/cursor.md#a-call-lasts-a-minute)).
+- There is no approval line: Cursor asks before it runs one of Baton's tools, as for any
+  server.
+
 ## The change for OpenCode
 
 There is one as well, because OpenCode has no hook to register; [OpenCode](agents/opencode.md)
@@ -156,10 +186,10 @@ on install and on uninstall.
 - Everything else in the file stays: every key and value you had, in the same order and with
   the same indentation. Blank lines between entries are not kept. In Codex's `config.toml`
   comments and blank lines are kept as well, and so is the way each value is written.
-  OpenCode's `opencode.json` is edited like Claude Code's files, and one with comments in it is
-  not edited at all: Baton says so instead.
-- Claude Code, Codex and OpenCode read their settings when a session starts, so restart the
-  sessions that were already running.
+  OpenCode's `opencode.json` and Cursor's `mcp.json` are edited like Claude Code's files, and
+  one with comments in it is not edited at all: Baton says so instead.
+- Claude Code, Codex, Cursor and OpenCode read their settings when a session starts — Cursor's
+  editor when a window opens — so restart the sessions that were already running.
 
 ## Where: this user or one project
 
@@ -168,8 +198,9 @@ Settings → Agents → **Where** you can choose **One project** instead and pic
 then writes `.mcp.json` and `.claude\settings.json` inside that folder, with the same
 content, and only sessions working in that folder see it. For Codex it writes
 `.codex\config.toml` there, which Codex reads only for a project you have marked as trusted in
-Codex; Baton never marks one for you. For OpenCode it writes `opencode.json` at the top of that
-folder.
+Codex; Baton never marks one for you. For Cursor it writes `.cursor\mcp.json` there, which
+Cursor loads once you have approved it in Cursor; Baton never approves it for you. For OpenCode
+it writes `opencode.json` at the top of that folder.
 
 ## Taking it back
 
@@ -178,8 +209,9 @@ and the two hook entries, recognised by the path of Baton's server in their comm
 else is touched — your other servers and hooks stay, and `MCP_TOOL_TIMEOUT` is never Baton's
 to restore. If Baton's entry was the only one in `"mcpServers"` or `"hooks"`, the emptied key
 is removed too. For Codex, **Remove** deletes the `[mcp_servers.handoff]` section, recognised
-the same way, and nothing else in `config.toml`; for OpenCode, the `"handoff"` entry under
-`"mcp"` in `opencode.json`. The backup copies stay where they are.
+the same way, and nothing else in `config.toml`; for Cursor, the `"handoff"` entry under
+`"mcpServers"` in `mcp.json`; for OpenCode, the `"handoff"` entry under `"mcp"` in
+`opencode.json`. The backup copies stay where they are.
 
 ## The status of each agent
 

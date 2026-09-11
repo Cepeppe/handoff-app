@@ -115,6 +115,33 @@ function opencodePlan(): ConsentView {
   };
 }
 
+const CURSOR_DIFF =
+  '--- mcp.json · mcpServers.handoff (absent)\n+++ mcp.json · mcpServers.handoff\n' +
+  '+{\n+  "command": "/apps/Baton/handoff-mcp",\n+  "args": [],\n' +
+  '+  "env": {\n+    "HANDOFF_AGENT": "cursor"\n+  }\n+}\n';
+
+/** Cursor's plan on an empty machine: one modification on one row, no hook, no timeout (T-070). */
+function cursorPlan(): ConsentView {
+  return {
+    agentId: 'cursor',
+    nameKey: 'agent.cursor',
+    modificationCount: 1,
+    digest: 'u1',
+    alreadyInOrder: false,
+    lines: [
+      {
+        description: {
+          key: 'install.cursor.mcpEntry',
+          args: { file: 'mcp.json', server: '/apps/Baton/handoff-mcp' },
+        },
+        locations: ['mcp.json · mcpServers.handoff'],
+        diff: CURSOR_DIFF,
+        isNoop: false,
+      },
+    ],
+  };
+}
+
 function agent(overrides: Partial<AgentStatus> = {}): AgentStatus {
   return {
     agentId: 'claude-code',
@@ -340,9 +367,51 @@ describe('the consent screen (INST-01, INST-02)', () => {
     }
   });
 
+  it('lists Cursor as one change on one row, in the singular (T-070)', async () => {
+    setBridge(
+      fakeBridge({
+        agents: vi.fn(async () => [
+          agent({
+            agentId: 'cursor',
+            nameKey: 'agent.cursor',
+            configFiles: ['/home/x/.cursor/mcp.json'],
+          }),
+        ]),
+        consentPlan: vi.fn(async () => cursorPlan()),
+      }),
+    );
+    render(AgentsSettings);
+
+    fireEvent.click(await screen.findByText(t('install.register')));
+
+    await screen.findByText(t('install.consentIntroOne', { agent: t('agent.cursor') }));
+    expect(screen.getAllByText(t('install.show'))).toHaveLength(1);
+    expect(
+      screen.getByText(
+        t('install.cursor.mcpEntry', { file: 'mcp.json', server: '/apps/Baton/handoff-mcp' }),
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText(t('install.show')));
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('"HANDOFF_AGENT": "cursor"'),
+    );
+  });
+
+  it('grants Cursor nothing and sets no timeout, so its line names neither (T-070)', () => {
+    // Cursor asks before it runs a tool and reads no timeout from an entry (T-069): the line
+    // describes the entry and nothing else, and a minute count would promise a limit never set.
+    for (const language of LANGUAGES) {
+      const line = catalogue(language)['install.cursor.mcpEntry'] ?? '';
+      expect(line, language).toContain('{server}');
+      expect(line, language).not.toContain('{minutes}');
+      expect(line.toLowerCase(), language).not.toMatch(/approv|timeout/u);
+    }
+  });
+
   it('promises no hook in any text an agent without one could meet (ADPT-04, T-067)', () => {
-    // Codex and OpenCode run no end-of-turn hook (their capability rows say `stop_hook:
-    // false`), so no sentence the window can show about their sessions may say that a hook
+    // Codex, OpenCode and Cursor run no end-of-turn hook of ours (their capability rows say
+    // `stop_hook: false`), so no sentence the window can show about their sessions may say that a hook
     // will remind the agent or deliver anything. Two families may name a hook: the Claude Code consent
     // lines, which describe the hooks being written, and the FM-22 picker, which only a hook
     // that actually ran can open.
