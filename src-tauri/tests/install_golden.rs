@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    self, survives_project_scope, Codex, InstallAdapter, InstallError, Modification, Registration,
-    Scope,
+    self, survives_project_scope, Codex, InstallAdapter, InstallError, Modification, OpenCode,
+    Registration, Scope,
 };
 use serde_json::Value;
 
@@ -78,6 +78,15 @@ impl TempHome {
     fn codex(&self) -> Codex {
         Codex::with(
             self.join(".codex"),
+            SERVER,
+            self.join(".handoff/channel.token"),
+        )
+    }
+
+    /// The OpenCode adapter over the same home: its folder is `<home>/.config/opencode`.
+    fn opencode(&self) -> OpenCode {
+        OpenCode::with(
+            self.join(".config/opencode"),
             SERVER,
             self.join(".handoff/channel.token"),
         )
@@ -933,5 +942,303 @@ fn claude_code_and_codex_in_one_home_do_not_touch_each_others_files() {
     assert_eq!(
         fs::read_to_string(home.join(CODEX_CONFIG)).expect("written"),
         codex_golden
+    );
+}
+
+// ---------------------------------------------------------- the OpenCode adapter (T-074)
+//
+// The Claude Code promises over OpenCode's JSON: `<home>/.config/opencode/opencode.json`, one
+// `mcp.handoff` entry, and every server, setting and key the user had still there, in order.
+
+/// OpenCode's configuration inside a temporary home.
+const OPENCODE_CONFIG: &str = ".config/opencode/opencode.json";
+
+#[test]
+fn opencode_on_a_machine_with_no_configuration_at_all() {
+    let home = TempHome::from_case("opencode-empty");
+    let plan = install(&home.opencode(), &Scope::User);
+
+    // One modification and no hook: OpenCode has none to register (T-074).
+    assert_eq!(plan.len(), 1);
+    assert!(plan[0].before.is_none() && !plan[0].is_noop());
+    assert_matches(&home, "opencode-empty", "out");
+
+    // INST-07 holds for every adapter: the first apply creates the token.
+    assert!(
+        home.join(".handoff/channel.token").is_file(),
+        "the channel token was not created"
+    );
+    assert!(backups_of(&home, OPENCODE_CONFIG).is_empty());
+}
+
+#[test]
+fn opencode_keeps_every_server_and_setting_the_user_had() {
+    let home = TempHome::from_case("opencode-populated");
+    install(&home.opencode(), &Scope::User);
+    assert_matches(&home, "opencode-populated", "out");
+    assert_eq!(backups_of(&home, OPENCODE_CONFIG).len(), 1);
+}
+
+#[test]
+fn opencode_uninstall_gives_the_file_back_byte_for_byte() {
+    let home = TempHome::from_case("opencode-populated");
+    let adapter = home.opencode();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    assert_matches(&home, "opencode-populated", "in");
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+}
+
+#[test]
+fn opencode_applying_twice_writes_nothing_the_second_time() {
+    let home = TempHome::from_case("opencode-populated");
+    let adapter = home.opencode();
+    install(&adapter, &Scope::User);
+    let after_first = fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("written");
+
+    let second = adapter.plan(&Scope::User).expect("the plan is made");
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0].is_noop(),
+        "a second plan still wants to change something:\n{}",
+        second[0].diff
+    );
+    adapter.apply(&second).expect("the plan is applied");
+
+    assert_eq!(
+        fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("written"),
+        after_first
+    );
+    assert_eq!(backups_of(&home, OPENCODE_CONFIG).len(), 1);
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn opencode_uninstall_where_ours_was_the_only_server_leaves_the_empty_object() {
+    let home = TempHome::from_case("opencode-empty");
+    let adapter = home.opencode();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    // `mcp` was ours to create, so it goes with our entry, as for Claude Code.
+    assert_eq!(
+        fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("written"),
+        "{}\n"
+    );
+}
+
+#[test]
+fn opencode_project_scope_writes_the_projects_file_and_not_the_global_one() {
+    let home = TempHome::from_case("opencode-project");
+    let project = home.path().to_path_buf();
+    let adapter = OpenCode::with(
+        home.join("elsewhere/opencode"),
+        SERVER,
+        home.join(".handoff/channel.token"),
+    );
+    let scope = Scope::project(&project);
+
+    let plan = install(&adapter, &scope);
+    assert_eq!(plan[0].file, project.join("opencode.json"));
+    assert_matches(&home, "opencode-project", "out");
+    assert!(
+        !home.join("elsewhere/opencode/opencode.json").exists(),
+        "project scope wrote into OpenCode's global folder"
+    );
+    assert_eq!(adapter.verify(&scope), Registration::Registered);
+}
+
+#[test]
+fn opencode_a_moved_bundle_is_a_path_mismatch_repaired_where_the_entry_stands() {
+    // FM-23: the entry is ours and names the old path. The repair rewrites it in place, before
+    // the user's other server, and changes nothing else.
+    let home = TempHome::from_case("opencode-moved");
+    let adapter = home.opencode();
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::PathMismatch {
+            registered: PathBuf::from(OLD_SERVER),
+            current: PathBuf::from(SERVER),
+        }
+    );
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains(OLD_SERVER) && plan[0].diff.contains(SERVER),
+        "the diff does not show the old path being replaced:\n{}",
+        plan[0].diff
+    );
+    adapter.apply(&plan).expect("the repair is applied");
+
+    assert_matches(&home, "opencode-moved", "out");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn opencode_an_entry_somebody_wrote_by_hand_is_theirs_until_the_plan_shows_it_replaced() {
+    // `handoff-mcp`'s install-without-app page tells a person to write `mcp.handoff` with
+    // `npx`. Its command is not our fixed path, so it is not our registration, an uninstall
+    // leaves it alone, and a plan replaces it only with its old lines in the diff.
+    let home = TempHome::from_case("opencode-empty");
+    let file = home.join(OPENCODE_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let theirs = concat!(
+        "{\n",
+        "  \"mcp\": {\n",
+        "    \"handoff\": {\n",
+        "      \"type\": \"local\",\n",
+        "      \"command\": [\n",
+        "        \"npx\",\n",
+        "        \"-y\",\n",
+        "        \"baton-handoff-mcp\"\n",
+        "      ]\n",
+        "    }\n",
+        "  }\n",
+        "}\n",
+    );
+    fs::write(&file, theirs).expect("the file is written");
+    let adapter = home.opencode();
+
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+    adapter.uninstall(&Scope::User).expect("nothing to remove");
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), theirs);
+
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains("\"npx\""),
+        "the diff hides what it replaces:\n{}",
+        plan[0].diff
+    );
+}
+
+#[test]
+fn opencode_a_plan_applied_against_a_file_that_moved_on_is_refused() {
+    let home = TempHome::from_case("opencode-populated");
+    let adapter = home.opencode();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+
+    fs::write(
+        home.join(OPENCODE_CONFIG),
+        "{\n  \"mcp\": {\n    \"handoff\": { \"type\": \"local\", \"command\": [\"elsewhere\"] }\n  }\n}\n",
+    )
+    .expect("the file is rewritten");
+
+    match adapter.apply(&plan) {
+        Err(InstallError::Stale { location, .. }) => {
+            assert_eq!(location, "opencode.json · mcp.handoff");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn opencode_a_file_with_comments_is_refused_rather_than_rewritten() {
+    // OpenCode reads JSON with comments, and a JSON parse would lose them (INST-04): the file
+    // is the user's, so the adapter refuses it and never writes a byte into it.
+    let home = TempHome::from_case("opencode-populated");
+    let adapter = home.opencode();
+    let commented = "{\n  // the model I use\n  \"model\": \"openrouter/vendor/model\"\n}\n";
+    fs::write(home.join(OPENCODE_CONFIG), commented).expect("the file is rewritten");
+
+    assert!(matches!(
+        adapter.plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert!(matches!(
+        adapter.uninstall(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("it is still there"),
+        commented
+    );
+}
+
+#[test]
+fn opencode_an_mcp_that_is_not_an_object_is_refused_rather_than_replaced() {
+    // Valid JSON that OpenCode itself would not accept: writing our entry would replace the
+    // user's value, so the adapter refuses and leaves it for the user to see.
+    let home = TempHome::from_case("opencode-empty");
+    let file = home.join(OPENCODE_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let odd = "{\n  \"mcp\": []\n}\n";
+    fs::write(&file, odd).expect("the file is written");
+
+    assert!(matches!(
+        home.opencode().plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), odd);
+}
+
+#[test]
+fn opencode_the_consent_path_shows_one_line_with_the_timeout_behind_show() {
+    let home = TempHome::from_case("opencode-empty");
+    let adapter = home.opencode();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let shown = install::digest(&plan);
+
+    let lines = adapter.consent_lines(&plan);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].description.key, "install.opencode.mcpEntry");
+    assert_eq!(
+        lines[0].description.args.get("minutes").map(String::as_str),
+        Some("30")
+    );
+    for written in ["\"timeout\": 1800000", "\"HANDOFF_AGENT\": \"opencode\""] {
+        assert!(
+            lines[0].diff.contains(written),
+            "Show does not reveal {written}:\n{}",
+            lines[0].diff
+        );
+    }
+
+    adapter.apply(&plan).expect("the plan is applied");
+    assert_matches(&home, "opencode-empty", "out");
+
+    let again = adapter.plan(&Scope::User).expect("the plan is made again");
+    assert!(again.iter().all(Modification::is_noop));
+    assert_ne!(install::digest(&again), shown);
+}
+
+#[test]
+fn opencode_detect_names_the_file_of_the_scope_and_finds_opencode_by_its_folder() {
+    let home = TempHome::from_case("opencode-populated");
+    let detection = home.opencode().detect(&Scope::User);
+
+    assert_eq!(detection.agent_id, "opencode");
+    // `.config/opencode/` exists in the fixture, which is enough on a runner with no
+    // `opencode` on PATH.
+    assert!(detection.found);
+    assert_eq!(detection.config_files, vec![home.join(OPENCODE_CONFIG)]);
+    assert_eq!(detection.version, None);
+}
+
+#[test]
+fn three_agents_in_one_home_do_not_touch_each_others_files() {
+    // One machine, three agents: each adapter writes its own files and nothing of the others'.
+    let home = TempHome::from_case("populated");
+    install(&home.adapter(), &Scope::User);
+    install(&home.codex(), &Scope::User);
+    install(&home.opencode(), &Scope::User);
+
+    assert_matches(&home, "populated", "out");
+    let opencode_golden = fs::read_to_string(
+        fixture_dir("opencode-empty")
+            .join("out")
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json"),
+    )
+    .expect("the golden is readable")
+    .replace("\r\n", "\n");
+    assert_eq!(
+        fs::read_to_string(home.join(OPENCODE_CONFIG)).expect("written"),
+        opencode_golden
     );
 }

@@ -89,6 +89,32 @@ function codexPlan(): ConsentView {
   };
 }
 
+const OPENCODE_DIFF =
+  '--- opencode.json · mcp.handoff (absent)\n+++ opencode.json · mcp.handoff\n' +
+  '+{\n+  "type": "local",\n+  "timeout": 1800000\n+}\n';
+
+/** OpenCode's plan on an empty machine: one modification on one row, no hook, no permission. */
+function opencodePlan(): ConsentView {
+  return {
+    agentId: 'opencode',
+    nameKey: 'agent.opencode',
+    modificationCount: 1,
+    digest: 'o1',
+    alreadyInOrder: false,
+    lines: [
+      {
+        description: {
+          key: 'install.opencode.mcpEntry',
+          args: { file: 'opencode.json', server: '/apps/Baton/handoff-mcp', minutes: '30' },
+        },
+        locations: ['opencode.json · mcp.handoff'],
+        diff: OPENCODE_DIFF,
+        isNoop: false,
+      },
+    ],
+  };
+}
+
 function agent(overrides: Partial<AgentStatus> = {}): AgentStatus {
   return {
     agentId: 'claude-code',
@@ -271,10 +297,53 @@ describe('the consent screen (INST-01, INST-02)', () => {
     expect(catalogue('it')['install.codex.mcpEntry']).toContain('approvati in anticipo');
   });
 
+  it('lists OpenCode as one change on one row, in the singular (T-074)', async () => {
+    setBridge(
+      fakeBridge({
+        agents: vi.fn(async () => [
+          agent({
+            agentId: 'opencode',
+            nameKey: 'agent.opencode',
+            configFiles: ['/home/x/.config/opencode/opencode.json'],
+          }),
+        ]),
+        consentPlan: vi.fn(async () => opencodePlan()),
+      }),
+    );
+    render(AgentsSettings);
+
+    fireEvent.click(await screen.findByText(t('install.register')));
+
+    await screen.findByText(t('install.consentIntroOne', { agent: t('agent.opencode') }));
+    expect(screen.getAllByText(t('install.show'))).toHaveLength(1);
+    expect(
+      screen.getByText(
+        t('install.opencode.mcpEntry', {
+          file: 'opencode.json',
+          server: '/apps/Baton/handoff-mcp',
+          minutes: '30',
+        }),
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText(t('install.show')));
+    await waitFor(() => expect(document.body.textContent).toContain('"timeout": 1800000'));
+  });
+
+  it('grants OpenCode nothing beyond the entry, so its line names no approval (T-074)', () => {
+    // OpenCode calls an MCP tool without asking (measured), so unlike Codex's line this one
+    // carries no permission, and a sentence about one would describe something not granted.
+    for (const language of LANGUAGES) {
+      const line = catalogue(language)['install.opencode.mcpEntry'] ?? '';
+      expect(line, language).toContain('{minutes}');
+      expect(line.toLowerCase(), language).not.toMatch(/approv/u);
+    }
+  });
+
   it('promises no hook in any text an agent without one could meet (ADPT-04, T-067)', () => {
-    // Codex runs no end-of-turn hook (its capability row says `stop_hook: false`), so no
-    // sentence the window can show about a Codex session may say that a hook will remind
-    // the agent or deliver anything. Two families may name a hook: the Claude Code consent
+    // Codex and OpenCode run no end-of-turn hook (their capability rows say `stop_hook:
+    // false`), so no sentence the window can show about their sessions may say that a hook
+    // will remind the agent or deliver anything. Two families may name a hook: the Claude Code consent
     // lines, which describe the hooks being written, and the FM-22 picker, which only a hook
     // that actually ran can open.
     for (const language of LANGUAGES) {

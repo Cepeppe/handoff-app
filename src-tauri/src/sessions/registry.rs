@@ -864,6 +864,41 @@ mod tests {
     }
 
     #[test]
+    fn an_opencode_session_is_named_by_the_row_the_server_resolved() {
+        // The third row the table knows (T-074), and again nothing here had to learn about it:
+        // the name is the server's, carried in `hello`.
+        let mut fixture = Fixture::new();
+        let table = one_machine();
+        let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        peer.agent_id = Some("opencode".to_owned());
+        peer.client = Some(ClientInfo {
+            name: "opencode".to_owned(),
+            version: "1.18.29".to_owned(),
+        });
+        peer.capability_row = Some(CapabilityRow {
+            agent_id: "opencode".to_owned(),
+            support: SupportLevel::Base,
+            images_in_results: true,
+            stop_hook: false,
+            tool_timeout_ms: Some(1_800_000),
+            display_name: Some("OpenCode".to_owned()),
+            subagent_stop_hook: Some(false),
+            session_identity: None,
+            user_request_delivery: None,
+            cancellation_notifications: Some(true),
+        });
+
+        let session_ref = fixture
+            .registry
+            .register(&fixture.db, &peer, &table)
+            .expect("a registration")
+            .expect("a server registers");
+        let session = fixture.registry.get(&session_ref).expect("the session");
+        assert_eq!(session.display_name(), "OpenCode · baton");
+        assert_eq!(session.resumed_from().agent, "OpenCode");
+    }
+
+    #[test]
     fn a_hook_registers_nothing() {
         let mut fixture = Fixture::new();
         let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");

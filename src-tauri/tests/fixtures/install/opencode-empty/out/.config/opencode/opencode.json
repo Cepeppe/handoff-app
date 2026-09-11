@@ -1,0 +1,15 @@
+{
+  "mcp": {
+    "handoff": {
+      "type": "local",
+      "command": [
+        "/apps/Baton/handoff-mcp"
+      ],
+      "environment": {
+        "HANDOFF_AGENT": "opencode",
+        "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+      },
+      "timeout": 1800000
+    }
+  }
+}

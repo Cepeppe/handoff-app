@@ -13,6 +13,25 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-11
+
+OpenCode joins Claude Code and Codex. `1.2.0` and `1.3.0` are not released: they are kept for
+the Cursor and GitHub Copilot adapters, which come later.
+
+### Added
+
+- The OpenCode installation adapter: one change to OpenCode's `opencode.json`, the MCP server
+  entry with a 30-minute tool timeout, shown on the consent screen and removable from
+  Settings → Agents, with every other server and setting of the file kept in its order. A file
+  with comments in it is refused rather than rewritten. OpenCode sessions appear in the panel
+  under their own name. OpenCode has base support, and `docs/agents/opencode.md` says what that
+  changes: nothing reminds the agent at the end of a turn, and your requests reach it by the
+  clipboard.
+- An OpenCode subset of the end-to-end suite, run by hand with
+  `scripts\e2e.ps1 -Agent opencode`.
+
+Bundles `handoff-mcp` 1.4.0.
+
 ## [1.1.0] - 2026-09-11
 
 The first release: the application as it stands, for Windows.

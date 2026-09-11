@@ -39,8 +39,8 @@ const PAGES = [
   'third-party-notices.md',
 ] as const;
 
-/** The pages about one agent each, under `agents/` in both languages (T-067). */
-const AGENT_PAGES = ['agents/codex.md'] as const;
+/** The pages about one agent each, under `agents/` in both languages (T-067, T-074). */
+const AGENT_PAGES = ['agents/codex.md', 'agents/opencode.md'] as const;
 
 /** A page, with its line endings normalised: the check is about the words. */
 function read(...path: string[]): string {
@@ -215,6 +215,19 @@ describe('what the pages must say', () => {
     for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
       expect(page).toContain('default_tools_approval_mode = "approve"');
       expect(page).toContain('tool_timeout_sec = 1800');
+    }
+  });
+
+  it('tells an OpenCode user what Baton writes and what OpenCode does not do (T-074)', () => {
+    for (const page of [read('agents', 'opencode.md'), read('it', 'agents', 'opencode.md')]) {
+      // The file, the one command that shows the entry, and the sixty seconds it replaces.
+      expect(page).toContain('.config\\opencode\\opencode.json');
+      expect(page).toContain('opencode mcp list');
+      expect(page).toContain('"timeout": 1800000');
+    }
+    for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
+      expect(page).toContain('"environment"');
+      expect(page).toContain('"timeout": 1800000');
     }
   });
 

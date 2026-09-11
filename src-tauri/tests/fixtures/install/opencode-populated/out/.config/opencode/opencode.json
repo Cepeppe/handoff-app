@@ -1,0 +1,38 @@
+{
+  "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+  "mcp": {
+    "docs": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@example/docs-mcp"
+      ],
+      "environment": {
+        "DOCS_ROOT": "C:/docs"
+      }
+    },
+    "shop-db": {
+      "type": "local",
+      "command": [
+        "C:\\tools\\shop-db.exe"
+      ],
+      "enabled": false,
+      "timeout": 60000
+    },
+    "handoff": {
+      "type": "local",
+      "command": [
+        "/apps/Baton/handoff-mcp"
+      ],
+      "environment": {
+        "HANDOFF_AGENT": "opencode",
+        "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+      },
+      "timeout": 1800000
+    }
+  },
+  "permission": {
+    "edit": "ask"
+  }
+}

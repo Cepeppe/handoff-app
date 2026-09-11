@@ -15,22 +15,22 @@
 //!
 //! Everything here is written over the **list** of adapters rather than over the Claude Code
 //! one: Codex joined it with T-067 without a line of change to the scan, the notice, the
-//! settings page or the repair offer, and OpenCode (T-074) is meant to do the same.
+//! settings page or the repair offer, and OpenCode joined it the same way with T-074.
 
 use std::path::PathBuf;
 
 use serde::Serialize;
 
 use super::error::Result;
-use super::{ClaudeCode, Codex, InstallAdapter, Registration, Scope};
+use super::{ClaudeCode, Codex, InstallAdapter, OpenCode, Registration, Scope};
 
 /// The setting holding the agent ids a notice was already shown for (INST-05).
 pub const KNOWN_AGENTS_KEY: &str = "known_agents";
 
 /// Every installation adapter this build carries (INST-08).
 ///
-/// Claude Code, then Codex: the committed order of ADPT-06, which is also the order the
-/// settings page lists them in.
+/// Claude Code, then Codex, then OpenCode: the committed order of ADPT-06 with Cursor and
+/// Copilot deferred, which is also the order the settings page lists them in.
 ///
 /// # Errors
 ///
@@ -40,6 +40,7 @@ pub fn adapters() -> Result<Vec<Box<dyn InstallAdapter>>> {
     Ok(vec![
         Box::new(ClaudeCode::detected()?),
         Box::new(Codex::detected()?),
+        Box::new(OpenCode::detected()?),
     ])
 }
 
@@ -176,6 +177,7 @@ pub fn name_key(agent_id: &str) -> &'static str {
     match agent_id {
         super::claude_code::AGENT_ID => "agent.claudeCode",
         super::codex::AGENT_ID => "agent.codex",
+        super::opencode::AGENT_ID => "agent.opencode",
         _ => "agent.unknown",
     }
 }
@@ -223,6 +225,7 @@ mod tests {
         for agent_id in [
             super::super::claude_code::AGENT_ID,
             super::super::codex::AGENT_ID,
+            super::super::opencode::AGENT_ID,
         ] {
             let key = name_key(agent_id);
             assert_ne!(key, "agent.unknown", "{agent_id} has no name key");
