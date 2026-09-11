@@ -357,20 +357,17 @@ mod tests {
 
     #[tokio::test]
     async fn an_engine_that_outstays_its_budget_falls_through_to_the_next() {
-        // The 10 s of §4.1, shortened to a tenth of a second so the suite does not wait.
-        // The abandoned thread is still sleeping when this test ends, deliberately: the
-        // point is that the caller does not.
+        // The 10 s of §4.1, shortened to a second so the suite does not wait. Not to less:
+        // the engine that answers has the same budget, and on a loaded CI runner a tenth of
+        // a second was not enough for it to be scheduled at all (T-072). The abandoned thread
+        // is still sleeping when this test ends, deliberately: the point is that the caller
+        // does not.
         let (os, _) = Stub::wired("windows", true, Answer::Hangs);
         let (bundled, _) = Stub::wired("ocrs", true, Answer::Lines("read by the fallback"));
         let started = std::time::Instant::now();
-        let recognition = run_with(
-            vec![os, bundled],
-            an_image(),
-            None,
-            Duration::from_millis(100),
-        )
-        .await
-        .expect("the fallback answers");
+        let recognition = run_with(vec![os, bundled], an_image(), None, Duration::from_secs(1))
+            .await
+            .expect("the fallback answers");
 
         assert_eq!(recognition.engine, "ocrs");
         assert!(
