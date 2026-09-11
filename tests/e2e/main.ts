@@ -12,13 +12,15 @@
  * pnpm e2e -- --agent codex         # the Codex subset, against the Codex CLI (T-067)
  * pnpm e2e -- --agent opencode      # the OpenCode subset, against OpenCode (T-074)
  * pnpm e2e -- --agent cursor        # the Cursor subset, against Cursor's editor and CLI (T-070)
+ * pnpm e2e -- --agent copilot       # the GitHub Copilot subset, against VS Code and the Copilot CLI (T-072)
  * pnpm e2e -- --list                # what exists, without running anything
  * ```
  *
  * Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
  * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_OPENCODE_MODEL`
  * OpenCode's (default a free OpenRouter model, see `opencode.ts`), `HANDOFF_E2E_CURSOR_MODEL`
- * Cursor's (default `auto`), `HANDOFF_E2E_KEEP=1` keeps
+ * Cursor's (default `auto`), `HANDOFF_E2E_COPILOT_MODEL` Copilot's (default `auto`),
+ * `HANDOFF_E2E_KEEP=1` keeps
  * each run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the
  * MCP entry at a server binary other than the pinned one.
  *
@@ -37,6 +39,12 @@ import { cleanUp, makeWorkspace, startApp } from './app.ts';
 import { classify, failures, label, reported, shouldRetry, type Assertion, type RunVerdict } from './classify.ts';
 import { CODEX, CODEX_DEFAULT_MODEL, codexOnPath, codexReadsTheInstalledEntry } from './codex.ts';
 import {
+  COPILOT,
+  COPILOT_DEFAULT_MODEL,
+  copilotOnPath,
+  copilotReadsTheInstalledEntry,
+} from './copilot.ts';
+import {
   CURSOR,
   CURSOR_DEFAULT_MODEL,
   cursorOnPath,
@@ -53,6 +61,7 @@ import { missingPrerequisites, REPO_ROOT } from './paths.ts';
 import { logInvariants, zeroEgress, type Scenario } from './scenario.ts';
 import {
   CODEX_SCENARIOS,
+  COPILOT_SCENARIOS,
   CURSOR_SCENARIOS,
   OPENCODE_SCENARIOS,
   SCENARIOS,
@@ -104,17 +113,24 @@ const AGENTS: Readonly<
     model: () => process.env['HANDOFF_E2E_CURSOR_MODEL'] ?? CURSOR_DEFAULT_MODEL,
     results: 'last-run-cursor.json',
   },
+  copilot: {
+    runner: COPILOT,
+    scenarios: COPILOT_SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_COPILOT_MODEL'] ?? COPILOT_DEFAULT_MODEL,
+    results: 'last-run-copilot.json',
+  },
 };
 
 /**
  * The one check a scenario cannot make, because every scenario must stay off the user's
- * configuration: that the agent itself reads what its installer writes (T-067, T-074, T-070).
- * Claude Code's is the golden-file suite's plus the smoke of T-042.
+ * configuration: that the agent itself reads what its installer writes (T-067, T-074, T-070,
+ * T-072). Claude Code's is the golden-file suite's plus the smoke of T-042.
  */
 const PREFLIGHTS: Readonly<Record<string, () => Assertion>> = {
   codex: codexReadsTheInstalledEntry,
   opencode: opencodeReadsTheInstalledEntry,
   cursor: cursorReadsTheInstalledEntry,
+  copilot: copilotReadsTheInstalledEntry,
 };
 
 /** The program each agent is, for the prerequisite check. */
@@ -130,6 +146,10 @@ const ON_PATH: Readonly<Record<string, { readonly found: () => boolean; readonly
   cursor: {
     found: cursorOnPath,
     why: "cursor-agent is not on PATH. The Cursor subset drives Cursor's real Agent CLI, logged in.",
+  },
+  copilot: {
+    found: copilotOnPath,
+    why: 'copilot is not on PATH. The GitHub Copilot subset drives the real Copilot CLI, signed in.',
   },
 };
 

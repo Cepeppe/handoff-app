@@ -11,6 +11,7 @@
  * answered "arrives with T-049" until it did.
  */
 import type { Scenario } from '../scenario.ts';
+import { copilotEditorScenario } from './copilot-editor-session.ts';
 import { cursorEditorScenario } from './cursor-editor-session.ts';
 import { verifiedScenario } from './e2e-01-verified.ts';
 import { questionScenario } from './e2e-02-question.ts';
@@ -75,3 +76,17 @@ export const OPENCODE_SCENARIOS: readonly Scenario[] = CODEX_SCENARIOS;
  * account, which the owner keeps on the Free plan (T-068), so the subset runs by hand, rarely.
  */
 export const CURSOR_SCENARIOS: readonly Scenario[] = [cursorEditorScenario, ...CODEX_SCENARIOS];
+
+/**
+ * The GitHub Copilot subset (T-072): the session of VS Code, whose chat is Copilot's, first, then
+ * the Codex subset through the Copilot CLI, for the same reasons — both surfaces run hooks, but
+ * neither answers ours the way `stop_hook` would promise (the `copilot` row says `false`), so
+ * E2E-9 runs by the clipboard.
+ *
+ * VS Code's chat cannot be driven from a script, and VS Code starts no server when a window
+ * opens; a two-file extension of the harness's starts it instead, and the moment its session
+ * registers is the half of the adapter the CLI cannot show — keyed at the editor, and named after
+ * the window's folder, which VS Code gives only as its client's roots. It spends nothing. Each CLI
+ * scenario spends from the Copilot account, which the owner keeps on the Free plan.
+ */
+export const COPILOT_SCENARIOS: readonly Scenario[] = [copilotEditorScenario, ...CODEX_SCENARIOS];

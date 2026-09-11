@@ -116,7 +116,7 @@ export interface ToolResult {
 /** Everything one agent run produced. */
 export interface AgentRun {
   /** Which agent produced it: the capability-table key its server resolves (§5.6). */
-  readonly agent: 'claude-code' | 'codex' | 'opencode' | 'cursor';
+  readonly agent: 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'copilot';
   readonly exitCode: number | null;
   readonly durationMs: number;
   readonly timedOut: boolean;
@@ -454,14 +454,15 @@ export function callsTo(run: AgentRun, tool: string): ToolUse[] {
  * The agent a scenario runs against (T-067): how it is started, and how a prompt names our
  * tools to it.
  *
- * Claude Code is the default and the only agent of E2E-3, 5, 6, 10 and 11; Codex, OpenCode and
- * Cursor run the subsets of `scenarios/index.ts` through `codex.ts`, `opencode.ts` and
- * `cursor.ts`. All four answer the same `AgentRun`, with a tool use named `mcp__handoff__<tool>`
- * whichever agent made it, so an assertion reads the same against any of them.
+ * Claude Code is the default and the only agent of E2E-3, 5, 6, 10 and 11; Codex, OpenCode,
+ * Cursor and GitHub Copilot run the subsets of `scenarios/index.ts` through `codex.ts`,
+ * `opencode.ts`, `cursor.ts` and `copilot.ts`. All five answer the same `AgentRun`, with a tool
+ * use named `mcp__handoff__<tool>` whichever agent made it, so an assertion reads the same
+ * against any of them.
  */
 export interface AgentRunner {
   /** The capability-table key the server resolves for this agent (§5.6). */
-  readonly id: 'claude-code' | 'codex' | 'opencode' | 'cursor';
+  readonly id: 'claude-code' | 'codex' | 'opencode' | 'cursor' | 'copilot';
   /** The name its capability row carries, which is what the tab of its session shows. */
   readonly displayName: string;
   /**

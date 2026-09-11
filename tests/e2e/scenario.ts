@@ -47,6 +47,24 @@ export interface Scenario {
   run(context: ScenarioContext): Promise<Assertion[]>;
 }
 
+/**
+ * Why the agent's own report says our server was not ready for the model, or `''`. The Copilot
+ * CLI lists its servers in `session.mcp_servers_loaded`, and under `-p` it does not wait for them
+ * before the first model call (T-071): a run whose last such event lists our server as anything
+ * but `connected` is the harness's failure, never a model failure to retry (the T-071 note under
+ * T-072). Any other agent's transcript has no such event.
+ */
+function serverNotReady(run: AgentRun): string {
+  const loaded = run.transcript.filter((message) => message.type === 'session.mcp_servers_loaded');
+  const last = loaded[loaded.length - 1];
+  if (last === undefined) return '';
+  const data = last['data'] as { servers?: readonly { name?: unknown; status?: unknown }[] } | undefined;
+  const ours = (Array.isArray(data?.servers) ? data.servers : []).find((server) => server.name === 'handoff');
+  return ours?.status === 'connected'
+    ? ''
+    : `the agent listed the handoff server as ${JSON.stringify(ours?.status ?? 'absent')} when it loaded its servers`;
+}
+
 /** The agent ran to a result at all: the first assertion of every scenario. */
 export function wellFormed(run: AgentRun, id: string): Assertion {
   // The program is the agent id for every agent but Claude Code, whose program is `claude`.
@@ -56,7 +74,7 @@ export function wellFormed(run: AgentRun, id: string): Assertion {
     : run.result === undefined
       ? `${program}'s output carried no result`
       : run.exitCode === 0
-        ? ''
+        ? serverNotReady(run)
         : `${program} exited ${String(run.exitCode)}`;
   return {
     id,
@@ -86,11 +104,13 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
 
 /**
  * The `clientInfo.name` each agent sends in its handshake, measured by `handoff-mcp`'s canaries:
- * Codex 0.153.4 (T-066), OpenCode 1.18.29 (T-074) and the Cursor Agent CLI 2026.09.10 (T-069),
- * whose editor sends `cursor-vscode` instead.
+ * Codex 0.153.4 (T-066), OpenCode 1.18.29 (T-074), the Cursor Agent CLI 2026.09.10 (T-069),
+ * whose editor sends `cursor-vscode` instead, and the Copilot CLI 1.0.83 (T-072), beside which
+ * VS Code sends `Visual Studio Code`.
  */
 const CLIENT_NAMES: Readonly<Record<string, string>> = {
   codex: 'codex-mcp-client',
+  copilot: 'copilot-cli',
   cursor: 'Cursor',
   opencode: 'opencode',
 };

@@ -5,9 +5,11 @@
 that only exists in an `--features e2e` build. `pnpm e2e -- --agent codex` runs a subset of
 them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067),
 `--agent opencode` the same subset against a **real OpenCode**
-([The OpenCode subset](#the-opencode-subset), T-074), and `--agent cursor` the same subset
+([The OpenCode subset](#the-opencode-subset), T-074), `--agent cursor` the same subset
 against the **real Cursor Agent CLI**, after one scenario that launches **Cursor's editor**
-([The Cursor subset](#the-cursor-subset), T-070).
+([The Cursor subset](#the-cursor-subset), T-070), and `--agent copilot` the same subset against
+the **real GitHub Copilot CLI**, after one scenario that launches **VS Code**
+([The GitHub Copilot subset](#the-github-copilot-subset), T-072).
 
 It is the only check that exercises the whole system at once. `cargo test` drives the core
 with a fake server on one side and a fake window on the other; the frontend suite draws
@@ -26,6 +28,7 @@ turning it on later is a secret rather than a task.
 - [The Codex subset](#the-codex-subset)
 - [The OpenCode subset](#the-opencode-subset)
 - [The Cursor subset](#the-cursor-subset)
+- [The GitHub Copilot subset](#the-github-copilot-subset)
 - [Running it](#running-it)
 - [How a scenario works](#how-a-scenario-works)
 - [The automation channel](#the-automation-channel)
@@ -165,6 +168,58 @@ written to `agent-cursor-<session id>.jsonl` in the run's root first. The report
 plan: the subset is run by hand, and rarely — after a Cursor update, or when the adapter changes.
 `e2e.yml` has no `cursor` choice for the same reason.
 
+## The GitHub Copilot subset
+
+`pnpm e2e -- --agent copilot` runs six scenarios: one against **VS Code**, whose chat is
+Copilot's, then the five of the Codex subset against the real **GitHub Copilot CLI**
+(`tests/e2e/copilot.ts`). Both surfaces run hooks, but neither answers ours the way the row's
+`stop_hook` would promise — the `copilot` row of `handoff-mcp` says `stop_hook: false` — so the
+reasons are the Codex subset's.
+
+| Scenario | What it proves for Copilot |
+|---|---|
+| `copilot-editor-session` | a session VS Code starts registers as VS Code (`Visual Studio Code`) under the Copilot row, keyed at the editor (`ancestor_chain:editor`) with the launched VS Code in its chain, named after the window's folder (*GitHub Copilot · baton-copilot-window*) — which VS Code gives only as the roots of its MCP client — while it runs in the home folder; and the window's title names that folder, which is how a request finds the window |
+| `e2e-01`, `02`, `04`, `07`, `09-request-clipboard` | as for Codex, through `copilot -p`; each also checks that the session registered as Copilot (`clientInfo` `copilot-cli`) and that its tab says *GitHub Copilot* |
+
+**The editor scenario** launches a VS Code of the harness's own on a project folder named
+`baton-copilot-window`, with a fresh `--user-data-dir` whose `User\mcp.json` holds the golden
+entry of `src-tauri/tests/fixtures/install/copilot-empty/out/` — the pinned server as its command
+and the run's `HANDOFF_HOME` beside it — a fresh extensions folder, and `USERPROFILE` and `HOME`
+pointed at a folder of the run. VS Code starts no server when a window opens, so a two-file
+extension of the harness, loaded in development mode, runs VS Code's own
+`workbench.mcp.startServer` once the window is up, with the argument the "Start" link of
+`mcp.json` passes, which skips the trust prompt. It spends nothing, it opens a window for the
+seconds it takes, and it is closed with everything it started. A development-mode window's title
+starts with `[Extension Development Host]`, which a user's window never shows: the title check
+reads it without that prefix. It is the recipe of the Copilot canary of `handoff-mcp` (T-072).
+
+**E2E-7 injects its timeout** as it does for Codex: the CLI honours the entry's `timeout` and
+cancels a call past it, so the runner writes the scenario's 90 000 ms as both `timeout` and
+`HANDOFF_TOOL_TIMEOUT_MS`, and the heartbeat falls at the 50 s floor.
+
+Before the scenarios, a **preflight** puts the golden `mcp-config.json` of the same folder in a
+throw-away `COPILOT_HOME`, with an empty home folder beside it, and asks the real
+`copilot mcp get handoff --json` what it read: a `local` server, Baton's path alone as its
+command, both variables, every tool and `"timeout": 1800000`. No model is involved. VS Code has no
+such command; the editor scenario, which hands VS Code the golden entry, is its answer.
+
+Every `copilot -p` runs with what the Copilot canary of `handoff-mcp` measured: the whole Copilot
+folder moved into the run with `COPILOT_HOME` — our server in its `mcp-config.json`, the run's
+project in its `trustedFolders`, and whatever the run writes, sessions and logs included, goes
+with the run (the login is gh's, and is kept); `USERPROFILE` and `HOME` moved too;
+`--allow-tool=handoff`, which allows our tools and nothing else, and `--deny-tool` for the shell
+and every file write, never `--allow-all-tools`; the built-in GitHub server off, no custom
+instructions, no question to the user, no update, no export; the model `auto` unless
+`HANDOFF_E2E_COPILOT_MODEL` names another. Under `-p` the CLI does not wait for its servers
+before the first model call, and the pinned server's first start on a machine is slow while it
+is scanned (20 s the first time, 135 ms after, measured), so the runner starts it once with
+`--version` before every run. The transcript is written to `agent-copilot-<session id>.jsonl` in
+the run's root. The report is `tests/e2e/results/last-run-copilot.json`.
+
+**Each CLI scenario spends from the Copilot account**, which the owner keeps on the Free plan: the
+subset is run by hand, and rarely — after a Copilot or VS Code update, or when the adapter
+changes. `e2e.yml` has no `copilot` choice for the same reason.
+
 ## Running it
 
 From the workspace root, which builds everything first:
@@ -175,6 +230,7 @@ scripts\e2e.ps1 e2e-01-verified    # one
 scripts\e2e.ps1 -Agent codex       # the Codex subset
 scripts\e2e.ps1 -Agent opencode    # the OpenCode subset
 scripts\e2e.ps1 -Agent cursor      # the Cursor subset
+scripts\e2e.ps1 -Agent copilot     # the GitHub Copilot subset
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
@@ -187,6 +243,7 @@ pnpm e2e -- e2e-05-parked
 pnpm e2e -- --agent codex
 pnpm e2e -- --agent opencode
 pnpm e2e -- --agent cursor
+pnpm e2e -- --agent copilot
 pnpm e2e -- --list
 ```
 
@@ -197,9 +254,9 @@ Four things must exist, and `missingPrerequisites()` names the two it can check:
 3. `dist/`, from `pnpm build` — a release binary loads it, a debug one looks for a Vite dev
    server on port 1420 and comes up empty (the T-040 handoff entry), which is why the suite
    uses the release profile;
-4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets, or
+4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets,
    Cursor's `cursor-agent`, signed in with `agent login`, and Cursor's editor, for the Cursor
-   subset.
+   subset, or `copilot`, signed in, and VS Code, for the GitHub Copilot subset.
 
 For the Cursor subset one thing must **not** exist: a `handoff` server in `~/.cursor/mcp.json`.
 The Agent CLI reads that file into every run and has no switch to leave it out, so Baton
@@ -211,13 +268,15 @@ Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
 `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`, at low reasoning effort),
 `HANDOFF_E2E_OPENCODE_MODEL` OpenCode's (default `openrouter/thinkingmachines/inkling-small:free`),
 `HANDOFF_E2E_CURSOR_MODEL` Cursor's (default `auto`), `HANDOFF_E2E_CURSOR` another Cursor Agent
-launcher and `HANDOFF_E2E_CURSOR_EDITOR` another editor executable, `HANDOFF_E2E_KEEP=1` keeps
+launcher and `HANDOFF_E2E_CURSOR_EDITOR` another editor executable,
+`HANDOFF_E2E_COPILOT_MODEL` Copilot's (default `auto`), `HANDOFF_E2E_COPILOT` another Copilot CLI
+and `HANDOFF_E2E_VSCODE` another VS Code executable, `HANDOFF_E2E_KEEP=1` keeps
 each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry at another server binary,
 `HANDOFF_E2E_RUST_LOG` changes what the app logs.
 
 A whole run is about four minutes and a few cents. The report is
-`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json`, `last-run-opencode.json`
-and `last-run-cursor.json` for the subsets):
+`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json`, `last-run-opencode.json`,
+`last-run-cursor.json` and `last-run-copilot.json` for the subsets):
 verdicts, every assertion, the measured facts, and the **transcript ids** — with which the agent's own transcript can be read at
 `~/.claude/projects/<slug>/<session-id>.jsonl`, the one place a hook error is written down.
 
