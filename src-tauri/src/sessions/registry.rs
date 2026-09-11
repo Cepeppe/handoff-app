@@ -453,6 +453,13 @@ impl Registry {
     ///    windows of one editor apart;
     /// 3. the working directory alone (SRV-18), when no generation matched.
     ///
+    /// The walk stops at the first generation that any connected session owns. When every
+    /// owner of it is an agent that runs no hook of ours, the hook is that agent's and the
+    /// answer is neutral: the GitHub Copilot CLI runs a project's Claude Code `Stop` hook as
+    /// its own (T-072, measured), and a walk that went on past its session would bind that
+    /// hook — by a terminal both share, or by the folder — to a Claude Code session, and hand
+    /// one agent the reminders owed to the other.
+    ///
     /// A unique **pid** match binds `session_id` to the session and writes it through. A
     /// unique working-directory match does not: SRV-18 calls that key a fallback, and a
     /// binding is for the rest of the session's life.
@@ -473,9 +480,17 @@ impl Registry {
 
         let chain = complete_chain(table, identity);
         for ancestor in &chain {
+            if self
+                .connected_refs(|session| session.owns_pid(ancestor.pid))
+                .is_empty()
+            {
+                continue;
+            }
             let candidates = self.hook_candidates(|session| session.owns_pid(ancestor.pid));
             if candidates.is_empty() {
-                continue;
+                // The nearest session above the hook runs no hook of ours: the hook is its
+                // agent's own, not a session's further up (T-072).
+                return Ok(HookBinding::None);
             }
             if let [session_ref] = candidates.as_slice() {
                 let session_ref = session_ref.clone();
@@ -1805,6 +1820,121 @@ mod tests {
                 &fixture.db,
                 &hook_identity(1003, 1002, "C:\\projects\\baton"),
                 &hook_input("session-a"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_00000001".to_owned()));
+    }
+
+    // ------------------------------------------ a hook another agent runs (T-072)
+
+    /// The row the GitHub Copilot CLI's server sends: no hook of ours, keyed on its parent.
+    fn copilot_cli_row() -> CapabilityRow {
+        CapabilityRow {
+            agent_id: "copilot".to_owned(),
+            support: SupportLevel::Base,
+            images_in_results: true,
+            stop_hook: false,
+            tool_timeout_ms: Some(1_800_000),
+            display_name: Some("GitHub Copilot".to_owned()),
+            subagent_stop_hook: Some(false),
+            session_identity: None,
+            user_request_delivery: None,
+            cancellation_notifications: Some(true),
+        }
+    }
+
+    /// Two tabs of one terminal: Claude Code in one, the Copilot CLI in the other, and the
+    /// Copilot CLI running a project's Claude Code `Stop` hook through a PowerShell of its own
+    /// at the end of its turn (T-072, measured against the CLI 1.0.83).
+    fn two_agents_one_terminal() -> SyntheticProcessTable {
+        SyntheticProcessTable::new()
+            .with(9000, None, "explorer.exe")
+            .with(8000, Some(9000), "WindowsTerminal.exe")
+            // Tab one: Claude Code and its server.
+            .with(7000, Some(8000), "pwsh.exe")
+            .with(1000, Some(7000), "claude.exe")
+            .with(1001, Some(1000), "handoff-mcp.exe")
+            // Tab two: the Copilot CLI, its server, and the hook it runs.
+            .with(7100, Some(8000), "pwsh.exe")
+            .with(4000, Some(7100), "copilot.exe")
+            .with(4001, Some(4000), "handoff-mcp.exe")
+            .with(4010, Some(4000), "pwsh.exe")
+            .with(4011, Some(4010), "handoff-mcp.exe")
+    }
+
+    #[test]
+    fn a_hook_the_copilot_cli_runs_is_not_bound_to_a_claude_code_session() {
+        let mut fixture = Fixture::new();
+        let table = two_agents_one_terminal();
+        let claude = server_peer(1, "ses_00000001", 1001, 1000, "C:\\work\\shop");
+        let mut copilot = server_peer(2, "ses_00000002", 4001, 4000, "C:\\work\\shop");
+        copilot.agent_id = Some("copilot".to_owned());
+        copilot.capability_row = Some(copilot_cli_row());
+        register_all(&mut fixture, &table, &[claude, copilot]);
+
+        // The terminal is Claude Code's too, and so is the folder: the walk must stop at the
+        // Copilot session the hook came from, and neither key may reach Claude Code's.
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(4011, 4010, "C:\\work\\shop"),
+                &hook_input("copilot-session"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::None);
+        assert_eq!(
+            fixture
+                .registry
+                .get("ses_00000001")
+                .expect("the Claude Code session")
+                .claude_session_id,
+            None
+        );
+
+        // Claude Code's own hook still finds its session.
+        let table =
+            table
+                .with(1002, Some(1000), "bash.exe")
+                .with(1003, Some(1002), "handoff-mcp.exe");
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(1003, 1002, "C:\\work\\shop"),
+                &hook_input("claude-session"),
+                &table,
+            )
+            .expect("a binding");
+        assert_eq!(bound, HookBinding::Bound("ses_00000001".to_owned()));
+    }
+
+    #[test]
+    fn a_generation_a_hook_runner_shares_with_another_agent_is_still_its() {
+        // The rule stops the walk only where no owner runs a hook: a Copilot CLI started from
+        // Claude Code's own shell lives under Claude Code, and Claude Code's hook still binds.
+        let mut fixture = Fixture::new();
+        let table = SyntheticProcessTable::new()
+            .with(9000, None, "explorer.exe")
+            .with(1000, Some(9000), "claude.exe")
+            .with(1001, Some(1000), "handoff-mcp.exe")
+            .with(1002, Some(1000), "bash.exe")
+            .with(1003, Some(1002), "handoff-mcp.exe")
+            .with(4000, Some(1000), "copilot.exe")
+            .with(4001, Some(4000), "handoff-mcp.exe");
+        let claude = server_peer(1, "ses_00000001", 1001, 1000, "C:\\work\\shop");
+        let mut copilot = server_peer(2, "ses_00000002", 4001, 4000, "C:\\work\\shop");
+        copilot.capability_row = Some(copilot_cli_row());
+        register_all(&mut fixture, &table, &[claude, copilot]);
+
+        let bound = fixture
+            .registry
+            .bind_hook(
+                &fixture.db,
+                &hook_identity(1003, 1002, "C:\\work\\shop"),
+                &hook_input("claude-session"),
                 &table,
             )
             .expect("a binding");
