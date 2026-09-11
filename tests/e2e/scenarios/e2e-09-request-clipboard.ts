@@ -1,19 +1,20 @@
 /**
- * E2E-9 for an agent with no end-of-turn hook: a request the user opens reaches Codex through
- * the clipboard, and the handoff adopts it (T-067; TECHNICAL-DESIGN §11.5, F-07, OPEN-03..08,
- * OPEN-04a, DD-13, ADPT-04).
+ * E2E-9 for an agent with no end-of-turn hook: a request the user opens reaches the agent through
+ * the clipboard, and the handoff adopts it (T-067, T-074; TECHNICAL-DESIGN §11.5, F-07,
+ * OPEN-03..08, OPEN-04a, DD-13, ADPT-04).
  *
  * `e2e-09-request` proves the Claude Code shape of this flow, where the Stop hook hands the
- * sentence to the agent at the end of its turn (OPEN-06). Codex runs no hook (T-066), so the
- * clipboard the request sheet fills (OPEN-05) is the whole of the delivery, and the person who
- * pastes it is the whole of the transport. The scenario plays exactly that person:
+ * sentence to the agent at the end of its turn (OPEN-06). Codex and OpenCode run no hook (T-066,
+ * T-074), so the clipboard the request sheet fills (OPEN-05) is the whole of the delivery, and
+ * the person who pastes it is the whole of the transport. The scenario plays exactly that
+ * person:
  *
  * 1. the user types a request while no session is running: OPEN-04a queues it, the tab appears
  *    at once in "waiting for spec", and the sentence goes on the clipboard;
- * 2. the harness reads the clipboard back and starts Codex with it as its first message, which
- *    is what Ctrl+V into a new Codex session does;
- * 3. the handoff Codex opens takes the request's id (DD-13, OPEN-08), the request is the first
- *    registering session's (OPEN-04a), and no hook row exists, because no hook ran.
+ * 2. the harness reads the clipboard back and starts the agent with it as its first message,
+ *    which is what Ctrl+V into a new session does;
+ * 3. the handoff the agent opens takes the request's id (DD-13, OPEN-08), the request is the
+ *    first registering session's (OPEN-04a), and no hook row exists, because no hook ran.
  *
  * Reading the clipboard is the point rather than a shortcut: the sentence the agent gets is the
  * one the app rendered, its id and its language included, and not one the harness composed to

@@ -54,3 +54,11 @@ export const CODEX_SCENARIOS: readonly Scenario[] = [
   heartbeatScenario,
   requestByClipboardScenario,
 ];
+
+/**
+ * The OpenCode subset (T-074): the Codex one, for the same reasons. OpenCode has no end-of-turn
+ * hook either (its row says `stop_hook: false`), so the four flows every agent goes through run
+ * as they are and E2E-9 runs by the clipboard; E2E-5 and E2E-10 are about what the Stop hook
+ * says, which an OpenCode session never hears.
+ */
+export const OPENCODE_SCENARIOS: readonly Scenario[] = CODEX_SCENARIOS;

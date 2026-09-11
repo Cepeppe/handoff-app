@@ -3,7 +3,9 @@
 `pnpm e2e` runs the scenarios of the design's §11.5 against a **real Claude Code** and a
 **real build of the app**, with the person at the machine played by an automation channel
 that only exists in an `--features e2e` build. `pnpm e2e -- --agent codex` runs a subset of
-them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067).
+them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset), T-067), and
+`--agent opencode` the same subset against a **real OpenCode**
+([The OpenCode subset](#the-opencode-subset), T-074).
 
 It is the only check that exercises the whole system at once. `cargo test` drives the core
 with a fake server on one side and a fake window on the other; the frontend suite draws
@@ -20,6 +22,7 @@ turning it on later is a secret rather than a task.
 
 - [What it runs](#what-it-runs)
 - [The Codex subset](#the-codex-subset)
+- [The OpenCode subset](#the-opencode-subset)
 - [Running it](#running-it)
 - [How a scenario works](#how-a-scenario-works)
 - [The automation channel](#the-automation-channel)
@@ -92,6 +95,27 @@ Every `codex exec` runs with the isolation the Codex canary of `handoff-mcp` mea
 computer-use, image-generation and sub-agent features, `--ephemeral`, and the `read-only`
 sandbox. The report is `tests/e2e/results/last-run-codex.json`, beside the Claude Code one.
 
+## The OpenCode subset
+
+`pnpm e2e -- --agent opencode` runs the same five scenarios against the real OpenCode
+(`tests/e2e/opencode.ts`). OpenCode has no end-of-turn hook either — the `opencode` row of
+`handoff-mcp` says `stop_hook: false` — so the reasons are the Codex subset's: E2E-4 expects the
+**no-hook** instruction, E2E-9 runs by the clipboard, and every scenario checks that the session
+registered as OpenCode (`clientInfo` `opencode`) and that its tab is labelled *OpenCode*.
+
+Before the scenarios, a **preflight** puts the golden `opencode.json` of
+`src-tauri/tests/fixtures/install/opencode-empty/out/` in a throw-away configuration folder and
+asks the real `opencode debug config` what it read: a local server, Baton's path alone as its
+command, both variables and `"timeout": 1800000`. No model is involved.
+
+Every `opencode run` runs with the isolation the OpenCode canary of `handoff-mcp` measured: our
+server declared inline in `OPENCODE_CONFIG_CONTENT`, `XDG_CONFIG_HOME` pointed at an empty
+folder of the run so the user's own servers, plugins and permissions never load (the login is
+kept), project configuration and Claude Code's files switched off, `PWD` set to the run's
+project, and the session each run leaves in OpenCode's history deleted afterwards. The model is
+a free OpenRouter model unless `HANDOFF_E2E_OPENCODE_MODEL` names another, so a run costs
+nothing. The report is `tests/e2e/results/last-run-opencode.json`.
+
 ## Running it
 
 From the workspace root, which builds everything first:
@@ -100,6 +124,7 @@ From the workspace root, which builds everything first:
 scripts\e2e.ps1                    # all ten
 scripts\e2e.ps1 e2e-01-verified    # one
 scripts\e2e.ps1 -Agent codex       # the Codex subset
+scripts\e2e.ps1 -Agent opencode    # the OpenCode subset
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
@@ -110,6 +135,7 @@ Or, with the build already done, from `handoff-app`:
 pnpm e2e
 pnpm e2e -- e2e-05-parked
 pnpm e2e -- --agent codex
+pnpm e2e -- --agent opencode
 pnpm e2e -- --list
 ```
 
@@ -120,15 +146,17 @@ Four things must exist, and `missingPrerequisites()` names the two it can check:
 3. `dist/`, from `pnpm build` — a release binary loads it, a debug one looks for a Vite dev
    server on port 1420 and comes up empty (the T-040 handoff entry), which is why the suite
    uses the release profile;
-4. `claude` on `PATH`, logged in — or `codex`, logged in, for the Codex subset.
+4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets.
 
 Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
 `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`, at low reasoning effort),
+`HANDOFF_E2E_OPENCODE_MODEL` OpenCode's (default `openrouter/thinkingmachines/inkling-small:free`),
 `HANDOFF_E2E_KEEP=1` keeps each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry
 at another server binary, `HANDOFF_E2E_RUST_LOG` changes what the app logs.
 
 A whole run is about four minutes and a few cents. The report is
-`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json` for the Codex subset):
+`tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json` and
+`last-run-opencode.json` for the subsets):
 verdicts, every assertion, the measured facts, and the **transcript ids** — with which the agent's own transcript can be read at
 `~/.claude/projects/<slug>/<session-id>.jsonl`, the one place a hook error is written down.
 
@@ -267,4 +295,13 @@ Each of these cost a run.
   to read it afterwards. There is no `--max-turns`: the harness timeout is the bound.
 - **The clipboard is read, not composed, in `e2e-09-request-clipboard`**: the sentence the
   harness pastes is the one the app rendered, in the app's language. A person copying
-  something else during the run would change what Codex is given.
+  something else during the run would change what the agent is given.
+- **OpenCode starts its servers in `PWD`, not in its own working directory.** Started from a
+  shell, it would start ours in the checkout; `tests/e2e/opencode.ts` sets `PWD` to the run's
+  project (measured by the OpenCode canary of `handoff-mcp`).
+- **An OpenCode session outlives `opencode run`.** The runner writes the `--format json`
+  stream to `agent-opencode-<session id>.jsonl` in the run's root and then deletes the session
+  from OpenCode's history; `HANDOFF_E2E_KEEP=1` keeps the file.
+- **A free model is a shared one.** A busy one answers "temporarily rate-limited upstream"
+  before any tool is called, and the scenario fails on its first assertion. Run it again, or
+  name another model with `HANDOFF_E2E_OPENCODE_MODEL`.

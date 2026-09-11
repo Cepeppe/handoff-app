@@ -419,6 +419,7 @@ export function readCodexRun(
 export const CODEX: AgentRunner = {
   id: 'codex',
   displayName: 'Codex CLI',
+  stopHook: false,
   start: startCodex,
   tool: (name) => `${name} (a tool of the MCP server ${MCP_SERVER_NAME})`,
 };

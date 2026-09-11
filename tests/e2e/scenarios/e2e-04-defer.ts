@@ -156,16 +156,16 @@ export const deferScenario: Scenario = {
         `handoffs in the log: ${String(handoffsInTheLog)}`,
       ),
       // The server picks the instruction's variant from the row's `stop_hook` (§4.7.4): the
-      // no-hook one for Codex, which tells the agent that nothing will remind it (FM-03), and
-      // the Stop-hook one for Claude Code, whose row promises the hook.
+      // no-hook one for Codex and OpenCode, which tells the agent that nothing will remind it
+      // (FM-03), and the Stop-hook one for Claude Code, whose row promises the hook.
       check(
         'E2E-4',
-        agent.id === 'codex'
-          ? 'the deferred instruction is the no-hook one: nothing will remind the agent (FM-03)'
-          : "the deferred instruction is the Stop-hook one the agent's row promises (§4.7.4)",
+        agent.stopHook
+          ? "the deferred instruction is the Stop-hook one the agent's row promises (§4.7.4)"
+          : 'the deferred instruction is the no-hook one: nothing will remind the agent (FM-03)',
         'protocol',
         deferredOutcome === undefined ||
-          (agent.id === 'codex') === deferredInstruction.includes(NO_HOOK_PHRASE),
+          !agent.stopHook === deferredInstruction.includes(NO_HOOK_PHRASE),
         `instruction: ${JSON.stringify(deferredInstruction)}`,
       ),
       check(

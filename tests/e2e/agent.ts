@@ -116,7 +116,7 @@ export interface ToolResult {
 /** Everything one agent run produced. */
 export interface AgentRun {
   /** Which agent produced it: the capability-table key its server resolves (§5.6). */
-  readonly agent: 'claude-code' | 'codex';
+  readonly agent: 'claude-code' | 'codex' | 'opencode';
   readonly exitCode: number | null;
   readonly durationMs: number;
   readonly timedOut: boolean;
@@ -454,16 +454,21 @@ export function callsTo(run: AgentRun, tool: string): ToolUse[] {
  * The agent a scenario runs against (T-067): how it is started, and how a prompt names our
  * tools to it.
  *
- * Claude Code is the default and the only agent of E2E-3, 5, 6, 10 and 11; Codex runs the
- * subset of `scenarios/index.ts` through `codex.ts`. Both answer the same `AgentRun`, with a
- * tool use named `mcp__handoff__<tool>` whichever agent made it, so an assertion reads the
- * same against either.
+ * Claude Code is the default and the only agent of E2E-3, 5, 6, 10 and 11; Codex and OpenCode
+ * run the subsets of `scenarios/index.ts` through `codex.ts` and `opencode.ts`. All three answer
+ * the same `AgentRun`, with a tool use named `mcp__handoff__<tool>` whichever agent made it, so
+ * an assertion reads the same against any of them.
  */
 export interface AgentRunner {
   /** The capability-table key the server resolves for this agent (§5.6). */
-  readonly id: 'claude-code' | 'codex';
+  readonly id: 'claude-code' | 'codex' | 'opencode';
   /** The name its capability row carries, which is what the tab of its session shows. */
   readonly displayName: string;
+  /**
+   * Whether the agent's row promises an end-of-turn hook (`stop_hook`, §5.6): what decides the
+   * variant of the instruction the server writes (§4.7.4) and what a scenario expects of it.
+   */
+  readonly stopHook: boolean;
   /** Starts one run. Not awaited straight away: the harness plays the user meanwhile. */
   start(workspace: Workspace, options: AgentOptions): Promise<AgentRun>;
   /** How a prompt names one of our tools to this agent. */
@@ -474,6 +479,7 @@ export interface AgentRunner {
 export const CLAUDE_CODE: AgentRunner = {
   id: 'claude-code',
   displayName: 'Claude Code',
+  stopHook: true,
   start: startAgent,
   tool: (name) => `mcp__${MCP_SERVER_NAME}__${name}`,
 };

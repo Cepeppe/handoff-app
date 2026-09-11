@@ -10,13 +10,15 @@
  * pnpm e2e                          # every scenario, against Claude Code
  * pnpm e2e -- e2e-01-verified       # only these
  * pnpm e2e -- --agent codex         # the Codex subset, against the Codex CLI (T-067)
+ * pnpm e2e -- --agent opencode      # the OpenCode subset, against OpenCode (T-074)
  * pnpm e2e -- --list                # what exists, without running anything
  * ```
  *
  * Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
- * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_KEEP=1` keeps each
- * run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the MCP
- * entry at a server binary other than the pinned one.
+ * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_OPENCODE_MODEL`
+ * OpenCode's (default a free OpenRouter model, see `opencode.ts`), `HANDOFF_E2E_KEEP=1` keeps
+ * each run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the
+ * MCP entry at a server binary other than the pinned one.
  *
  * Exit codes: **0** every scenario passed · **1** at least one failed · **2** the harness
  * could not run (nothing built, no agent on PATH, an unknown scenario id or agent).
@@ -32,9 +34,15 @@ import { CLAUDE_CODE, DEFAULT_MODEL, transcriptIds, type AgentRunner } from './a
 import { cleanUp, makeWorkspace, startApp } from './app.ts';
 import { classify, failures, label, reported, shouldRetry, type Assertion, type RunVerdict } from './classify.ts';
 import { CODEX, CODEX_DEFAULT_MODEL, codexOnPath, codexReadsTheInstalledEntry } from './codex.ts';
+import {
+  OPENCODE,
+  OPENCODE_DEFAULT_MODEL,
+  opencodeOnPath,
+  opencodeReadsTheInstalledEntry,
+} from './opencode.ts';
 import { missingPrerequisites, REPO_ROOT } from './paths.ts';
 import { logInvariants, zeroEgress, type Scenario } from './scenario.ts';
-import { CODEX_SCENARIOS, SCENARIOS } from './scenarios/index.ts';
+import { CODEX_SCENARIOS, OPENCODE_SCENARIOS, SCENARIOS } from './scenarios/index.ts';
 
 /** Where the reports are written. Git-ignored. */
 export const RESULTS_DIR = join(REPO_ROOT, 'tests', 'e2e', 'results');
@@ -69,6 +77,34 @@ const AGENTS: Readonly<
     scenarios: CODEX_SCENARIOS,
     model: () => process.env['HANDOFF_E2E_CODEX_MODEL'] ?? CODEX_DEFAULT_MODEL,
     results: 'last-run-codex.json',
+  },
+  opencode: {
+    runner: OPENCODE,
+    scenarios: OPENCODE_SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_OPENCODE_MODEL'] ?? OPENCODE_DEFAULT_MODEL,
+    results: 'last-run-opencode.json',
+  },
+};
+
+/**
+ * The one check a scenario cannot make, because every scenario must stay off the user's
+ * configuration: that the agent itself reads what its installer writes (T-067, T-074). Claude
+ * Code's is the golden-file suite's plus the smoke of T-042.
+ */
+const PREFLIGHTS: Readonly<Record<string, () => Assertion>> = {
+  codex: codexReadsTheInstalledEntry,
+  opencode: opencodeReadsTheInstalledEntry,
+};
+
+/** The program each agent is, for the prerequisite check. */
+const ON_PATH: Readonly<Record<string, { readonly found: () => boolean; readonly why: string }>> = {
+  codex: {
+    found: codexOnPath,
+    why: 'codex is not on PATH. The Codex subset drives the real Codex CLI, logged in.',
+  },
+  opencode: {
+    found: opencodeOnPath,
+    why: 'opencode is not on PATH. The OpenCode subset drives the real OpenCode, logged in.',
   },
 };
 
@@ -219,9 +255,8 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const missing = missingPrerequisites();
-  if (chosen.runner.id === 'codex' && !codexOnPath()) {
-    missing.push('codex is not on PATH. The Codex subset drives the real Codex CLI, logged in.');
-  }
+  const program = ON_PATH[chosen.runner.id];
+  if (program !== undefined && !program.found()) missing.push(program.why);
   if (missing.length > 0) {
     for (const problem of missing) line(`e2e: ${problem}`);
     return 2;
@@ -238,11 +273,10 @@ async function main(argv: readonly string[]): Promise<number> {
       ? chosen.scenarios
       : chosen.scenarios.filter((scenario) => wanted.includes(scenario.id));
 
-  // The one check a scenario cannot make, because every scenario must stay off the user's
-  // configuration: that the agent itself reads what the installer writes (T-067).
   const preflight: Assertion[] = [];
-  if (chosen.runner.id === 'codex') {
-    const reads = codexReadsTheInstalledEntry();
+  const preflightCheck = PREFLIGHTS[chosen.runner.id];
+  if (preflightCheck !== undefined) {
+    const reads = preflightCheck();
     preflight.push(reads);
     line(`  ${(reads.ok ? 'PASS' : 'PROTOCOL').padEnd(8)} preflight · ${reads.what}`);
     if (!reads.ok && reads.detail !== undefined) {

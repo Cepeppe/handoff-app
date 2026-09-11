@@ -49,7 +49,8 @@ export interface Scenario {
 
 /** The agent ran to a result at all: the first assertion of every scenario. */
 export function wellFormed(run: AgentRun, id: string): Assertion {
-  const program = run.agent === 'codex' ? 'codex' : 'claude';
+  // The program is the agent id for every agent but Claude Code, whose program is `claude`.
+  const program = run.agent === 'claude-code' ? 'claude' : run.agent;
   const reason = run.timedOut
     ? 'the run was killed at the harness timeout'
     : run.result === undefined
@@ -84,26 +85,35 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
 }
 
 /**
+ * The `clientInfo.name` each agent sends in its handshake, measured by `handoff-mcp`'s canaries:
+ * Codex 0.153.4 (T-066) and OpenCode 1.18.29 (T-074).
+ */
+const CLIENT_NAMES: Readonly<Record<string, string>> = {
+  codex: 'codex-mcp-client',
+  opencode: 'opencode',
+};
+
+/**
  * The server registered, asked of whichever agent ran (A-01, SRV-20, ADPT-02).
  *
  * Claude Code lists its MCP servers on the `init` line of its transcript, which is what
- * [`serverRegistered`] reads. Codex's `--json` stream has no such line, so for Codex the
- * question is asked at the other end: the app's registry holds a session whose server
- * resolved the `codex` row, with the client name Codex sends in its handshake (T-066). That is
- * the stronger of the two answers — it is the registration itself, not the agent's report of
- * it.
+ * [`serverRegistered`] reads. Codex's `--json` stream and OpenCode's `--format json` have no
+ * such line, so for them the question is asked at the other end: the app's registry holds a
+ * session whose server resolved the agent's own row, with the client name the agent sends in
+ * its handshake. That is the stronger of the two answers — it is the registration itself, not
+ * the agent's report of it.
  */
 export async function agentRegistered(run: AgentRun, app: Automation, id: string): Promise<Assertion> {
   if (run.agent === 'claude-code') return serverRegistered(run, id);
   const sessions = (await app.state()).sessions;
-  const codex = sessions.find((session) => session.agentId === 'codex');
+  const session = sessions.find((one) => one.agentId === run.agent);
   return check(
     id,
-    'the server registered with the app as a Codex session (SRV-20, ADPT-02)',
+    `the server registered with the app as a ${run.agent} session (SRV-20, ADPT-02)`,
     'protocol',
-    codex !== undefined && codex.clientName === 'codex-mcp-client',
+    session !== undefined && session.clientName === CLIENT_NAMES[run.agent],
     `sessions: ${JSON.stringify(
-      sessions.map((session) => ({ agent: session.agentId, client: session.clientName })),
+      sessions.map((one) => ({ agent: one.agentId, client: one.clientName })),
     )}`,
   );
 }
