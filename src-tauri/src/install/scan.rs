@@ -16,14 +16,16 @@
 //! Everything here is written over the **list** of adapters rather than over the Claude Code
 //! one: Codex joined it with T-067 without a line of change to the scan, the notice, the
 //! settings page or the repair offer, OpenCode joined it the same way with T-074, Cursor with
-//! T-070, and GitHub Copilot with T-072.
+//! T-070, GitHub Copilot with T-072, and Kilo Code with T-081.
 
 use std::path::PathBuf;
 
 use serde::Serialize;
 
 use super::error::Result;
-use super::{ClaudeCode, Codex, Copilot, Cursor, InstallAdapter, OpenCode, Registration, Scope};
+use super::{
+    ClaudeCode, Codex, Copilot, Cursor, InstallAdapter, KiloCode, OpenCode, Registration, Scope,
+};
 
 /// The setting holding the agent ids a notice was already shown for (INST-05).
 pub const KNOWN_AGENTS_KEY: &str = "known_agents";
@@ -31,7 +33,8 @@ pub const KNOWN_AGENTS_KEY: &str = "known_agents";
 /// Every installation adapter this build carries (INST-08).
 ///
 /// Claude Code, then Codex, Cursor, GitHub Copilot and OpenCode: the committed order of
-/// ADPT-06, which is also the order the settings page lists them in.
+/// ADPT-06, which is also the order the settings page lists them in; then Kilo Code, the fifth
+/// agent the owner added to that list (T-081).
 ///
 /// # Errors
 ///
@@ -44,6 +47,7 @@ pub fn adapters() -> Result<Vec<Box<dyn InstallAdapter>>> {
         Box::new(Cursor::detected()?),
         Box::new(Copilot::detected()?),
         Box::new(OpenCode::detected()?),
+        Box::new(KiloCode::detected()?),
     ])
 }
 
@@ -183,6 +187,7 @@ pub fn name_key(agent_id: &str) -> &'static str {
         super::cursor::AGENT_ID => "agent.cursor",
         super::copilot::AGENT_ID => "agent.copilot",
         super::opencode::AGENT_ID => "agent.opencode",
+        super::kilo_code::AGENT_ID => "agent.kiloCode",
         _ => "agent.unknown",
     }
 }
@@ -232,6 +237,7 @@ mod tests {
             super::super::codex::AGENT_ID,
             super::super::cursor::AGENT_ID,
             super::super::opencode::AGENT_ID,
+            super::super::kilo_code::AGENT_ID,
         ] {
             let key = name_key(agent_id);
             assert_ne!(key, "agent.unknown", "{agent_id} has no name key");

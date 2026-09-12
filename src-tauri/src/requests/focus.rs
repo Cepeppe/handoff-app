@@ -418,6 +418,37 @@ mod tests {
     }
 
     #[test]
+    fn a_kilo_code_session_in_vs_code_reaches_the_window_naming_its_folder() {
+        // T-081, on the chain T-080 measured: the server's parent is the window's `kilo serve`,
+        // then the window's extension host, then VS Code's main process. The session is keyed on
+        // `kilo serve` (parent_pid), and neither it nor the extension host owns a window, so the
+        // walk stops at VS Code's main process and takes the window whose title names the folder.
+        let chain = vec![
+            ancestor(5928, "kilo.exe"),
+            ancestor(24784, "Code.exe"),
+            ancestor(42352, "Code.exe"),
+            ancestor(400, "explorer.exe"),
+        ];
+        let windows = [
+            window(
+                42352,
+                "the other window",
+                "main.rs - shop - Visual Studio Code",
+            ),
+            window(
+                42352,
+                "this window",
+                "RUN-TASK.md - baton - Visual Studio Code",
+            ),
+            window(400, "desktop", ""),
+        ];
+        assert_eq!(
+            nearest_window(&chain, &windows, Some("baton")),
+            Some("this window")
+        );
+    }
+
+    #[test]
     fn a_title_never_pulls_the_walk_past_a_nearer_generation() {
         // The terminal is nearer than the desktop, whatever the desktop's windows are called.
         let windows = [

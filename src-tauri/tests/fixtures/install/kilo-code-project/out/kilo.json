@@ -1,0 +1,19 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "instructions": [
+    "CONTRIBUTING.md"
+  ],
+  "mcp": {
+    "handoff": {
+      "type": "local",
+      "command": [
+        "/apps/Baton/handoff-mcp"
+      ],
+      "environment": {
+        "HANDOFF_AGENT": "kilo-code",
+        "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+      },
+      "timeout": 1800000
+    }
+  }
+}

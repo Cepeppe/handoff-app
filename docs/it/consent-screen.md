@@ -231,6 +231,42 @@ Baton aggiunge questa voce dentro `"mcp"`, o crea il file con questa voce:
 - Non c'è nessuna riga di approvazione: OpenCode usa gli strumenti di un server MCP senza
   chiedere prima di ogni chiamata.
 
+## La modifica per Kilo Code
+
+Anche qui è una sola, per tutte e due le superfici di Kilo Code: la Kilo CLI e l'estensione Kilo
+Code per VS Code leggono lo stesso file, e Kilo non ha nessun hook da registrare;
+[Kilo Code](agents/kilo-code.md) spiega che cosa cambia.
+
+### La voce del server MCP, in `%USERPROFILE%\.config\kilo\kilo.json`
+
+> La voce del server MCP “handoff” per la CLI di Kilo e la sua estensione di VS Code, in
+> `kilo.json`, che esegue `C:\Users\tu\AppData\Local\Baton\handoff-mcp.exe` con un timeout degli
+> strumenti di 30 minuti
+
+Baton aggiunge questa voce dentro `"mcp"`, o crea il file con questa voce:
+
+```json
+"handoff": {
+  "type": "local",
+  "command": [
+    "C:\\Users\\you\\AppData\\Local\\Baton\\handoff-mcp.exe"
+  ],
+  "environment": {
+    "HANDOFF_AGENT": "kilo-code",
+    "HANDOFF_TOOL_TIMEOUT_MS": "1800000"
+  },
+  "timeout": 1800000
+}
+```
+
+- È la voce di OpenCode, sopra, con il nome di Kilo Code: la CLI di Kilo è un fork di OpenCode.
+  `command` è il server di Baton, da solo, e il blocco delle variabili si chiama `"environment"`.
+- `"timeout": 1800000` sono gli stessi 30 minuti di Claude Code, in millisecondi. A Kilo servono
+  quanto a OpenCode: senza `timeout`, rinuncia a una chiamata dopo un minuto.
+- Non c'è nessuna riga di approvazione: Kilo usa gli strumenti di un server MCP senza chiedere
+  prima di ogni chiamata, nella CLI come in VS Code.
+- Baton scrive `kilo.json` e mai `kilo.jsonc`, dove l'estensione tiene impostazioni sue.
+
 ## Il timeout
 
 Un handoff può richiederti minuti, e l'agente lo aspetta. Claude Code dà a ogni chiamata di
@@ -251,12 +287,14 @@ com'è, all'installazione e alla rimozione.
 - Tutto il resto del file rimane: ogni chiave e ogni valore che avevi, nello stesso ordine e
   con la stessa indentazione. Le righe vuote tra una voce e l'altra non vengono conservate. Nel
   `config.toml` di Codex restano anche i commenti e le righe vuote, e il modo in cui è scritto
-  ogni valore. L'`opencode.json` di OpenCode, il `mcp.json` di Cursor e i due file di GitHub
-  Copilot vengono modificati come i file di Claude Code, e uno che contiene dei commenti non
-  viene modificato affatto: Baton lo dice invece.
-- Claude Code, Codex, Cursor, la Copilot CLI e OpenCode leggono le loro impostazioni quando una
-  sessione parte — l'editor di Cursor quando si apre una finestra, VS Code quando una chat ha
-  bisogno del server la prima volta — quindi riavvia le sessioni che erano già aperte.
+  ogni valore. L'`opencode.json` di OpenCode, il `mcp.json` di Cursor, i due file di GitHub
+  Copilot e il `kilo.json` di Kilo Code vengono modificati come i file di Claude Code, e uno che
+  contiene dei commenti non viene modificato affatto: Baton lo dice invece.
+- Claude Code, Codex, Cursor, la Copilot CLI, OpenCode e la Kilo CLI leggono le loro
+  impostazioni quando una sessione parte — l'editor di Cursor quando si apre una finestra, VS
+  Code quando una chat ha bisogno del server la prima volta, l'estensione di Kilo per VS Code
+  quando il suo pannello si apre la prima volta in una finestra — quindi riavvia le sessioni che
+  erano già aperte.
 
 ## Dove: questo utente o un progetto
 
@@ -270,7 +308,8 @@ Cursor carica dopo che l'hai approvato in Cursor; Baton non lo approva mai al po
 GitHub Copilot scrive `.github\mcp.json` per la Copilot CLI, che lo legge solo in una cartella
 di cui le hai detto di fidarsi, e `.vscode\mcp.json` per VS Code, che ti chiede di fidarti del
 server prima del suo primo avvio; Baton non si fida di nessuno dei due al posto tuo. Per
-OpenCode scrive `opencode.json` in cima a quella cartella.
+OpenCode scrive `opencode.json` in cima a quella cartella, e per Kilo Code `kilo.json`, che Kilo
+legge lì senza chiedere se fidarsene.
 
 ## Tornare indietro
 
@@ -283,7 +322,8 @@ sezione `[mcp_servers.handoff]`, riconosciuta allo stesso modo, e nient'altro de
 `config.toml`; per Cursor, la voce `"handoff"` dentro `"mcpServers"` in `mcp.json`; per GitHub
 Copilot, la voce `"handoff"` dentro `"mcpServers"` in `mcp-config.json` e quella dentro
 `"servers"` nel `mcp.json` di VS Code; per OpenCode, la voce `"handoff"` dentro `"mcp"` in
-`opencode.json`. Le copie di backup restano dove sono.
+`opencode.json`; per Kilo Code, la voce `"handoff"` dentro `"mcp"` in `kilo.json`, e mai niente
+in `kilo.jsonc`. Le copie di backup restano dove sono.
 
 ## Lo stato di ogni agente
 

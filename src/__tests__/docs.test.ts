@@ -39,11 +39,15 @@ const PAGES = [
   'third-party-notices.md',
 ] as const;
 
-/** The pages about one agent each, under `agents/` in both languages (T-067, T-074, T-070, T-072). */
+/**
+ * The pages about one agent each, under `agents/` in both languages (T-067, T-074, T-070, T-072,
+ * T-081).
+ */
 const AGENT_PAGES = [
   'agents/codex.md',
   'agents/copilot.md',
   'agents/cursor.md',
+  'agents/kilo-code.md',
   'agents/opencode.md',
 ] as const;
 
@@ -233,6 +237,21 @@ describe('what the pages must say', () => {
     for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
       expect(page).toContain('"environment"');
       expect(page).toContain('"timeout": 1800000');
+    }
+  });
+
+  it('tells a Kilo Code user what Baton writes, on both surfaces, and how to see it (T-081)', () => {
+    for (const page of [read('agents', 'kilo-code.md'), read('it', 'agents', 'kilo-code.md')]) {
+      // The one file both surfaces read, the command that lists the entry, the sixty seconds
+      // it replaces, the file Baton never touches, and the walk of the VS Code surface by hand.
+      expect(page).toContain('.config\\kilo\\kilo.json');
+      expect(page).toContain('kilo.jsonc');
+      expect(page).toContain('kilo mcp list');
+      expect(page).toContain('"timeout": 1800000');
+      expect(page).toContain('Ctrl+Alt+H');
+    }
+    for (const page of [read('consent-screen.md'), read('it', 'consent-screen.md')]) {
+      expect(page).toContain('"HANDOFF_AGENT": "kilo-code"');
     }
   });
 

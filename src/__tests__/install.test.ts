@@ -115,6 +115,32 @@ function opencodePlan(): ConsentView {
   };
 }
 
+const KILO_CODE_DIFF =
+  '--- kilo.json · mcp.handoff (absent)\n+++ kilo.json · mcp.handoff\n' +
+  '+{\n+  "type": "local",\n+  "timeout": 1800000\n+}\n';
+
+/** Kilo Code's plan on an empty machine: one modification on one row, for both surfaces (T-081). */
+function kiloCodePlan(): ConsentView {
+  return {
+    agentId: 'kilo-code',
+    nameKey: 'agent.kiloCode',
+    modificationCount: 1,
+    digest: 'k1',
+    alreadyInOrder: false,
+    lines: [
+      {
+        description: {
+          key: 'install.kiloCode.mcpEntry',
+          args: { file: 'kilo.json', server: '/apps/Baton/handoff-mcp', minutes: '30' },
+        },
+        locations: ['kilo.json · mcp.handoff'],
+        diff: KILO_CODE_DIFF,
+        isNoop: false,
+      },
+    ],
+  };
+}
+
 const COPILOT_CLI_DIFF =
   '--- mcp-config.json · mcpServers.handoff (absent)\n+++ mcp-config.json · mcpServers.handoff\n' +
   '+{\n+  "type": "local",\n+  "command": "/apps/Baton/handoff-mcp",\n+  "args": [],\n' +
@@ -405,6 +431,50 @@ describe('the consent screen (INST-01, INST-02)', () => {
     for (const language of LANGUAGES) {
       const line = catalogue(language)['install.opencode.mcpEntry'] ?? '';
       expect(line, language).toContain('{minutes}');
+      expect(line.toLowerCase(), language).not.toMatch(/approv/u);
+    }
+  });
+
+  it('lists Kilo Code as one change on one row, for both of its surfaces (T-081)', async () => {
+    setBridge(
+      fakeBridge({
+        agents: vi.fn(async () => [
+          agent({
+            agentId: 'kilo-code',
+            nameKey: 'agent.kiloCode',
+            configFiles: ['/home/x/.config/kilo/kilo.json'],
+          }),
+        ]),
+        consentPlan: vi.fn(async () => kiloCodePlan()),
+      }),
+    );
+    render(AgentsSettings);
+
+    fireEvent.click(await screen.findByText(t('install.register')));
+
+    await screen.findByText(t('install.consentIntroOne', { agent: t('agent.kiloCode') }));
+    expect(screen.getAllByText(t('install.show'))).toHaveLength(1);
+    expect(
+      screen.getByText(
+        t('install.kiloCode.mcpEntry', {
+          file: 'kilo.json',
+          server: '/apps/Baton/handoff-mcp',
+          minutes: '30',
+        }),
+      ),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText(t('install.show')));
+    await waitFor(() => expect(document.body.textContent).toContain('"timeout": 1800000'));
+  });
+
+  it('grants Kilo Code nothing beyond the entry, and names both of its surfaces (T-081)', () => {
+    // Neither `kilo run` nor the VS Code extension asked before a call (T-080), so the line
+    // carries no permission; one entry serves the CLI and the extension, so it names both.
+    for (const language of LANGUAGES) {
+      const line = catalogue(language)['install.kiloCode.mcpEntry'] ?? '';
+      expect(line, language).toContain('{minutes}');
+      expect(line, language).toContain('VS Code');
       expect(line.toLowerCase(), language).not.toMatch(/approv/u);
     }
   });

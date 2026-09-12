@@ -13,6 +13,31 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-12
+
+Kilo Code joins Claude Code, Codex, OpenCode, Cursor and GitHub Copilot, in the Kilo CLI and in
+its VS Code extension. Bundles `handoff-mcp` 1.7.0.
+
+### Added
+
+- The Kilo Code installation adapter: one change, shown on the consent screen and removable from
+  Settings → Agents, for both of Kilo Code's surfaces — the MCP server entry in
+  `~/.config/kilo/kilo.json` (or under `XDG_CONFIG_HOME`), with a 30-minute tool timeout, which
+  the Kilo CLI and the `kilo serve` of the VS Code extension both read. The extension's own
+  `kilo.jsonc` is never touched, a `kilo.json` with comments in it is refused rather than
+  rewritten, and a project installation writes `kilo.json` in the project. Baton finds Kilo
+  Code by its CLI, its settings folder or the extension's folder in VS Code. Kilo Code has base
+  support, and `docs/agents/kilo-code.md` says what that changes — nothing reminds the agent at
+  the end of a turn, and your requests reach it by the clipboard — and walks through one
+  handoff in VS Code by hand.
+- A Kilo Code subset of the end-to-end suite, run with `scripts\e2e.ps1 -Agent kilo-code` on
+  free models of the Kilo Gateway: E2E-1, 2, 4, 7, and 9 by the clipboard, against the Kilo
+  CLI, after a preflight in which the real Kilo reads the entry the installer writes.
+
+### Changed
+
+- Bundles `handoff-mcp` 1.7.0, whose capability table knows Kilo Code.
+
 ## [1.6.0] - 2026-09-11
 
 GitHub Copilot joins Claude Code, Codex, OpenCode and Cursor, in VS Code and in the Copilot CLI.

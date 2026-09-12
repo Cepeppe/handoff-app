@@ -1000,6 +1000,43 @@ mod tests {
     }
 
     #[test]
+    fn a_kilo_code_session_is_named_by_the_row_the_server_resolved() {
+        // T-081: the same for Kilo Code, from either surface. Both send `kilo` and neither
+        // sends `session_identity` (a `kilo serve` sits between the server and VS Code, T-080),
+        // so the name, the row's `display_name`, is all this table learns.
+        let mut fixture = Fixture::new();
+        let table = one_machine();
+        let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");
+        peer.agent_id = Some("kilo-code".to_owned());
+        peer.client = Some(ClientInfo {
+            name: "kilo".to_owned(),
+            version: "7.6.2".to_owned(),
+        });
+        peer.capability_row = Some(CapabilityRow {
+            agent_id: "kilo-code".to_owned(),
+            support: SupportLevel::Base,
+            images_in_results: true,
+            stop_hook: false,
+            tool_timeout_ms: Some(1_800_000),
+            display_name: Some("Kilo Code".to_owned()),
+            subagent_stop_hook: Some(false),
+            session_identity: None,
+            user_request_delivery: None,
+            cancellation_notifications: Some(true),
+        });
+
+        let session_ref = fixture
+            .registry
+            .register(&fixture.db, &peer, &table)
+            .expect("a registration")
+            .expect("a server registers");
+        let session = fixture.registry.get(&session_ref).expect("the session");
+        assert_eq!(session.display_name(), "Kilo Code · baton");
+        assert_eq!(session.resumed_from().agent, "Kilo Code");
+        assert!(!session.is_editor_hosted());
+    }
+
+    #[test]
     fn a_hook_registers_nothing() {
         let mut fixture = Fixture::new();
         let mut peer = server_peer(1, "ses_00000001", 1001, 1000, "C:\\projects\\baton");

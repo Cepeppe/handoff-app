@@ -23,6 +23,8 @@ sono ancora disponibili. [English](../index.md)
   CLI, che cosa cambia senza un hook di fine turno, e come controllare la registrazione.
 - [OpenCode](agents/opencode.md) — che cosa funziona con OpenCode, che cosa cambia senza un
   hook di fine turno, e come controllare la registrazione.
+- [Kilo Code](agents/kilo-code.md) — che cosa funziona con Kilo Code nella sua CLI e in VS
+  Code, che cosa cambia senza un hook di fine turno, e come controllare la registrazione.
 
 ## Usarlo
 

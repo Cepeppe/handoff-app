@@ -17,7 +17,9 @@
 //! GitHub Copilot writes two (T-072), one per surface: the Copilot CLI's `mcpServers.handoff`
 //! in `mcp-config.json`, with the timeout in milliseconds, and VS Code's `servers.handoff` in
 //! its `mcp.json`, with none; and no hook, because neither surface answers ours in a way both
-//! act on.
+//! act on. Kilo Code writes one (T-081), for both of its surfaces: its `mcp.handoff` entry in
+//! `kilo.json`, read by its CLI and by the `kilo serve` of its VS Code extension alike, with the
+//! timeout in milliseconds, and no hook, because Kilo has none to register.
 //!
 //! # Three rules that shape everything below
 //!
@@ -51,6 +53,7 @@ pub mod diff;
 pub mod error;
 pub mod fixed_path;
 pub mod json;
+pub mod kilo_code;
 pub mod opencode;
 pub mod scan;
 pub mod toml;
@@ -67,6 +70,7 @@ pub use codex::Codex;
 pub use copilot::Copilot;
 pub use cursor::Cursor;
 pub use error::{InstallError, Result};
+pub use kilo_code::KiloCode;
 pub use opencode::OpenCode;
 pub use scan::{scan, AgentStatus, MovedRegistration};
 
@@ -203,8 +207,8 @@ impl Description {
 
 /// The syntax of the file a modification is written into.
 ///
-/// Claude Code's configuration is JSON, Codex's TOML, and OpenCode's and Cursor's JSON again
-/// (§7.15). A plan never mixes the two inside one file, and [`apply`] reads, edits and
+/// Claude Code's configuration is JSON, Codex's TOML, and OpenCode's, Cursor's and Kilo
+/// Code's JSON again (§7.15). A plan never mixes the two inside one file, and [`apply`] reads, edits and
 /// verifies each file in its own syntax, so the rules around the edit — the stale check, the
 /// backup, the re-read — stay one piece of code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -534,7 +538,7 @@ pub fn apply(plan: &[Modification]) -> Result<()> {
 enum Config {
     /// Claude Code's `~/.claude.json`, `settings.json`, a project's `.mcp.json`; OpenCode's
     /// `opencode.json`; Cursor's `mcp.json`; the Copilot CLI's `mcp-config.json` and VS Code's
-    /// `mcp.json`.
+    /// `mcp.json`; Kilo Code's `kilo.json`.
     Json(Document),
     /// Codex's `config.toml`.
     Toml(toml::Document),

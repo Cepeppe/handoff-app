@@ -23,6 +23,8 @@ yet. [Italiano](it/index.md)
   CLI, what changes without an end-of-turn hook, and how to check the registration.
 - [OpenCode](agents/opencode.md) — what works with OpenCode, what changes without an
   end-of-turn hook, and how to check the registration.
+- [Kilo Code](agents/kilo-code.md) — what works with Kilo Code in its CLI and in VS Code, what
+  changes without an end-of-turn hook, and how to check the registration.
 
 ## Using it
 

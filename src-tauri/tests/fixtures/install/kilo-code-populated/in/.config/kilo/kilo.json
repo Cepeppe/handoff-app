@@ -1,0 +1,28 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "model": "kilo/kilo-auto/free",
+  "mcp": {
+    "docs": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@example/docs-mcp"
+      ],
+      "environment": {
+        "DOCS_ROOT": "C:/docs"
+      }
+    },
+    "shop-db": {
+      "type": "local",
+      "command": [
+        "C:\\tools\\shop-db.exe"
+      ],
+      "enabled": false,
+      "timeout": 60000
+    }
+  },
+  "permission": {
+    "bash": "allow"
+  }
+}

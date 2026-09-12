@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use handoff_app_lib::install::claude_code::{ClaudeCode, AGENT_ID};
 use handoff_app_lib::install::{
-    self, survives_project_scope, Codex, Copilot, Cursor, InstallAdapter, InstallError,
+    self, survives_project_scope, Codex, Copilot, Cursor, InstallAdapter, InstallError, KiloCode,
     Modification, OpenCode, Registration, Scope,
 };
 use serde_json::Value;
@@ -107,6 +107,17 @@ impl TempHome {
         Copilot::with(
             self.join(".copilot"),
             self.join("AppData/Roaming/Code/User"),
+            SERVER,
+            self.join(".handoff/channel.token"),
+        )
+    }
+
+    /// The Kilo Code adapter over the same home: its folder is `<home>/.config/kilo`, and VS
+    /// Code's extensions, where the extension surface shows, are `<home>/.vscode/extensions`.
+    fn kilo_code(&self) -> KiloCode {
+        KiloCode::with(
+            self.join(".config/kilo"),
+            self.join(".vscode/extensions"),
             SERVER,
             self.join(".handoff/channel.token"),
         )
@@ -1801,5 +1812,357 @@ fn copilot_detect_names_both_files_of_the_scope() {
             home.join(COPILOT_VSCODE_CONFIG)
         ]
     );
+    assert_eq!(detection.version, None);
+}
+
+// --------------------------------------------------------- the Kilo Code adapter (T-081)
+//
+// OpenCode's promises over Kilo's JSON: `<home>/.config/kilo/kilo.json`, one `mcp.handoff` entry
+// for both of Kilo's surfaces, and every server, setting and key the user had still there, in
+// order — Kilo's own `$schema` line among them, which Kilo writes into every `kilo.json` it
+// loads (T-080).
+
+/// Kilo's configuration inside a temporary home.
+const KILO_CODE_CONFIG: &str = ".config/kilo/kilo.json";
+
+#[test]
+fn kilo_code_on_a_machine_with_no_configuration_at_all() {
+    let home = TempHome::from_case("kilo-code-empty");
+    let plan = install(&home.kilo_code(), &Scope::User);
+
+    // One modification and no hook: Kilo has none to register (T-080).
+    assert_eq!(plan.len(), 1);
+    assert!(plan[0].before.is_none() && !plan[0].is_noop());
+    assert_matches(&home, "kilo-code-empty", "out");
+
+    // INST-07 holds for every adapter: the first apply creates the token.
+    assert!(
+        home.join(".handoff/channel.token").is_file(),
+        "the channel token was not created"
+    );
+    assert!(backups_of(&home, KILO_CODE_CONFIG).is_empty());
+}
+
+#[test]
+fn kilo_code_keeps_every_server_and_setting_the_user_had_and_kilos_schema_line() {
+    let home = TempHome::from_case("kilo-code-populated");
+    install(&home.kilo_code(), &Scope::User);
+    assert_matches(&home, "kilo-code-populated", "out");
+    assert_eq!(backups_of(&home, KILO_CODE_CONFIG).len(), 1);
+}
+
+#[test]
+fn kilo_code_uninstall_gives_the_file_back_byte_for_byte() {
+    let home = TempHome::from_case("kilo-code-populated");
+    let adapter = home.kilo_code();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    assert_matches(&home, "kilo-code-populated", "in");
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+}
+
+#[test]
+fn kilo_code_applying_twice_writes_nothing_the_second_time() {
+    let home = TempHome::from_case("kilo-code-populated");
+    let adapter = home.kilo_code();
+    install(&adapter, &Scope::User);
+    let after_first = fs::read_to_string(home.join(KILO_CODE_CONFIG)).expect("written");
+
+    let second = adapter.plan(&Scope::User).expect("the plan is made");
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0].is_noop(),
+        "a second plan still wants to change something:\n{}",
+        second[0].diff
+    );
+    adapter.apply(&second).expect("the plan is applied");
+
+    assert_eq!(
+        fs::read_to_string(home.join(KILO_CODE_CONFIG)).expect("written"),
+        after_first
+    );
+    assert_eq!(backups_of(&home, KILO_CODE_CONFIG).len(), 1);
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn kilo_code_uninstall_where_ours_was_the_only_server_leaves_the_empty_object() {
+    let home = TempHome::from_case("kilo-code-empty");
+    let adapter = home.kilo_code();
+    install(&adapter, &Scope::User);
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+
+    // `mcp` was ours to create, so it goes with our entry, as for OpenCode.
+    assert_eq!(
+        fs::read_to_string(home.join(KILO_CODE_CONFIG)).expect("written"),
+        "{}\n"
+    );
+}
+
+#[test]
+fn kilo_code_project_scope_writes_the_projects_file_and_not_the_global_one() {
+    let home = TempHome::from_case("kilo-code-project");
+    let project = home.path().to_path_buf();
+    let adapter = KiloCode::with(
+        home.join("elsewhere/kilo"),
+        home.join(".vscode/extensions"),
+        SERVER,
+        home.join(".handoff/channel.token"),
+    );
+    let scope = Scope::project(&project);
+
+    let plan = install(&adapter, &scope);
+    assert_eq!(plan[0].file, project.join("kilo.json"));
+    assert_matches(&home, "kilo-code-project", "out");
+    assert!(
+        !home.join("elsewhere/kilo/kilo.json").exists(),
+        "project scope wrote into Kilo's global folder"
+    );
+    assert_eq!(adapter.verify(&scope), Registration::Registered);
+}
+
+#[test]
+fn kilo_code_a_moved_bundle_is_a_path_mismatch_repaired_where_the_entry_stands() {
+    // FM-23: the entry is ours and names the old path. The repair rewrites it in place, before
+    // the user's other server, and changes nothing else.
+    let home = TempHome::from_case("kilo-code-moved");
+    let adapter = home.kilo_code();
+
+    assert_eq!(
+        adapter.verify(&Scope::User),
+        Registration::PathMismatch {
+            registered: PathBuf::from(OLD_SERVER),
+            current: PathBuf::from(SERVER),
+        }
+    );
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains(OLD_SERVER) && plan[0].diff.contains(SERVER),
+        "the diff does not show the old path being replaced:\n{}",
+        plan[0].diff
+    );
+    adapter.apply(&plan).expect("the repair is applied");
+
+    assert_matches(&home, "kilo-code-moved", "out");
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn kilo_code_an_entry_somebody_wrote_by_hand_is_theirs_until_the_plan_shows_it_replaced() {
+    // `handoff-mcp`'s install-without-app page tells a person to write `mcp.handoff` with
+    // `npx`. Its command is not our fixed path, so it is not our registration, an uninstall
+    // leaves it alone, and a plan replaces it only with its old lines in the diff.
+    let home = TempHome::from_case("kilo-code-empty");
+    let file = home.join(KILO_CODE_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let theirs = concat!(
+        "{\n",
+        "  \"$schema\": \"https://app.kilo.ai/config.json\",\n",
+        "  \"mcp\": {\n",
+        "    \"handoff\": {\n",
+        "      \"type\": \"local\",\n",
+        "      \"command\": [\n",
+        "        \"npx\",\n",
+        "        \"-y\",\n",
+        "        \"baton-handoff-mcp\"\n",
+        "      ]\n",
+        "    }\n",
+        "  }\n",
+        "}\n",
+    );
+    fs::write(&file, theirs).expect("the file is written");
+    let adapter = home.kilo_code();
+
+    assert_eq!(adapter.verify(&Scope::User), Registration::NotRegistered);
+    adapter.uninstall(&Scope::User).expect("nothing to remove");
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), theirs);
+
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    assert!(
+        plan[0].diff.contains("\"npx\""),
+        "the diff hides what it replaces:\n{}",
+        plan[0].diff
+    );
+}
+
+#[test]
+fn kilo_code_a_file_kilo_rewrote_after_the_plan_is_still_written_with_kilos_line_kept() {
+    // T-080: Kilo rewrites a `kilo.json` when it loads it — `$schema` at the top, two-space
+    // indentation. A Kilo that starts between the consent screen and `apply` leaves the one
+    // location this adapter writes as it was, so the plan still holds (the stale check and the
+    // consent digest are both about that location), and the write keeps what Kilo did.
+    let home = TempHome::from_case("kilo-code-empty");
+    let file = home.join(KILO_CODE_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    fs::write(&file, "{\n    \"model\": \"kilo/kilo-auto/free\"\n}\n")
+        .expect("the file is written");
+    let adapter = home.kilo_code();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+
+    fs::write(
+        &file,
+        "{\n  \"$schema\": \"https://app.kilo.ai/config.json\",\n  \"model\": \"kilo/kilo-auto/free\"\n}\n",
+    )
+    .expect("Kilo rewrites it");
+    adapter.apply(&plan).expect("the plan still applies");
+
+    assert_eq!(
+        fs::read_to_string(&file).expect("written"),
+        concat!(
+            "{\n",
+            "  \"$schema\": \"https://app.kilo.ai/config.json\",\n",
+            "  \"model\": \"kilo/kilo-auto/free\",\n",
+            "  \"mcp\": {\n",
+            "    \"handoff\": {\n",
+            "      \"type\": \"local\",\n",
+            "      \"command\": [\n",
+            "        \"/apps/Baton/handoff-mcp\"\n",
+            "      ],\n",
+            "      \"environment\": {\n",
+            "        \"HANDOFF_AGENT\": \"kilo-code\",\n",
+            "        \"HANDOFF_TOOL_TIMEOUT_MS\": \"1800000\"\n",
+            "      },\n",
+            "      \"timeout\": 1800000\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        )
+    );
+    assert_eq!(adapter.verify(&Scope::User), Registration::Registered);
+}
+
+#[test]
+fn kilo_code_a_plan_applied_against_an_entry_that_moved_on_is_refused() {
+    let home = TempHome::from_case("kilo-code-populated");
+    let adapter = home.kilo_code();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+
+    fs::write(
+        home.join(KILO_CODE_CONFIG),
+        "{\n  \"mcp\": {\n    \"handoff\": { \"type\": \"local\", \"command\": [\"elsewhere\"] }\n  }\n}\n",
+    )
+    .expect("the file is rewritten");
+
+    match adapter.apply(&plan) {
+        Err(InstallError::Stale { location, .. }) => {
+            assert_eq!(location, "kilo.json · mcp.handoff");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn kilo_code_its_jsonc_is_never_read_or_written() {
+    // Kilo merges `kilo.jsonc` with `kilo.json`, and the extension keeps settings of its own in
+    // the `.jsonc`, where comments are allowed: the adapter writes `kilo.json` beside it and
+    // leaves the `.jsonc` byte for byte as it was, on install and on uninstall (INST-04).
+    let home = TempHome::from_case("kilo-code-empty");
+    let jsonc = home.join(".config/kilo/kilo.jsonc");
+    fs::create_dir_all(jsonc.parent().expect("it has a folder")).expect("the folder is made");
+    let theirs = concat!(
+        "{\n",
+        "  // written by the extension\n",
+        "  \"$schema\": \"https://app.kilo.ai/config.json\",\n",
+        "  \"permission\": { \"bash\": \"allow\" }\n",
+        "}\n",
+    );
+    fs::write(&jsonc, theirs).expect("the file is written");
+    let adapter = home.kilo_code();
+
+    install(&adapter, &Scope::User);
+    assert_matches(&home, "kilo-code-empty", "out");
+    assert_eq!(fs::read_to_string(&jsonc).expect("it is there"), theirs);
+
+    adapter
+        .uninstall(&Scope::User)
+        .expect("the uninstall succeeds");
+    assert_eq!(fs::read_to_string(&jsonc).expect("it is there"), theirs);
+}
+
+#[test]
+fn kilo_code_a_file_with_comments_is_refused_rather_than_rewritten() {
+    // Kilo reads JSON with comments, and a JSON parse would lose them (INST-04): the file is
+    // the user's, so the adapter refuses it and never writes a byte into it.
+    let home = TempHome::from_case("kilo-code-populated");
+    let adapter = home.kilo_code();
+    let commented = "{\n  // the model I use\n  \"model\": \"kilo/kilo-auto/free\"\n}\n";
+    fs::write(home.join(KILO_CODE_CONFIG), commented).expect("the file is rewritten");
+
+    assert!(matches!(
+        adapter.plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert!(matches!(
+        adapter.uninstall(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(home.join(KILO_CODE_CONFIG)).expect("it is still there"),
+        commented
+    );
+}
+
+#[test]
+fn kilo_code_an_mcp_that_is_not_an_object_is_refused_rather_than_replaced() {
+    let home = TempHome::from_case("kilo-code-empty");
+    let file = home.join(KILO_CODE_CONFIG);
+    fs::create_dir_all(file.parent().expect("it has a folder")).expect("the folder is made");
+    let odd = "{\n  \"mcp\": []\n}\n";
+    fs::write(&file, odd).expect("the file is written");
+
+    assert!(matches!(
+        home.kilo_code().plan(&Scope::User),
+        Err(InstallError::Malformed { .. })
+    ));
+    assert_eq!(fs::read_to_string(&file).expect("it is there"), odd);
+}
+
+#[test]
+fn kilo_code_the_consent_path_shows_one_line_with_the_timeout_behind_show() {
+    let home = TempHome::from_case("kilo-code-empty");
+    let adapter = home.kilo_code();
+    let plan = adapter.plan(&Scope::User).expect("the plan is made");
+    let shown = install::digest(&plan);
+
+    let lines = adapter.consent_lines(&plan);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].description.key, "install.kiloCode.mcpEntry");
+    assert_eq!(
+        lines[0].description.args.get("minutes").map(String::as_str),
+        Some("30")
+    );
+    for written in ["\"timeout\": 1800000", "\"HANDOFF_AGENT\": \"kilo-code\""] {
+        assert!(
+            lines[0].diff.contains(written),
+            "Show does not reveal {written}:\n{}",
+            lines[0].diff
+        );
+    }
+    // No approval is asked before a call on either surface (T-080), so none is written.
+    assert!(!lines[0].diff.contains("permission"), "{}", lines[0].diff);
+
+    adapter.apply(&plan).expect("the plan is applied");
+    assert_matches(&home, "kilo-code-empty", "out");
+
+    let again = adapter.plan(&Scope::User).expect("the plan is made again");
+    assert!(again.iter().all(Modification::is_noop));
+    assert_ne!(install::digest(&again), shown);
+}
+
+#[test]
+fn kilo_code_detect_names_the_file_of_the_scope_and_finds_kilo_by_its_folder() {
+    let home = TempHome::from_case("kilo-code-populated");
+    let detection = home.kilo_code().detect(&Scope::User);
+
+    assert_eq!(detection.agent_id, "kilo-code");
+    // `.config/kilo/` exists in the fixture, which is enough on a runner with neither the CLI
+    // nor the extension; the extension's folder is `kilo_code::extension_installed`'s test.
+    assert!(detection.found);
+    assert_eq!(detection.config_files, vec![home.join(KILO_CODE_CONFIG)]);
     assert_eq!(detection.version, None);
 }
