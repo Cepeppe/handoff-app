@@ -99,8 +99,9 @@ stands in for them, and its traps.
 And, when the change touches the channel, the store, the state machine, the hook decision,
 the capture pipeline or the tool contract, the end-to-end suite — ten scenarios against a
 **real** Claude Code and a real build of the app, about four minutes, and a subset of five
-against a real Codex CLI, a real OpenCode, the real Cursor Agent CLI or the real GitHub Copilot
-CLI, with one scenario more for Cursor's editor or for VS Code. It is run by hand, not in CI:
+against a real Codex CLI, a real OpenCode, the real Cursor Agent CLI, the real GitHub Copilot
+CLI or the real Kilo CLI, with one scenario more for Cursor's editor or for VS Code. It is run
+by hand, not in CI:
 
 ```sh
 scripts\e2e.ps1                   # from the workspace root: builds everything, then runs pnpm e2e
@@ -108,6 +109,7 @@ scripts\e2e.ps1 -Agent codex      # the Codex subset
 scripts\e2e.ps1 -Agent opencode   # the OpenCode subset
 scripts\e2e.ps1 -Agent cursor     # the Cursor subset
 scripts\e2e.ps1 -Agent copilot    # the GitHub Copilot subset
+scripts\e2e.ps1 -Agent kilo-code  # the Kilo Code subset
 ```
 
 `docs/dev/e2e.md` is the harness, the traps and how to read a failure. The automation channel

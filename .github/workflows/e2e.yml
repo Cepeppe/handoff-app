@@ -1,15 +1,15 @@
 name: e2e
 
-# The end-to-end suite of §11.5, against the real Claude Code, and its Codex (T-067) and
-# OpenCode (T-074) subsets against the real Codex CLI and the real OpenCode.
+# The end-to-end suite of §11.5, against the real Claude Code, and its Codex (T-067), OpenCode
+# (T-074) and Kilo Code (T-081) subsets against the real Codex CLI, OpenCode and Kilo CLI.
 #
 # `workflow_dispatch` only, and it will stay that way until the owner decides otherwise:
 # running a real agent in CI needs an API key, and `TASKS.md` §0.4 item 9 records the decision
 # not to provision one — the suite is run by hand with `scripts/e2e.ps1` after every Claude
 # Code update, and the result is recorded in `docs/dev/e2e.md`. This file exists so that
 # turning it on later is a secret and not a task (T-056 is that task): `ANTHROPIC_API_KEY` for
-# Claude Code, `OPENAI_API_KEY` for Codex, `OPENROUTER_API_KEY` for OpenCode, the same three
-# names the canaries of `handoff-mcp` read.
+# Claude Code, `OPENAI_API_KEY` for Codex, `OPENROUTER_API_KEY` for OpenCode, `KILO_API_KEY`
+# for Kilo Code, the same four names the canaries of `handoff-mcp` read.
 #
 # Without the key of the chosen agent every step below is skipped and the job is green, which
 # is deliberate: a dispatch by somebody who has not read this should say "nothing to run",
@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: 'claude-code runs every scenario; codex and opencode run their subsets (T-067, T-074)'
+        description: 'claude-code runs every scenario; codex, opencode and kilo-code run their subsets (T-067, T-074, T-081)'
         type: choice
-        options: [claude-code, codex, opencode]
+        options: [claude-code, codex, opencode, kilo-code]
         default: claude-code
       scenarios:
         description: "Scenario ids, space separated; empty runs all of the chosen agent's"
@@ -51,11 +51,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          KILO_API_KEY: ${{ secrets.KILO_API_KEY }}
         run: |
           if [ "$AGENT" = "codex" ]; then
             name=OPENAI_API_KEY; key="${OPENAI_API_KEY:-}"
           elif [ "$AGENT" = "opencode" ]; then
             name=OPENROUTER_API_KEY; key="${OPENROUTER_API_KEY:-}"
+          elif [ "$AGENT" = "kilo-code" ]; then
+            name=KILO_API_KEY; key="${KILO_API_KEY:-}"
           else
             name=ANTHROPIC_API_KEY; key="${ANTHROPIC_API_KEY:-}"
           fi
@@ -132,6 +135,14 @@ jobs:
         if: steps.gate.outputs.run == 'true' && inputs.agent == 'opencode'
         run: npm install --global opencode-ai
 
+      # The Kilo Code subset: the published CLI. The Kilo Gateway, its free models' provider,
+      # reads `KILO_API_KEY` from the environment, so there is no login step; the harness starts
+      # the native binary past npm's launcher, runs every `kilo run` on an inline configuration
+      # with the user's own configuration out of reach, and deletes the session it leaves.
+      - name: Install Kilo Code
+        if: steps.gate.outputs.run == 'true' && inputs.agent == 'kilo-code'
+        run: npm install --global @kilocode/cli
+
       - name: Run the scenarios
         if: steps.gate.outputs.run == 'true'
         run: pnpm e2e -- --agent "$AGENT" ${{ inputs.scenarios }}
@@ -139,6 +150,7 @@ jobs:
           AGENT: ${{ inputs.agent }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          KILO_API_KEY: ${{ secrets.KILO_API_KEY }}
 
       - name: The report
         if: steps.gate.outputs.run == 'true' && always()

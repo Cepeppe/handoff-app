@@ -106,13 +106,15 @@ export function serverRegistered(run: AgentRun, id: string): Assertion {
  * The `clientInfo.name` each agent sends in its handshake, measured by `handoff-mcp`'s canaries:
  * Codex 0.153.4 (T-066), OpenCode 1.18.29 (T-074), the Cursor Agent CLI 2026.09.10 (T-069),
  * whose editor sends `cursor-vscode` instead, and the Copilot CLI 1.0.83 (T-072), beside which
- * VS Code sends `Visual Studio Code`.
+ * VS Code sends `Visual Studio Code`, and Kilo 7.6.2 (T-081), whose VS Code extension sends the
+ * same `kilo`.
  */
 const CLIENT_NAMES: Readonly<Record<string, string>> = {
   codex: 'codex-mcp-client',
   copilot: 'copilot-cli',
   cursor: 'Cursor',
   opencode: 'opencode',
+  'kilo-code': 'kilo',
 };
 
 /**

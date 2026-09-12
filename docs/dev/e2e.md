@@ -9,7 +9,8 @@ them against a **real Codex CLI** instead ([The Codex subset](#the-codex-subset)
 against the **real Cursor Agent CLI**, after one scenario that launches **Cursor's editor**
 ([The Cursor subset](#the-cursor-subset), T-070), and `--agent copilot` the same subset against
 the **real GitHub Copilot CLI**, after one scenario that launches **VS Code**
-([The GitHub Copilot subset](#the-github-copilot-subset), T-072).
+([The GitHub Copilot subset](#the-github-copilot-subset), T-072), and `--agent kilo-code` the
+same subset against the **real Kilo CLI** ([The Kilo Code subset](#the-kilo-code-subset), T-081).
 
 It is the only check that exercises the whole system at once. `cargo test` drives the core
 with a fake server on one side and a fake window on the other; the frontend suite draws
@@ -29,6 +30,7 @@ turning it on later is a secret rather than a task.
 - [The OpenCode subset](#the-opencode-subset)
 - [The Cursor subset](#the-cursor-subset)
 - [The GitHub Copilot subset](#the-github-copilot-subset)
+- [The Kilo Code subset](#the-kilo-code-subset)
 - [Running it](#running-it)
 - [How a scenario works](#how-a-scenario-works)
 - [The automation channel](#the-automation-channel)
@@ -220,6 +222,36 @@ the run's root. The report is `tests/e2e/results/last-run-copilot.json`.
 subset is run by hand, and rarely — after a Copilot or VS Code update, or when the adapter
 changes. `e2e.yml` has no `copilot` choice for the same reason.
 
+## The Kilo Code subset
+
+`pnpm e2e -- --agent kilo-code` runs the same five scenarios against the real Kilo CLI
+(`tests/e2e/kilo-code.ts`), a fork of OpenCode. Kilo has no end-of-turn hook — the `kilo-code`
+row of `handoff-mcp` says `stop_hook: false` — so the reasons are the Codex subset's: E2E-4
+expects the **no-hook** instruction, E2E-9 runs by the clipboard, and every scenario checks that
+the session registered as Kilo Code (`clientInfo` `kilo`) and that its tab is labelled
+*Kilo Code*.
+
+Before the scenarios, a **preflight** puts the golden `kilo.json` of
+`src-tauri/tests/fixtures/install/kilo-code-empty/out/` in a throw-away configuration folder and
+asks the real `kilo debug config` what it read: a local server, Baton's path alone as its
+command, both variables and `"timeout": 1800000`. No model is involved. Kilo rewrites the file
+as it reads it (a `$schema` line, two-space indentation), which is why it reads a copy.
+
+Every `kilo run` runs with the isolation the Kilo Code canary of `handoff-mcp` measured: our
+server declared inline in `KILO_CONFIG_CONTENT`, `XDG_CONFIG_HOME` pointed at an empty folder of
+the run (the login is kept), project configuration and Claude Code's files switched off, every
+`KILO_*` variable of the parent dropped along with `VSCODE_PID` and `WORKSPACE_FOLDER_PATHS`,
+`PWD` set to the run's project, the native binary started past npm's launcher, and the session
+each run leaves in Kilo's history deleted afterwards. The model is
+`kilo/inclusionai/ling-3.0-flash-vl:free`, a free model of the Kilo Gateway, unless
+`HANDOFF_E2E_KILO_CODE_MODEL` names another, so a run costs nothing; the Gateway's free
+automatic model, which the canary runs on, is not the default here for the reason under
+[Traps](#traps). The report is `tests/e2e/results/last-run-kilo-code.json`.
+
+Kilo's VS Code extension is not driven: it starts its servers only for a task typed into its
+panel, which no script can do. `docs/agents/kilo-code.md` has the numbered walk that checks it
+by hand.
+
 ## Running it
 
 From the workspace root, which builds everything first:
@@ -231,6 +263,7 @@ scripts\e2e.ps1 -Agent codex       # the Codex subset
 scripts\e2e.ps1 -Agent opencode    # the OpenCode subset
 scripts\e2e.ps1 -Agent cursor      # the Cursor subset
 scripts\e2e.ps1 -Agent copilot     # the GitHub Copilot subset
+scripts\e2e.ps1 -Agent kilo-code   # the Kilo Code subset
 scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
 scripts\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
@@ -244,6 +277,7 @@ pnpm e2e -- --agent codex
 pnpm e2e -- --agent opencode
 pnpm e2e -- --agent cursor
 pnpm e2e -- --agent copilot
+pnpm e2e -- --agent kilo-code
 pnpm e2e -- --list
 ```
 
@@ -256,7 +290,8 @@ Four things must exist, and `missingPrerequisites()` names the two it can check:
    uses the release profile;
 4. `claude` on `PATH`, logged in — or `codex` or `opencode`, logged in, for their subsets,
    Cursor's `cursor-agent`, signed in with `agent login`, and Cursor's editor, for the Cursor
-   subset, or `copilot`, signed in, and VS Code, for the GitHub Copilot subset.
+   subset, `copilot`, signed in, and VS Code, for the GitHub Copilot subset, or `kilo`, logged
+   in, for the Kilo Code subset.
 
 For the Cursor subset one thing must **not** exist: a `handoff` server in `~/.cursor/mcp.json`.
 The Agent CLI reads that file into every run and has no switch to leave it out, so Baton
@@ -270,13 +305,14 @@ Environment: `HANDOFF_E2E_MODEL` pins Claude Code's model (default `sonnet`),
 `HANDOFF_E2E_CURSOR_MODEL` Cursor's (default `auto`), `HANDOFF_E2E_CURSOR` another Cursor Agent
 launcher and `HANDOFF_E2E_CURSOR_EDITOR` another editor executable,
 `HANDOFF_E2E_COPILOT_MODEL` Copilot's (default `auto`), `HANDOFF_E2E_COPILOT` another Copilot CLI
-and `HANDOFF_E2E_VSCODE` another VS Code executable, `HANDOFF_E2E_KEEP=1` keeps
+and `HANDOFF_E2E_VSCODE` another VS Code executable, `HANDOFF_E2E_KILO_CODE_MODEL` Kilo Code's
+(default `kilo/inclusionai/ling-3.0-flash-vl:free`), `HANDOFF_E2E_KEEP=1` keeps
 each run's temporary root, `HANDOFF_E2E_SERVER` points the MCP entry at another server binary,
 `HANDOFF_E2E_RUST_LOG` changes what the app logs.
 
 A whole run is about four minutes and a few cents. The report is
 `tests/e2e/results/last-run.json` (git-ignored; `last-run-codex.json`, `last-run-opencode.json`,
-`last-run-cursor.json` and `last-run-copilot.json` for the subsets):
+`last-run-cursor.json`, `last-run-copilot.json` and `last-run-kilo-code.json` for the subsets):
 verdicts, every assertion, the measured facts, and the **transcript ids** — with which the agent's own transcript can be read at
 `~/.claude/projects/<slug>/<session-id>.jsonl`, the one place a hook error is written down.
 
@@ -425,6 +461,19 @@ Each of these cost a run.
 - **A free model is a shared one.** A busy one answers "temporarily rate-limited upstream"
   before any tool is called, and the scenario fails on its first assertion. Run it again, or
   name another model with `HANDOFF_E2E_OPENCODE_MODEL`.
+- **Kilo is started as its native `kilo.exe`, not as the `kilo` on `PATH`.** npm's shim runs a
+  Node launcher, which runs the binary, and the server's parent is that binary (T-080);
+  `tests/e2e/kilo-code.ts` finds it where npm nests or hoists the platform package.
+- **`kilo session list` shows the user's sessions beside the run's.** The runner writes the
+  `--format json` stream to `agent-kilo-code-<session id>.jsonl` in the run's root and deletes
+  the run's session by the id the run printed, never from that list.
+- **A free model can answer without calling the tool, and the suite reports it as protocol.**
+  On `kilo/kilo-auto/free` the model it picked answered one scenario of every full run — three
+  runs, a different scenario each time — by printing an invented `STATUS=` line or the
+  `handoff_to_user` call itself as text; the scenario then waits for a handoff that never comes
+  and times out, which is filed as protocol and not retried. Read the kept stream
+  (`HANDOFF_E2E_KEEP=1`) before believing such a red: three events and no `tool_use` is the
+  model. The subset's default model made every call in its first full run.
 - **Cursor's print mode refuses our tools without a permission rule**, and the refusal reads as
   if a person had said no: `User rejected MCP: handoff-handoff_to_user`, after about two
   minutes. The run's `.cursor\cli.json` carries `Mcp(handoff:*)`; `--force` would also allow

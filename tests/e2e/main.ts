@@ -13,6 +13,7 @@
  * pnpm e2e -- --agent opencode      # the OpenCode subset, against OpenCode (T-074)
  * pnpm e2e -- --agent cursor        # the Cursor subset, against Cursor's editor and CLI (T-070)
  * pnpm e2e -- --agent copilot       # the GitHub Copilot subset, against VS Code and the Copilot CLI (T-072)
+ * pnpm e2e -- --agent kilo-code     # the Kilo Code subset, against the Kilo CLI (T-081)
  * pnpm e2e -- --list                # what exists, without running anything
  * ```
  *
@@ -20,7 +21,8 @@
  * `HANDOFF_E2E_CODEX_MODEL` Codex's (default `gpt-5.6-luna`), `HANDOFF_E2E_OPENCODE_MODEL`
  * OpenCode's (default a free OpenRouter model, see `opencode.ts`), `HANDOFF_E2E_CURSOR_MODEL`
  * Cursor's (default `auto`), `HANDOFF_E2E_COPILOT_MODEL` Copilot's (default `auto`),
- * `HANDOFF_E2E_KEEP=1` keeps
+ * `HANDOFF_E2E_KILO_CODE_MODEL` Kilo Code's (default a free Kilo Gateway model, see
+ * `kilo-code.ts`), `HANDOFF_E2E_KEEP=1` keeps
  * each run's temporary root so a failure can be read by hand, `HANDOFF_E2E_SERVER` points the
  * MCP entry at a server binary other than the pinned one.
  *
@@ -52,6 +54,12 @@ import {
   cursorUserConfigProblem,
 } from './cursor.ts';
 import {
+  KILO_CODE,
+  KILO_CODE_DEFAULT_MODEL,
+  kiloOnPath,
+  kiloReadsTheInstalledEntry,
+} from './kilo-code.ts';
+import {
   OPENCODE,
   OPENCODE_DEFAULT_MODEL,
   opencodeOnPath,
@@ -63,6 +71,7 @@ import {
   CODEX_SCENARIOS,
   COPILOT_SCENARIOS,
   CURSOR_SCENARIOS,
+  KILO_CODE_SCENARIOS,
   OPENCODE_SCENARIOS,
   SCENARIOS,
 } from './scenarios/index.ts';
@@ -119,18 +128,25 @@ const AGENTS: Readonly<
     model: () => process.env['HANDOFF_E2E_COPILOT_MODEL'] ?? COPILOT_DEFAULT_MODEL,
     results: 'last-run-copilot.json',
   },
+  'kilo-code': {
+    runner: KILO_CODE,
+    scenarios: KILO_CODE_SCENARIOS,
+    model: () => process.env['HANDOFF_E2E_KILO_CODE_MODEL'] ?? KILO_CODE_DEFAULT_MODEL,
+    results: 'last-run-kilo-code.json',
+  },
 };
 
 /**
  * The one check a scenario cannot make, because every scenario must stay off the user's
  * configuration: that the agent itself reads what its installer writes (T-067, T-074, T-070,
- * T-072). Claude Code's is the golden-file suite's plus the smoke of T-042.
+ * T-072, T-081). Claude Code's is the golden-file suite's plus the smoke of T-042.
  */
 const PREFLIGHTS: Readonly<Record<string, () => Assertion>> = {
   codex: codexReadsTheInstalledEntry,
   opencode: opencodeReadsTheInstalledEntry,
   cursor: cursorReadsTheInstalledEntry,
   copilot: copilotReadsTheInstalledEntry,
+  'kilo-code': kiloReadsTheInstalledEntry,
 };
 
 /** The program each agent is, for the prerequisite check. */
@@ -150,6 +166,10 @@ const ON_PATH: Readonly<Record<string, { readonly found: () => boolean; readonly
   copilot: {
     found: copilotOnPath,
     why: 'copilot is not on PATH. The GitHub Copilot subset drives the real Copilot CLI, signed in.',
+  },
+  'kilo-code': {
+    found: kiloOnPath,
+    why: 'kilo is not on PATH. The Kilo Code subset drives the real Kilo CLI, logged in.',
   },
 };
 

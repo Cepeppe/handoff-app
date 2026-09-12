@@ -66,6 +66,15 @@ export const CODEX_SCENARIOS: readonly Scenario[] = [
 export const OPENCODE_SCENARIOS: readonly Scenario[] = CODEX_SCENARIOS;
 
 /**
+ * The Kilo Code subset (T-081): the Codex one, as OpenCode's, whose fork Kilo's CLI is. Kilo has
+ * no end-of-turn hook either (its row says `stop_hook: false`), so the four flows every agent goes
+ * through run as they are and E2E-9 runs by the clipboard. It runs against the CLI: the VS Code
+ * extension starts its servers only for a task typed into its panel, which is the numbered walk
+ * of `docs/agents/kilo-code.md`, done by hand.
+ */
+export const KILO_CODE_SCENARIOS: readonly Scenario[] = CODEX_SCENARIOS;
+
+/**
  * The Cursor subset (T-070): the session of Cursor's editor first, then the Codex subset through
  * the Agent CLI, for the same reasons — no hook of Cursor reaches ours (T-069), so E2E-9 runs by
  * the clipboard.
