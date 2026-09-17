@@ -194,7 +194,7 @@ describe('release.yml', () => {
 
   it('builds the setup from the pinned server, checked the strict way', () => {
     const job = between(release, '\n  windows:', '\n  publish:');
-    expect(job).toContain('HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}');
+    expect(job).toContain('run: node scripts/fetch-server.mjs\n        env:\n          GH_TOKEN: ${{ github.token }}');
     expect(job).toContain('run: node scripts/fetch-server.mjs --check');
     expect(job).toContain('run: pnpm tauri build\n');
     expect(job).not.toContain('--debug');

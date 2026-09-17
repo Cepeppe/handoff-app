@@ -18,7 +18,7 @@ name: Release
 #     `ci.yml` builds no release binary, so this is the only place the gate meets one.
 #   * Every release carries its own security numbers (§11.7, T-053): the suite runs on the
 #     tagged commit and its report is an asset of the release.
-#   * Unsigned. Windows code signing is deferred (TASKS.md §0.4 item 8, T-076/T-077), and
+#   * Unsigned. Windows code signing is deferred (implementation decision 8, T-076/T-077), and
 #     `docs/install-windows.md` tells the user what SmartScreen says about it.
 #
 # TASK: T-060 — the macOS job (signed, notarized DMG) arrives with the macOS release.
@@ -43,9 +43,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
@@ -73,16 +73,16 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
       - name: Rust toolchain
         run: rustc --version
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
           shared-key: windows
@@ -91,7 +91,7 @@ jobs:
       - name: Fetch the pinned server
         run: node scripts/fetch-server.mjs
         env:
-          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Security suite
         working-directory: src-tauri
@@ -101,7 +101,7 @@ jobs:
         if: always()
         run: cat src-tauri/target/security-report.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: security-report
           path: src-tauri/target/security-report.json
@@ -117,11 +117,11 @@ jobs:
     env:
       VERSION: ${{ needs.guard.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -131,12 +131,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The pinned server artifact (§3.5). `handoff-mcp` is private, so this needs the
-      # cross-repository read token of T-010; it expires on 2027-09-07.
+      # The pinned server artifact (§3.5). The release is public: the run's own token only
+      # spares the download the anonymous rate limit of the GitHub API.
       - name: Fetch the pinned server
         run: node scripts/fetch-server.mjs
         env:
-          HANDOFF_MCP_READ_TOKEN: ${{ secrets.HANDOFF_MCP_READ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       # The build gate of §3.5. With `CI` set it also refuses a `dev-link`ed vendor, so the
       # server inside the setup is the pinned release and nothing else.
@@ -181,7 +181,7 @@ jobs:
       - name: The check can still fail
         run: node scripts/check-no-automation.mjs --present src-tauri/target/release/handoff-app.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: setup
           path: release-assets/*-win32-x64-setup.exe
@@ -196,18 +196,18 @@ jobs:
     env:
       VERSION: ${{ needs.guard.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: setup
           path: dist/assets
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: security-report
           path: dist/report

@@ -52,30 +52,25 @@ The app never edits anything under `vendor/`. A change to a schema, a pattern fi
 channel definition happens in `handoff-mcp`, is released, and reaches the app by bumping
 `server.lock.json`.
 
-### Why a token is needed
+### Authentication
 
-`Cepeppe/handoff-mcp` is private for now, so the GitHub API refuses an anonymous read of
-the release and its assets. The script looks for a token in this order:
+`Cepeppe/handoff-mcp` is public, so reading the release and its assets needs no token. The
+script still sends one when it finds one, because the GitHub API allows an anonymous address
+60 requests an hour and a CI runner shares its address with other jobs:
 
 | Source | Where it is used |
 |---|---|
-| `HANDOFF_MCP_READ_TOKEN` | CI: a fine-grained PAT with Contents **read-only** on `Cepeppe/handoff-mcp` alone, stored as a repository secret |
-| `GH_TOKEN` | a shell that already exports one |
+| `GH_TOKEN` or `GITHUB_TOKEN` | CI, which passes the run's own `github.token`; or a shell that exports one |
 | `gh auth token` | a developer machine logged in with the GitHub CLI |
 
-The default `GITHUB_TOKEN` of an Actions run is deliberately **not** used: it is scoped to
-this repository and cannot read the other one, so it would fail with a confusing 404. A
-404 from the release endpoint almost always means the token cannot see `handoff-mcp`.
-
-`HANDOFF_MCP_READ_TOKEN` expires on **2027-09-07**; after that date the app CI cannot
-download the release assets until it is regenerated with the same shape. It becomes
-unnecessary if the server repository is ever made public.
+With none of them the download is anonymous. A token the API refuses (401) is dropped and the
+request made again without it, so a stale login never blocks a download that needs none.
 
 ### Options
 
 | Option | Effect |
 |---|---|
-| `--check` | verify `vendor/` against the lock and exit; downloads nothing, needs no token |
+| `--check` | verify `vendor/` against the lock and exit; downloads nothing |
 | `--format-only` | fetch, or with `--check` verify, the format material alone; `bin/` and `src-tauri/binaries/` stay empty |
 | `--repo <owner/name>` | read the release from another repository (default `Cepeppe/handoff-mcp`) |
 | `--dir <dir>` | keep the downloaded assets here instead of a temporary directory |
@@ -100,7 +95,8 @@ It exists because the app crate embeds the schemas, the channel protocol and the
 file at build time (`src-tauri/src/format/`), so **`vendor/handoff-mcp/format/` has to be
 there for anything to compile** — `cargo check`, `cargo clippy` and `cargo test` included,
 not only a bundle. On a platform the lock pins no binary for, a full run cannot even start,
-and today that is every macOS host: macOS is deferred (`TASKS.md` §0.4 item 7) and the
+and today that is every macOS host: macOS is deferred (implementation decision 7,
+[`docs/design/`](../docs/design/implementation-decisions.md)) and the
 release builds its darwin legs only on demand. The `macos` job of `ci.yml` therefore fetches
 the format material, compiles and unit-tests, and never bundles.
 
@@ -109,9 +105,9 @@ and the pinned `protocol_version` are all checked exactly as in a full run.
 
 ## Development builds and `--check`
 
-`scripts/dev-link` at the **workspace root** (not in this repository) fills the same
-layout from a local build of `../handoff-mcp` and writes `VERSION = dev-<git sha>`. It
-bypasses the lock on purpose and refuses to run when `CI` is set.
+[`workspace/dev-link`](workspace/README.md) fills the same layout from a local build of
+`../handoff-mcp` and writes `VERSION = dev-<git sha>`. It bypasses the lock on purpose and
+refuses to run when `CI` is set.
 
 `--check` treats that version accordingly:
 

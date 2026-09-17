@@ -12,8 +12,8 @@
 //   src-tauri/binaries/handoff-mcp-<target-triple>[.exe]   (Tauri externalBin naming)
 //
 // `--check` is the build-time gate of §3.5: it verifies that vendor/ exists and records
-// the version the lock pins, and downloads nothing. `scripts/dev-link` at the workspace
-// root writes the same layout from a local build with a `dev-<sha>` version; that is a
+// the version the lock pins, and downloads nothing. `scripts/workspace/dev-link` writes
+// the same layout from a local build with a `dev-<sha>` version; that is a
 // deliberate bypass of the lock, so `--check` refuses it when `CI` is set and only warns
 // otherwise.
 //
@@ -21,7 +21,7 @@
 // `src-tauri/binaries/` empty. The tarball is platform-neutral and is pinned like any other
 // asset, so nothing about the verification chain changes; what changes is that the run does
 // not need a platform binary the lock does not pin. That is the state of macOS while it is
-// deferred (`TASKS.md` §0.4 item 7): the app crate embeds the schemas, the channel protocol
+// deferred (implementation decision 7): the app crate embeds the schemas, the channel protocol
 // and the pattern file at build time (T-029), so `cargo test` there needs the format and
 // nothing else. Combine it with `--check` for the matching gate.
 //
@@ -45,9 +45,10 @@
 //   --keep               do not delete that directory afterwards
 //   --offline            use the assets already in --dir instead of downloading
 //
-// Authentication: `handoff-mcp` is private, so the GitHub API needs a token. It is read
-// from `HANDOFF_MCP_READ_TOKEN` or `GH_TOKEN`, and locally falls back to `gh auth token`.
-// See `scripts/README.md`.
+// Authentication: none is required, because `handoff-mcp` is public. A token is still sent
+// when one is at hand, since the GitHub API allows an anonymous address 60 requests an hour
+// and a CI runner shares its address with other jobs: `GH_TOKEN` or `GITHUB_TOKEN` (CI passes
+// the run's own `github.token`), then `gh auth token`. See `scripts/README.md`.
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -178,7 +179,7 @@ async function readLock() {
   return lock;
 }
 
-/** The platform entry of the lock, with the message §0.4 item 7 makes useful on darwin. */
+/** The platform entry of the lock, with the message implementation decision 7 makes useful on darwin. */
 function pinnedPlatform(lock, platform) {
   if (lock.assets[platform] === undefined) {
     fail(
@@ -297,35 +298,39 @@ function verifyMinisign(content, signatureText, publicKey) {
 
 // ------------------------------------------------------------------------------ GitHub
 
+/** The token to send, if one is at hand; `undefined` reads the public release anonymously. */
 function token() {
-  for (const name of ['HANDOFF_MCP_READ_TOKEN', 'GH_TOKEN']) {
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN']) {
     const value = process.env[name];
     if (value !== undefined && value !== '') return value;
   }
   try {
-    return execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    const cli = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', stdio: 'pipe' }).trim();
+    return cli === '' ? undefined : cli;
   } catch {
-    fail(
-      'no GitHub token: set HANDOFF_MCP_READ_TOKEN (CI) or GH_TOKEN, or log in with ' +
-        '`gh auth login` (scripts/README.md)',
-    );
+    // No GitHub CLI, or one that is not logged in.
+    return undefined;
   }
 }
 
 async function api(path, accept, auth) {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      accept,
-      authorization: `Bearer ${auth}`,
-      'user-agent': 'handoff-app-fetch-server',
-      'x-github-api-version': '2022-11-28',
-    },
-  });
+  const request = (bearer) =>
+    fetch(`https://api.github.com${path}`, {
+      headers: {
+        accept,
+        ...(bearer === undefined ? {} : { authorization: `Bearer ${bearer}` }),
+        'user-agent': 'handoff-app-fetch-server',
+        'x-github-api-version': '2022-11-28',
+      },
+    });
+  let response = await request(auth);
+  // A stale token must not block a download that needs none.
+  if (response.status === 401 && auth !== undefined) response = await request(undefined);
   if (!response.ok) {
-    const hint =
-      response.status === 404
-        ? ' — handoff-mcp is private, so the token needs Contents:read on it'
-        : '';
+    const limited = (response.status === 403 || response.status === 429) && auth === undefined;
+    const hint = limited
+      ? ' — the anonymous rate limit of the GitHub API: set GH_TOKEN or run `gh auth login`'
+      : '';
     fail(`GET ${path} answered ${response.status} ${response.statusText}${hint}`);
   }
   return response;
@@ -601,8 +606,8 @@ async function fillVendor(lock, platform, binaryPath, formatPath) {
 // ------------------------------------------------------------------------------- check
 
 /**
- * The build-time gate of §3.5. A `dev-…` vendor comes from `scripts/dev-link` at the
- * workspace root, which is documented as bypassing the lock and refuses to run in CI: it
+ * The build-time gate of §3.5. A `dev-…` vendor comes from `scripts/workspace/dev-link`,
+ * which is documented as bypassing the lock and refuses to run in CI: it
  * is reported and tolerated on a developer machine, and refused wherever `CI` is set, so
  * no release build can be made from a locally built server.
  */
@@ -619,7 +624,7 @@ async function check(lock, platform, options = {}) {
   const development = version.startsWith('dev-');
   if (development && inCI()) {
     fail(
-      `${VENDOR_DIR} is a development build (${version}) linked by scripts/dev-link; ` +
+      `${VENDOR_DIR} is a development build (${version}) linked by scripts/workspace/dev-link; ` +
         `CI builds only from the pinned ${lock.version}`,
     );
   }
@@ -642,7 +647,7 @@ async function check(lock, platform, options = {}) {
   const what = options.formatOnly ? 'format material' : `server for ${platform}`;
   if (development) {
     console.error(`[dev] ${VENDOR_DIR} is ${version}, not the pinned ${lock.version}`);
-    console.error('      it was filled by scripts/dev-link, which bypasses the lock file');
+    console.error('      it was filled by scripts/workspace/dev-link, which bypasses the lock file');
   } else {
     console.error(`[ok] ${VENDOR_DIR} is the ${what} of ${version}, as ${LOCK_FILE} pins`);
   }
