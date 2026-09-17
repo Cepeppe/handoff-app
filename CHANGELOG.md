@@ -42,6 +42,8 @@ Baton carries is `server.lock.json`.
   checked out side by side, in this repository rather than in a folder around it.
 - `SECURITY.md`, and a secret-scanning configuration that leaves out the synthetic keys of the
   test corpus.
+- `CONTRIBUTING.md`: which changes go straight to a pull request and which start with an issue,
+  the checks a pull request runs, and the licence of a contribution.
 
 ### Fixed
 
