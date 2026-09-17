@@ -49,7 +49,7 @@ tauri-build = { version = "2", features = [] }
 # base64 PNG. It adds **no crate to the graph**: `wry`, which
 # every Tauri build links, already resolves the same 0.22.1, so this line names something
 # that is compiled either way rather than deciding that the product may ship one more thing.
-base64 = "0.22.1"
+base64 = "0.23.1"
 # Only to compare `last_verified_at` as an instant when the matching rule ranks runbooks
 # (§4.5.3). `clock` is off: nothing here reads the wall clock, and the feature would pull a
 # time-zone database this crate has no use for.
@@ -70,7 +70,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # by `deny.toml` and by `clippy.toml` while the app makes zero network connections (§7.13).
 # Without it the crate resolves nothing over the network, which is what we want anyway: the
 # four schemas are registered as in-memory resources.
-jsonschema = { version = "0.55", default-features = false }
+jsonschema = { version = "0.56", default-features = false }
 # The bundled OCR engine of OCR-03 and FM-16: pure Rust, English models, nothing fetched at
 # build time (T-047 surveyed the alternatives and ruled Tesseract out). Its two
 # `.rten` models are committed under `models/ocrs/` and shipped as Tauri resources, not
