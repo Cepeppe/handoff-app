@@ -3,14 +3,19 @@
 Baton is the desktop overlay application of the contextual handoff system: it shows the
 work a coding agent hands over to the person at the machine, guides it one step at a
 time, and sends back a structured outcome, keeping screenshots, redaction, the local log
-and the runbooks on the machine. It consumes `handoff-mcp` via a pinned release artifact
-(`server.lock.json`, verified and unpacked into `vendor/`), never from source. This
-repository is proprietary; see `LICENSE`. Status: work in progress, nothing is stable
-yet.
+and the runbooks on the machine. It consumes
+[`handoff-mcp`](https://github.com/Cepeppe/handoff-mcp) via a pinned release artifact
+(`server.lock.json`, verified and unpacked into `vendor/`), never from source. Baton is
+open source under the MIT licence; see `LICENSE`. Status: work in progress, nothing is
+stable yet.
 
 The user documentation — installing, the consent screen, the overlay, screenshots, runbooks,
 the log, how to verify what Baton sends, troubleshooting and the third-party notices — is in
 [`docs/`](docs/index.md), in English and in Italian (`docs/it/`).
+
+The design both repositories were built from — the requirements, the technical design, the
+decisions taken while implementing it, and the task list that comments and commit messages cite
+as `T-054` — is in [`docs/design/`](docs/design/README.md).
 
 ## Development
 
@@ -37,11 +42,13 @@ node scripts/fetch-server.mjs      # downloads and verifies the pinned server
 pnpm tauri dev
 ```
 
-`fetch-server` needs a token that can read the private `handoff-mcp` repository; it takes
-one from `HANDOFF_MCP_READ_TOKEN`, from `GH_TOKEN`, or from `gh auth token`. To work
-against a local build of the server instead, run `scripts/dev-link` from the workspace
-root: it fills the same layout from `../handoff-mcp` and marks the version `dev-<sha>`,
-which the build accepts everywhere except in CI.
+`fetch-server` downloads the release from the public `handoff-mcp` repository and needs no
+token; it sends `GH_TOKEN`, `GITHUB_TOKEN` or the one of `gh auth token` when there is one,
+which only spares it the anonymous rate limit of the GitHub API. To work
+against a local build of the server instead, clone `handoff-mcp` beside this repository and
+run [`scripts/workspace/dev-link`](scripts/workspace/README.md): it fills the same layout from
+`../handoff-mcp` and marks the version `dev-<sha>`, which the build accepts everywhere except
+in CI.
 
 Every `tauri` build first runs `node scripts/fetch-server.mjs --check`. It refuses to
 build when `vendor/` is missing or holds a version other than the one `server.lock.json`
@@ -104,12 +111,12 @@ CLI or the real Kilo CLI, with one scenario more for Cursor's editor or for VS C
 by hand, not in CI:
 
 ```sh
-scripts\e2e.ps1                   # from the workspace root: builds everything, then runs pnpm e2e
-scripts\e2e.ps1 -Agent codex      # the Codex subset
-scripts\e2e.ps1 -Agent opencode   # the OpenCode subset
-scripts\e2e.ps1 -Agent cursor     # the Cursor subset
-scripts\e2e.ps1 -Agent copilot    # the GitHub Copilot subset
-scripts\e2e.ps1 -Agent kilo-code  # the Kilo Code subset
+scripts\workspace\e2e.ps1                   # builds everything, then runs pnpm e2e
+scripts\workspace\e2e.ps1 -Agent codex      # the Codex subset
+scripts\workspace\e2e.ps1 -Agent opencode   # the OpenCode subset
+scripts\workspace\e2e.ps1 -Agent cursor     # the Cursor subset
+scripts\workspace\e2e.ps1 -Agent copilot    # the GitHub Copilot subset
+scripts\workspace\e2e.ps1 -Agent kilo-code  # the Kilo Code subset
 ```
 
 `docs/dev/e2e.md` is the harness, the traps and how to read a failure. The automation channel

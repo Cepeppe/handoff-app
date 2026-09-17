@@ -39,7 +39,7 @@ one isolated application, `fake-server.ts` is the session, `webdriver.ts` the cl
 ## Running it
 
 It runs on Windows: `tauri-driver` has no driver for the macOS webview, and macOS is deferred
-(`TASKS.md` §0.4 item 7). Three things have to exist, and the suite names the one that does not:
+(implementation decision 7). Three things have to exist, and the suite names the one that does not:
 
 1. **The build it drives**, a debug build with the automation channel and the frontend built
    in:
@@ -190,7 +190,7 @@ Each of these cost a run while the suite was written.
 - **`hello` is answered before the session is in the registry.** A request sheet opened in that
   moment reads "no active session" and keeps it, because it reads the list when it opens. The
   harness waits until the automation channel reports the session connected.
-- **A frontend-only change does not relink the build** (`HANDOFF.md`, T-049). After touching
+- **A frontend-only change does not relink the build.** After touching
   `src/` alone, `touch src-tauri/src/lib.rs` before the build, or the window under test is the
   previous one.
 - **Smart App Control** refuses a freshly linked executable at random on the development

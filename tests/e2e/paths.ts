@@ -11,11 +11,11 @@
  *   driving.
  * - **The server** is the pinned release artifact under `src-tauri/binaries/`, fetched by
  *   `scripts/fetch-server.mjs` — the same binary the installer registers (§3.5). Not a
- *   local build of `handoff-mcp`: `scripts/dev-link` in the workspace root is how a change
+ *   local build of `handoff-mcp`: `scripts/workspace/dev-link` is how a change
  *   under test in the server gets here, and it writes into the same place.
  * - **The runs** go under a temporary directory that holds the isolated `HANDOFF_HOME` and
  *   `HANDOFF_APP_DATA_DIR` of each scenario, so nothing touches the installation the owner
- *   uses every day (`TASKS.md` §0.4 item 4).
+ *   uses every day (implementation decision 4).
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -92,7 +92,7 @@ export function missingPrerequisites(): string[] {
   if (!existsSync(APP_BINARY)) {
     missing.push(
       `${APP_BINARY} is missing. Build it: pnpm build && cargo build --release --features e2e --bin handoff-app (in src-tauri), ` +
-        'or run scripts/e2e.ps1 from the workspace root.',
+        'or run scripts/workspace/e2e.ps1.',
     );
   }
   if (!existsSync(serverBinary())) {

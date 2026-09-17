@@ -42,7 +42,7 @@ Everything lives under one folder, `%TEMP%\baton-t042\`, so that **nothing touch
 installation you use every day**: not `~/.handoff`, not the app's database, not
 `~/.claude.json`, not the login items. Three redirections do it, and all three must be
 spelled identically everywhere — the Windows pipe name is a digest of the `HANDOFF_HOME`
-*string* and not of the folder it resolves to (`TASKS.md` §0.4 item 4):
+*string* and not of the folder it resolves to (implementation decision 4):
 
 | Variable | What it moves |
 |---|---|
@@ -159,7 +159,7 @@ spaces are the same virtualised one.
    Either spelling is found — `handoff-mcp.exe` first, then the target-triple one.
 
    The vendored server is the **pinned release** (`server.lock.json`), which is what will
-   ship. `scripts/dev-link` in the workspace root replaces it with a local build of
+   ship. [`scripts/workspace/dev-link`](../../scripts/workspace/README.md) replaces it with a local build of
    `handoff-mcp`; use it only when the change under test is in the server.
 
 2. **The folders.**

@@ -10,7 +10,7 @@
 //! is the release gate of §3.5 and it verifies more than presence — the version against
 //! `server.lock.json`, the declared format versions, the platform binary and its copy under
 //! `src-tauri/binaries/`. It also refuses a platform the lock pins no binary for, which is
-//! every macOS host while macOS is deferred (`TASKS.md` §0.4 item 7), so calling it from
+//! every macOS host while macOS is deferred (implementation decision 7), so calling it from
 //! here would make `cargo test` impossible on the macOS CI leg. It runs where it can do its
 //! whole job instead: `beforeDevCommand` and `beforeBuildCommand` in `tauri.conf.json`, and
 //! its own step in `ci.yml`.
@@ -43,7 +43,7 @@ fn main() {
                  The app embeds the format of the pinned handoff-mcp release; fill vendor/ \
                  with `node scripts/fetch-server.mjs` (or `node scripts/fetch-server.mjs \
                  --format-only` where the lock pins no binary for this platform), or link a \
-                 local build with the workspace root's `scripts/dev-link`.",
+                 local build with `scripts/workspace/dev-link`.",
                 path.display()
             );
         }

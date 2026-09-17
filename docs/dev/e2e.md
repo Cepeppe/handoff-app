@@ -22,7 +22,7 @@ without quotes died on every turn (T-039).
 Run it when you change the channel, the store, the state machine, the hook decision, the tool
 contract or the installation adapter — and after every Claude Code update, together with the
 canary of `handoff-mcp` (`docs/agent-facts.md` there). The suite is run **by hand**: no CI
-secret is provisioned for a real agent (`TASKS.md` §0.4 item 9), and `e2e.yml` exists so that
+secret is provisioned for a real agent (implementation decision 9), and `e2e.yml` exists so that
 turning it on later is a secret rather than a task.
 
 - [What it runs](#what-it-runs)
@@ -254,18 +254,19 @@ by hand.
 
 ## Running it
 
-From the workspace root, which builds everything first:
+With [`scripts/workspace/e2e.ps1`](../../scripts/workspace/README.md), which builds everything
+first:
 
 ```powershell
-scripts\e2e.ps1                    # all ten
-scripts\e2e.ps1 e2e-01-verified    # one
-scripts\e2e.ps1 -Agent codex       # the Codex subset
-scripts\e2e.ps1 -Agent opencode    # the OpenCode subset
-scripts\e2e.ps1 -Agent cursor      # the Cursor subset
-scripts\e2e.ps1 -Agent copilot     # the GitHub Copilot subset
-scripts\e2e.ps1 -Agent kilo-code   # the Kilo Code subset
-scripts\e2e.ps1 -DevLink           # against a local build of handoff-mcp
-scripts\e2e.ps1 -SkipBuild         # reuse what is already built
+scripts\workspace\e2e.ps1                    # all ten
+scripts\workspace\e2e.ps1 e2e-01-verified    # one
+scripts\workspace\e2e.ps1 -Agent codex       # the Codex subset
+scripts\workspace\e2e.ps1 -Agent opencode    # the OpenCode subset
+scripts\workspace\e2e.ps1 -Agent cursor      # the Cursor subset
+scripts\workspace\e2e.ps1 -Agent copilot     # the GitHub Copilot subset
+scripts\workspace\e2e.ps1 -Agent kilo-code   # the Kilo Code subset
+scripts\workspace\e2e.ps1 -DevLink           # against a local build of handoff-mcp
+scripts\workspace\e2e.ps1 -SkipBuild         # reuse what is already built
 ```
 
 Or, with the build already done, from `handoff-app`:
