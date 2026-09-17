@@ -3,7 +3,7 @@
  *
  * The user defers the step; the blocking call comes back `deferred` with the instruction to
  * come back to it; the agent resumes and the tab goes **back to `active`** — the correction
- * `DEVIATIONS.md` records under T-034, and the one thing an agent that defers and returns
+ * made in T-034, and the one thing an agent that defers and returns
  * must find. The user then finishes the round and the handoff waits for the verification.
  */
 import { callsTo, statuses } from '../agent.ts';

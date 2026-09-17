@@ -9,7 +9,7 @@
  *
  * # Two gestures WebDriver cannot make, and what stands in for them
  *
- * WebDriver drives the page. It cannot reach the tray icon (`HANDOFF.md`, T-037), press a
+ * WebDriver drives the page. It cannot reach the tray icon, press a
  * global shortcut, or move the operating system's focus to another window. Each of those ends
  * in the Rust side emitting one event to the window — `ui://show-view` with the view the tray
  * item or the shortcut asked for (`ui_bridge::show_view`), and `ui://window-focus` with the

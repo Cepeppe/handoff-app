@@ -377,7 +377,7 @@ pub async fn start_region_capture(app: AppHandle) -> Result<(), String> {
         // built with `macos-private-api`, which also has to be declared in the
         // configuration — and turning it on decides that the bundle can never go to the App
         // Store, which is the owner's call and not one to take while the platform is
-        // deferred (§0.4 item 7). A `> Note from T-046` under T-059 says so; until then the
+        // deferred (implementation decision 7). T-059 takes it up (noted by T-046); until then the
         // macOS branch compiles and the overlay would come up opaque.
         // TASK: T-059
         #[cfg(not(target_os = "macos"))]

@@ -47,7 +47,7 @@
 //! edits, and the burn-in that produces what the agent is given (PREV-01..05, PRIN-09).
 //!
 //! T-051 added [`network`]: the Network page of NET-01, which lists what `net::egress`
-//! recorded — nothing at all in this build, and the page says so (§0.4 item 8).
+//! recorded — nothing at all in this build, and the page says so (implementation decision 8).
 
 pub mod capture;
 pub mod commands;

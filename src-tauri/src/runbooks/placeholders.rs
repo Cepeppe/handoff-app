@@ -14,7 +14,7 @@
 //! 2. **Masking.** A certain secret that is not a declared value — one the ingress detector
 //!    found inside a step's text, a warning or the `verify` (§5.5) — has no name to be
 //!    replaced by, so it gets the mask of §5.9, `[treated as secret: <kind>]`, exactly as
-//!    the log writes it (`log::redact`, T-030). `DEVIATIONS.md` records why: §4.5.2 covers
+//!    the log writes it (`log::redact`, T-030). The reason: §4.5.2 covers
 //!    the value case and nothing else, and the alternative — refusing to write the runbook
 //!    at all — would lose the recipe of every handoff whose steps merely mention a key.
 //! 3. **The last defence.** The certain detector runs once more over the finished document

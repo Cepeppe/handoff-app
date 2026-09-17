@@ -98,7 +98,7 @@
    * And it is treated the way a **sheet** treats it and not the way the text pane does: a
    * certain match is replaced, a suspected one is marked and sent as it was written, because
    * the sentence was composed in this window a moment ago and DET-01 gives that decision to
-   * the person who wrote it (`DEVIATIONS.md`, 2026-09-10).
+   * the person who wrote it.
    */
   async function rescanComment(next: string): Promise<void> {
     comment = next;

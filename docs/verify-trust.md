@@ -1,7 +1,7 @@
 # Verify it yourself
 
-Baton is closed-source, so you should not have to take its word for anything. Three facts
-about it can be checked by you, on your own computer:
+You should not have to take Baton's word for anything, nor read its source code to find out.
+Three facts about it can be checked by you, on your own computer:
 
 1. **It communicates only locally.** Baton's own code makes no network connection. Checked
    below.

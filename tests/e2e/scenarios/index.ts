@@ -3,7 +3,7 @@
  *
  * The one row of the table that is elsewhere stays there: **E2E-8** (the app stopped → text
  * mode) is the server's and it runs there,
- * `handoff-mcp/test/canary/scenarios/e2e-08-text-mode.ts` (`TASKS.md` §0.4 item 3) — its
+ * `handoff-mcp/test/canary/scenarios/e2e-08-text-mode.ts` (implementation decision 3) — its
  * second half, "no database row", has no app to have a row in.
  *
  * **E2E-3** joined them with T-049: the capture pipeline it drives — OCR, both detectors,

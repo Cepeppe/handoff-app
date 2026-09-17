@@ -23,7 +23,7 @@
  * The entry holds the values the installer writes (`src-tauri/src/install/opencode.rs`): a local
  * server whose command is the pinned binary alone, `HANDOFF_AGENT = "opencode"`, and a `timeout`
  * in milliseconds that mirrors `HANDOFF_TOOL_TIMEOUT_MS`. The one value the installer does not
- * write is `HANDOFF_HOME`, which isolates the run (`TASKS.md` §0.4 item 4). That the real
+ * write is `HANDOFF_HOME`, which isolates the run (implementation decision 4). That the real
  * OpenCode reads the entry the installer *does* write is the preflight at the bottom of this
  * file.
  *

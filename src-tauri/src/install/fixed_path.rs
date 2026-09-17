@@ -117,7 +117,7 @@ const TARGET_TRIPLE: &str = if cfg!(all(windows, target_arch = "x86_64")) {
 /// **The path is always quoted**, where §7.15 prints it bare. Measured against Claude Code
 /// 2.1.266 on Windows: a hook command is run through `bash`, which reads every backslash of
 /// an unquoted `C:\Users\…` as an escape, so what it tried to start was
-/// `C:UsersgiuseGiuseppe…exe` and the hook died with exit 127, "command not found". Inside
+/// `C:UsersaliceProjects…exe` and the hook died with exit 127, "command not found". Inside
 /// double quotes bash keeps a backslash that is not followed by `$`, a backtick, a quote or
 /// another backslash, so the quoted form is the one that survives — and it is equally
 /// correct for `cmd.exe` and for a POSIX shell, and it covers a path holding a space, which

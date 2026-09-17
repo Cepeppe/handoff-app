@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "project-db": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "scripts/db-mcp.js"
+      ]
+    }
+  }
+}

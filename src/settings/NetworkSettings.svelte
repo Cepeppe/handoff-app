@@ -8,8 +8,8 @@
 
   Two sentences sit above the list and neither is decoration:
 
-  - **This build connects to nothing.** The update check is deferred with the public release
-    (T-078), so the one caller the design foresees does not exist and the list is empty on
+  - **This build connects to nothing.** The update check is deferred (implementation decision
+    8, T-078), so the one caller the design foresees does not exist and the list is empty on
     every machine. An empty list on its own would leave a reader guessing whether nothing
     happened or nothing was recorded.
   - **The page is a self-declaration; the firewall test is the verification.** NET-02 asks for

@@ -7,7 +7,7 @@
 //! is missing would have to be a connection that never left.
 //!
 //! **This build makes zero connections.** The update check is the only intended caller and it
-//! is deferred with the public release (`TASKS.md` §0.4 item 8, T-078), so nothing calls
+//! is deferred (implementation decision 8, T-078), so nothing calls
 //! [`get`] and the `net` feature that carries the client is off by default: the binary a
 //! person installs links no HTTP stack at all, and [`get`] answers [`EgressError::NoClient`]
 //! if anybody asks it to. NET-02's firewall test therefore expects zero domains until T-078.
@@ -90,7 +90,7 @@ pub enum EgressError {
     /// The request was made and did not come back.
     #[error("the request failed: {0}")]
     Failed(String),
-    /// This build carries no client, because the `net` feature is off (§0.4 item 8).
+    /// This build carries no client, because the `net` feature is off (implementation decision 8).
     #[error("this build has no network client")]
     NoClient,
 }
@@ -249,7 +249,7 @@ pub fn get(db: &Db, url: &str, purpose: &str) -> Result<Response, EgressError> {
     })
 }
 
-/// The build with no client: nothing is sent, so nothing is recorded (§0.4 item 8).
+/// The build with no client: nothing is sent, so nothing is recorded (implementation decision 8).
 #[cfg(not(feature = "net"))]
 pub fn get(_db: &Db, _url: &str, _purpose: &str) -> Result<Response, EgressError> {
     Err(EgressError::NoClient)
@@ -367,7 +367,7 @@ mod tests {
     #[cfg(not(feature = "net"))]
     #[test]
     fn a_build_without_the_client_cannot_connect_and_records_nothing() {
-        // §0.4 item 8 and NET-02: this is the build a person installs today. The address is
+        // implementation decision 8 and NET-02: this is the build a person installs today. The address is
         // a perfectly good one, so the only reason there is no row is that there is no
         // client — which is what the firewall test observes from the outside.
         let db = database();

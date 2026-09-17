@@ -13,7 +13,7 @@
 //!
 //! # When there is no binary
 //!
-//! `server.lock.json` pins no darwin asset while macOS is deferred (`TASKS.md` §0.4 item 7),
+//! `server.lock.json` pins no darwin asset while macOS is deferred (implementation decision 7),
 //! so the macOS CI leg fetches the format material alone (`fetch-server --format-only`) and
 //! has nothing to spawn. The test then reports why and passes: a job that cannot run it must
 //! not fail on it, and the Windows leg — where the binary is always there — does run it.
@@ -169,7 +169,7 @@ fn search(server: &Path, home: &TempHome, where_: &str, goal: &str) -> Value {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    // A file it had to skip is named on stderr and is not fatal (`> Note from T-016`), so a
+    // A file it had to skip is named on stderr and is not fatal (T-016), so a
     // writer defect shows up as an empty list plus this line rather than as a failure.
     let warnings = String::from_utf8_lossy(&output.stderr);
     assert!(

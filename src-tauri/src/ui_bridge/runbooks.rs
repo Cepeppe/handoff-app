@@ -23,8 +23,8 @@
 //!   one; the same question is also drawn on the tab that produced it, where the user can see
 //!   the correction it came from, and both call the same command.
 //!
-//! A runbook may show two things that look like defects and are not, both recorded in
-//! `DEVIATIONS.md` under T-044: a step text carrying `[treated as secret: <kind>]`, where
+//! A runbook may show two things that look like defects and are not, both settled in
+//! T-044: a step text carrying `[treated as secret: <kind>]`, where
 //! the ingress detector matched outside a declared value, and a `last_run_failed_at` newer
 //! or older than `last_verified_at` — a run that failed and was corrected keeps both, and
 //! RUN-09 never unmarks the first.

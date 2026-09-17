@@ -20,7 +20,7 @@
  * (`src-tauri/src/install/codex.rs`): the pinned binary with no arguments, `HANDOFF_AGENT =
  * "codex"`, the approval mode without which `codex exec` refuses `handoff_to_user`, and a
  * `tool_timeout_sec` in seconds that mirrors `HANDOFF_TOOL_TIMEOUT_MS`. The one value the
- * installer does not write is `HANDOFF_HOME`, which isolates the run (`TASKS.md` §0.4 item 4).
+ * installer does not write is `HANDOFF_HOME`, which isolates the run (implementation decision 4).
  * That the real Codex reads the entry the installer *does* write is the preflight at the
  * bottom of this file.
  *

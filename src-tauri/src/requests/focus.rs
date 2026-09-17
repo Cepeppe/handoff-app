@@ -270,7 +270,7 @@ mod windows_focus {
 /// wants brought forward.
 ///
 /// This branch is compiled by the macOS CI leg and has never been run: macOS is deferred
-/// (`TASKS.md` §0.4 item 7) and the manual matrix of A-18 is a Windows one for now.
+/// (implementation decision 7) and the manual matrix of A-18 is a Windows one for now.
 #[cfg(target_os = "macos")]
 mod macos_focus {
     use objc2_app_kit::{
@@ -387,7 +387,7 @@ mod tests {
         // most recently used one comes first in the z-order: without the title it would win.
         let windows = [
             window(3000, "the other window", "main.rs - shop - Cursor"),
-            window(3000, "this window", "RUN-TASK.md - baton - Cursor"),
+            window(3000, "this window", "README.md - baton - Cursor"),
             window(400, "desktop", ""),
         ];
         assert_eq!(
@@ -438,7 +438,7 @@ mod tests {
             window(
                 42352,
                 "this window",
-                "RUN-TASK.md - baton - Visual Studio Code",
+                "README.md - baton - Visual Studio Code",
             ),
             window(400, "desktop", ""),
         ];

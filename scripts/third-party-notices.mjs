@@ -7,7 +7,7 @@
  * marker comments, one row per Rust crate the application is built from. The rows are not
  * written by hand: this script reads `cargo metadata` for `x86_64-pc-windows-msvc` with the
  * lock file as it is, which resolves the **default features** only — so a crate behind a
- * feature the shipped build does not enable (`reqwest` behind `net`, `DEVIATIONS.md` T-051)
+ * feature the shipped build does not enable (`reqwest` behind `net`, T-051)
  * is not listed, because it is not in the binary — and follows the normal dependency edges
  * from `handoff-app`. Build scripts' and tests' dependencies are compiled on the build
  * machine and never shipped, so their edges are not followed.

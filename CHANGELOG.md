@@ -13,6 +13,41 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+### Security
+
+- A certain secret inside an **array** value is masked again. The server reports an array one
+  item at a time (`values.events[0]`), and the overlay and the outcome compared the location with
+  `values.<name>` alone, so the value chips showed such an item unmasked and `context.step_values`
+  of a question or a failure sent it to the agent in full. The value is now secret-treated
+  whenever any of its items matched, one rule for the overlay, the outcome and the runbook
+  writer (`SecretTreated::is_in_value`).
+
+### Changed
+
+- Baton is open source, under the MIT licence: `LICENSE`, the installer's licence page, the
+  manifests and the notices say so.
+- `scripts/fetch-server.mjs` needs no token, `handoff-mcp` being public. It still sends
+  `GH_TOKEN`, `GITHUB_TOKEN` or the one of `gh auth token` when there is one, to stay clear of
+  the anonymous rate limit, and a token the API refuses is dropped rather than fatal; CI passes
+  the run's own `github.token` instead of a cross-repository secret.
+- The workflows pin every action to a commit, and Dependabot keeps the pins, the npm packages
+  and the crates current once a month.
+
+### Added
+
+- `docs/design/`: the requirements and the technical design both repositories were built from,
+  the decisions taken while implementing them (cited in comments as "implementation decision
+  N") and the task list that comments and commit messages cite as `T-054`.
+- `scripts/workspace/`: `bootstrap`, `dev-link` and `e2e` for a developer with both repositories
+  checked out side by side, in this repository rather than in a folder around it.
+- `SECURITY.md`, and a secret-scanning configuration that leaves out the synthetic keys of the
+  test corpus.
+
+### Fixed
+
+- The VS Code goldens of the Copilot project installation are committed: `.gitignore` left them
+  out, so in CI and in any clone the test compared the `.github` file alone.
+
 ## [1.7.0] - 2026-09-12
 
 Kilo Code joins Claude Code, Codex, OpenCode, Cursor and GitHub Copilot, in the Kilo CLI and in

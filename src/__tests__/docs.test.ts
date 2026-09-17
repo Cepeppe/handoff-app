@@ -23,7 +23,7 @@ const ROOT = process.cwd();
 const DOCS = join(ROOT, 'docs');
 const CHECKER = join(ROOT, 'scripts', 'check-links.mjs');
 
-/** The pages the T-052 deliverables name, plus the index that links them. */
+/** The pages T-052 wrote, plus the index that links them. */
 const PAGES = [
   'index.md',
   'install-macos.md',

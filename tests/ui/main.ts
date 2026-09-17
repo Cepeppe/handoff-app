@@ -110,7 +110,7 @@ function preflight(): string[] {
   if (process.platform !== 'win32') {
     problems.push(
       'the WebDriver suite runs on Windows: tauri-driver has no driver for the macOS webview, ' +
-        'and macOS is deferred (TASKS.md §0.4 item 7).',
+        'and macOS is deferred (implementation decision 7).',
     );
     return problems;
   }

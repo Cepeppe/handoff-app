@@ -11,7 +11,7 @@
 //! text mode, and the one the vendored `docs/text-mode.md` calls the mask used "everywhere
 //! else". `kind` is the family (`api_key`, `token`, …), never the pattern id, so the log
 //! does not record which vendor issued the secret. §7.11 says "placeholders" and never says
-//! which; this is the choice, and `DEVIATIONS.md` records it.
+//! which; this is the choice.
 //!
 //! # Where it is applied
 //!

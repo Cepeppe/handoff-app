@@ -13,8 +13,7 @@
  * 90 000 the subtraction gives 30 s, the floor raises it to **50 s**, and 30 s would only be
  * right for a timeout of 90 s if the floor did not exist. The assertion is therefore that
  * the heartbeat arrives between 40 s and 75 s, and the measured value is recorded — a
- * scenario that asserted 30 s would have been red for a correct implementation. `TASKS.md`
- * and `DEVIATIONS.md` carry the correction.
+ * scenario that asserted 30 s would have been red for a correct implementation.
  *
  * An agent whose entry has no timeout field takes no injected timeout at all (T-070): Cursor's
  * runner passes none on, the row's own 60 000 ms — the CLI's cut — decides, and the floor lands

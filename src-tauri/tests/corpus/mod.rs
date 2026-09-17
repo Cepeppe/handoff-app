@@ -2,7 +2,7 @@
 //!
 //! Every image is a dashboard-looking page rendered from the table in [`pages`], with the
 //! text a program wrote and a label for every line. Nothing here comes off a real screen —
-//! `TASKS.md` T-048 says real screenshots are never committed, and a corpus of real ones
+//! T-048 set the rule that real screenshots are never committed, and a corpus of real ones
 //! could not be published with this repository anyway. The keys are fabricated to the
 //! shapes of §4.6 and match nothing that was ever issued.
 //!

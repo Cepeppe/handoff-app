@@ -4,8 +4,8 @@
 //! gives it exactly one way out of the process: [`super::egress`], the single point that
 //! may open a connection.
 //!
-//! **In this build it opens nothing and asks nothing.** The public release is deferred
-//! together with the update check (`TASKS.md` §0.4 item 8): UPD-01 and UPD-02 are
+//! **In this build it opens nothing and asks nothing.** The update check is deferred
+//! (implementation decision 8): UPD-01 and UPD-02 are
 //! suspended, the domain of OI-12 is not decided, and the app makes zero network
 //! connections — which is what the firewall test of NET-02 asserts, what `deny.toml` and
 //! `clippy.toml` enforce from the dependency side, and what `tests/egress_boundary.rs`
@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn this_build_checks_nothing_and_leaves_the_network_page_empty() {
-        // NET-02 and §0.4 item 8: zero network connections until T-078 gives this a caller.
+        // NET-02 and implementation decision 8: zero network connections until T-078 gives this a caller.
         // The two halves are the promise: the sequence's answer, and the table the Network
         // page reads — which the single egress point of §7.13 is the only writer of, so a
         // launch that ran this line has nothing to show.

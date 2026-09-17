@@ -8,7 +8,7 @@
 //!
 //! The server implements the same rule (`src/runbooks/normalize.ts` and `match.ts`), and
 //! `fixtures/matching/*.json` is the contract both are held to. Three choices §4.5.3 does
-//! not make are parity-critical and are recorded in `DEVIATIONS.md` (T-016):
+//! not make are parity-critical (T-016):
 //!
 //! 1. **A third ranking key, `id` ascending.** The design stops after shared-token count
 //!    and `last_verified_at`, which leaves two runbooks verified in the same instant with

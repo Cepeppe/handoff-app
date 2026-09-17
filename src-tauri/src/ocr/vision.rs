@@ -1,10 +1,10 @@
 //! The macOS OCR engine: `VNRecognizeTextRequest`, accurate level (§7.9, A-13).
 //!
-//! It is a stub. macOS is deferred (`TASKS.md` §0.4 item 7) and the platform work — the
+//! It is a stub. macOS is deferred (implementation decision 7) and the platform work — the
 //! Vision request, its `recognitionLanguages` from the spec's `lang` (OCR-05), the
 //! normalised bounding boxes mapped back to image pixels — is T-059. What is here is the
 //! shape, so that the selection rule of §7.9 has the same list on both platforms and the
-//! macOS CI leg compiles the branch it will one day fill (§0.4 item 7).
+//! macOS CI leg compiles the branch it will one day fill (implementation decision 7).
 //!
 //! [`VisionOcr::available`] answers `false`, which is the honest answer for a build that
 //! cannot recognise anything: [`super::run_with`] then falls through without ever handing

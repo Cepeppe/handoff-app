@@ -183,7 +183,7 @@ fn a_spec_with_nothing_to_hide_is_stored_exactly_as_it_arrived() {
 #[test]
 fn the_database_file_is_created_under_the_app_data_directory() {
     // The acceptance check of the task: `HANDOFF_APP_DATA_DIR` is the override tests use
-    // (`TASKS.md` §0.4 item 4), and it is the only way a test may touch `open_app_data`
+    // (implementation decision 4), and it is the only way a test may touch `open_app_data`
     // without writing into the real installation.
     let dir = tempdir();
     let nested = dir.join("not").join("created").join("yet");

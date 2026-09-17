@@ -35,7 +35,7 @@
 //! # A capture nobody could read
 //!
 //! `select_and_run` answers `NoEngine` only for an installation whose OCR resources are
-//! missing (`> Note from T-047`). There is then no text to send and nothing was found to
+//! missing (T-047). There is then no text to send and nothing was found to
 //! hide, so the preview says so and leaves the user the two tools that do not need an
 //! engine: crop, and a box drawn by hand (PREV-02). Refusing to send at all would be the
 //! broken failure PRIN-10 forbids; sending silently would be the one PRIN-09 forbids.
@@ -388,7 +388,7 @@ pub async fn send_screenshot(
 
     let exemptions = core.store.exemptions(handoff_id.clone()).await;
     // The comment is typed text: the certain level replaces, the suspected level marks and
-    // is sent as written, exactly as in the three sheets (`DEVIATIONS.md`, 2026-09-10).
+    // is sent as written, exactly as in the three sheets.
     let comment = comment
         .map(|written| redact(&written, &exemptions).text)
         .filter(|written| !written.trim().is_empty());

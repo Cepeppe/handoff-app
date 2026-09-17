@@ -24,8 +24,7 @@
 //!   and only those are recorded; the rest are still there at the next end of turn.
 //! - **The session that owns a handoff is the one that opened it.** §7.5 also names "the
 //!   session of the attached call", but all three handoff conditions require that there is
-//!   no attached call, so that half of the disjunction can never fire. Recorded in
-//!   `DEVIATIONS.md`.
+//!   no attached call, so that half of the disjunction can never fire.
 //! - **A parked handoff is not asked for back.** §8.1 gives `parked` to the user alone and
 //!   RESP-07 tells the agent to cite it in its final summary, so the item is the same one
 //!   (one block per handoff per session, whichever deferral produced it) and the sentence is

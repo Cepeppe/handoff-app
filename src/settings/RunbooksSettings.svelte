@@ -10,7 +10,7 @@
   something they removed by mistake. The confirmation is a second button on the same row, as
   on the Log page and for the same reason — the panel is one window (MULTI-04).
 
-  Two things a row may show that are not defects (`DEVIATIONS.md`, T-044): a **last run
+  Two things a row may show that are not defects (T-044): a **last run
   failed** date beside a newer **last verified** one, because a run that failed and was then
   corrected keeps both and RUN-09 never unmarks the first; and, inside the file, a step text
   carrying `[treated as secret: <kind>]` where the ingress detector matched outside a declared

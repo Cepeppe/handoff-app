@@ -2,7 +2,7 @@
 //!
 //! A second endpoint beside the one of §6, derived the same way and from the same two
 //! inputs, so that an e2e instance started with its own `HANDOFF_HOME` cannot land on the
-//! endpoint of the app the owner is actually using (`TASKS.md` §0.4 item 4):
+//! endpoint of the app the owner is actually using (implementation decision 4):
 //!
 //! - **Windows.** `\\.\pipe\handoff-e2e-<h>`, `h` being the digest
 //!   [`crate::channel::endpoint::pipe_suffix`] computes for the product channel. One digest,

@@ -63,8 +63,8 @@ export function plantedSpec(
     // The plain `banner_text` is deliberately **not** forbidden: §7.11 stores `spec_json`
     // with the secret-treated values replaced by placeholders, and the Log page of §7.11 is
     // what the rest of the spec is stored for. What LOG-02 and DET-04 forbid is the value
-    // the certain detector matched, and that is what this list holds. `DEVIATIONS.md`
-    // records the difference from the wording of §11.2.
+    // the certain detector matched, and that is what this list holds, departing on purpose
+    // from the wording of §11.2.
     forbidden: [secret, inText],
     steps: 2,
   };

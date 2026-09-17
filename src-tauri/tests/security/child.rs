@@ -45,7 +45,7 @@ pub fn run(test: &str, envs: &[(&str, &OsStr)]) -> Output {
         .args([test, "--exact", "--nocapture", "--test-threads=1"])
         .env(CHILD_VARIABLE, test)
         // The production subscriber colours its output for a terminal; the parent reads it
-        // as text. The two test-isolation variables of §0.4 item 4 are cleared so that a
+        // as text. The two test-isolation variables of implementation decision 4 are cleared so that a
         // value the parent's environment happens to hold cannot move the child's files.
         .env("NO_COLOR", "1")
         .env_remove("HANDOFF_HOME")

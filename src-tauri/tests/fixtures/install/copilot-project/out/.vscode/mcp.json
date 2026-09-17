@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "project-db": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "scripts/db-mcp.js"
+      ]
+    },
+    "handoff": {
+      "type": "stdio",
+      "command": "/apps/Baton/handoff-mcp",
+      "args": [],
+      "env": {
+        "HANDOFF_AGENT": "copilot"
+      }
+    }
+  }
+}

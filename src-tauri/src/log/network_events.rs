@@ -7,7 +7,7 @@
 //! could not have happened, because `deny.toml` and `clippy.toml` keep every HTTP client
 //! out of the tree and out of every other module (§7.13).
 //!
-//! While the public release and the update check are deferred (`TASKS.md` §0.4 item 8) the
+//! While the update check is deferred (implementation decision 8) the
 //! app makes **zero** network connections, so this table stays empty on every machine. It
 //! exists now because NET-01 is a promise about what the app records, and a promise that
 //! only starts being kept the day there is something to record is not one.

@@ -17,7 +17,7 @@
 //! - every webview — the configured window and the ones built in code — starts the WebView2
 //!   runtime with the same arguments, and they switch the runtime's own background traffic
 //!   off (T-052: the runtime is another program, so nothing above can see what it sends);
-//! - **nothing calls `egress::get`**, which is §0.4 item 8's "zero network connections" as a
+//! - **nothing calls `egress::get`**, which is implementation decision 8's "zero network connections" as a
 //!   fact about the sources rather than a sentence in a document.
 //!
 //! # What is scanned
@@ -49,9 +49,8 @@ const FORBIDDEN: &[&str] = &["reqwest", "hyper", "TcpStream", "TcpListener"];
 
 /// The call that would make this build reach the network.
 ///
-/// There is no caller: the update check is deferred with the public release (`TASKS.md`
-/// §0.4 item 8), so this is what "the app makes zero network connections" means in the
-/// sources. It is the strongest form of the firewall test of NET-02 that a suite can run.
+/// There is no caller: the update check is deferred (implementation decision 8), so this is
+/// what "the app makes zero network connections" means in the sources. It is the strongest form of the firewall test of NET-02 that a suite can run.
 // TASK: T-078 — delete this assertion when the update check gains its caller; the rest of
 // this file outlives it, and so does the `network_events` row the caller will write.
 const EGRESS_CALL: &str = "egress::get";
@@ -240,7 +239,7 @@ fn the_scanned_types_are_the_ones_clippy_disallows() {
 fn the_webview_cannot_reach_the_network_either() {
     // §7.13: "the frontend's CSP is `default-src 'self'` with no `connect-src`, so the
     // webview cannot reach the network either". `img-src 'self' blob:` is beside it since
-    // T-046 (`DEVIATIONS.md`) and grants nothing that could leave the machine; anything that
+    // T-046 and grants nothing that could leave the machine; anything that
     // widened `connect-src`, or `default-src` itself, would.
     const TAURI_CONF: &str = include_str!("../tauri.conf.json");
     let config: serde_json::Value =
@@ -326,7 +325,7 @@ fn every_webview_built_in_code_is_given_the_same_arguments() {
 
 #[test]
 fn nothing_in_this_build_calls_the_egress_point() {
-    // §0.4 item 8: the app makes **zero** network connections until T-078 writes the update
+    // implementation decision 8: the app makes **zero** network connections until T-078 writes the update
     // check. The module and its lint rules ship; the caller does not.
     let callers: Vec<String> = mentions(&[EGRESS_CALL])
         .into_iter()
@@ -334,7 +333,7 @@ fn nothing_in_this_build_calls_the_egress_point() {
         .collect();
     assert!(
         callers.is_empty(),
-        "this build promises zero network connections (§0.4 item 8), and something calls \
+        "this build promises zero network connections (implementation decision 8), and something calls \
          `{EGRESS_CALL}`:\n  {}",
         callers.join("\n  ")
     );

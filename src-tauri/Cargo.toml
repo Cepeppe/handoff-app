@@ -4,7 +4,7 @@ version = "1.7.0"
 description = "Baton: the contextual handoff overlay"
 authors = ["Cepeppe"]
 edition = "2021"
-license = "LicenseRef-Baton-Proprietary"
+license = "MIT"
 publish = false
 
 # The library holds everything; the binary is a three-line entry point. The `_lib` suffix
@@ -31,8 +31,8 @@ fake-capture = []
 secrets-write = []
 # The HTTP client of `net::egress`, and the only way an HTTP client enters this crate
 # (§7.13, DD-32). It is **off by default**, so the binary a person installs today links no
-# network stack at all: the update check that is its one intended caller is deferred with
-# the public release (`TASKS.md` §0.4 item 8, T-078), and NET-02's firewall test expects zero
+# network stack at all: the update check that is its one intended caller is deferred
+# (implementation decision 8, T-078), and NET-02's firewall test expects zero
 # domains until then. Everything else of the boundary is compiled unconditionally — the
 # module, the recording of `network_events`, the domain rule — so what the feature gates is
 # the client and nothing else. CI compiles and tests it (`cargo lint` is `--all-features`,
@@ -46,7 +46,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # The one encoding a redacted screenshot may cross the channel in: §6.6 lets pixels reach
 # the server only inside an outcome, and the `image` field of `channel.v1.schema.json` is a
-# base64 PNG (`DEVIATIONS.md`, 2026-09-08). It adds **no crate to the graph**: `wry`, which
+# base64 PNG. It adds **no crate to the graph**: `wry`, which
 # every Tauri build links, already resolves the same 0.22.1, so this line names something
 # that is compiled either way rather than deciding that the product may ship one more thing.
 base64 = "0.22.1"
@@ -72,7 +72,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # four schemas are registered as in-memory resources.
 jsonschema = { version = "0.55", default-features = false }
 # The bundled OCR engine of OCR-03 and FM-16: pure Rust, English models, nothing fetched at
-# build time (`DEVIATIONS.md`, 2026-09-09, has the survey that ruled Tesseract out). Its two
+# build time (T-047 surveyed the alternatives and ruled Tesseract out). Its two
 # `.rten` models are committed under `models/ocrs/` and shipped as Tauri resources, not
 # linked in. `default-features = false` drops `export-wasm`, which is only meaningful for a
 # `wasm32` target this application never builds; `rten` is the inference engine the models

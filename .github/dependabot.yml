@@ -1,0 +1,29 @@
+# Dependency updates: monthly, and grouped into one pull request per ecosystem rather than one
+# per package. The actions are pinned by commit, with the tag in a comment beside the pin, and
+# Dependabot updates the two together. The server is not among them: it is pinned by
+# `server.lock.json` and moves only when that file is bumped.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]

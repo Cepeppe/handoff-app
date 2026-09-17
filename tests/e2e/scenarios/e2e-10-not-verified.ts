@@ -12,7 +12,7 @@
  * actor for this process and dies with it.
  *
  * **Which of VER-06's two roads the run takes is not fixed, and §11.5's row assumes the
- * wrong one** (`DEVIATIONS.md`, T-045). The agent is told not to report and then finishes
+ * wrong one** (T-045). The agent is told not to report and then finishes
  * its turn, so its session ends — and §8.3 closes an unreported verification at the
  * disconnect, before the injected window can run out. Measured here: `not_verified` at
  * about 9 s of a 20 s window, by the disconnect. Both roads are VER-06 and both are what

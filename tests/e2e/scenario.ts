@@ -169,7 +169,7 @@ export function tabNamesTheAgent(label: string, agent: AgentRunner, id: string):
  * would mean an attempt, and no row means no attempt was ever made.
  *
  * In this build the expected count is **zero on every scenario**: the update check that is
- * the one intended caller is deferred (`TASKS.md` §0.4 item 8, T-078). The variant that
+ * the one intended caller is deferred (implementation decision 8, T-078). The variant that
  * expects exactly one row, with the check enabled, belongs to that task.
  */
 export function zeroEgress(workspace: Workspace, id: string): Assertion {

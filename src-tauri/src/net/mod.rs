@@ -5,7 +5,7 @@
 //! by `tests/egress_boundary.rs` and by the webview's CSP, which `egress` documents.
 //!
 //! [`updater`] is the one caller the design foresees, and in this build it asks for nothing:
-//! the update check is deferred with the public release (`TASKS.md` §0.4 item 8, T-078), so
+//! the update check is deferred (implementation decision 8, T-078), so
 //! the app makes **zero** network connections and the `net` feature that carries the HTTP
 //! client is off by default.
 pub mod egress;

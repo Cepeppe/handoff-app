@@ -203,12 +203,12 @@ describe('the Log page (§7.11, LOG-04, LOG-05)', () => {
   });
 
   it('says where the export went, and says nothing when it was cancelled', async () => {
-    const exportLog = vi.fn(async () => 'C:/Users/giuse/baton-log.json');
+    const exportLog = vi.fn(async () => 'C:/Users/alice/baton-log.json');
     setBridge(fakeBridge({ logEntries: vi.fn(async () => []), exportLog }));
     const view = render(LogSettings);
 
     fireEvent.click(await screen.findByText(t('log.export')));
-    await screen.findByText(t('log.exported', { path: 'C:/Users/giuse/baton-log.json' }));
+    await screen.findByText(t('log.exported', { path: 'C:/Users/alice/baton-log.json' }));
 
     view.unmount();
     cleanup();

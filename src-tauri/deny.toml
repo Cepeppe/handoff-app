@@ -1,9 +1,9 @@
 # Dependency policy for the app crate: licences, advisories, sources, and the crates that
 # may not enter the tree at all (TECHNICAL-DESIGN §7.13, NFR-17, LIC-01).
 #
-# `cargo deny check` is a CI gate. It answers three questions that a proprietary desktop
-# application has to keep answering: are we shipping a licence we cannot ship, are we
-# shipping a crate with a published advisory, and is anything reaching the network.
+# `cargo deny check` is a CI gate. It answers three questions that a desktop application
+# distributed as a binary has to keep answering: are we shipping a licence we cannot ship, are
+# we shipping a crate with a published advisory, and is anything reaching the network.
 
 [graph]
 # The two platforms of REQUIREMENTS §1.5. Checking all three triples from any machine keeps
@@ -32,10 +32,10 @@ ignore = [
 ]
 
 [licenses]
-# The application is proprietary (NFR-17) and ships third-party code, so every licence in
-# the tree has to be one we can redistribute under a proprietary binary. Copyleft licences
-# that would reach the linked binary are absent from this list on purpose: adding one is a
-# decision about what the product may ship, not a way to make the build pass.
+# The application is MIT and ships third-party code, so every licence in the tree has to be
+# one a binary under the MIT licence can redistribute without imposing its own terms on it.
+# Copyleft licences that would reach the linked binary are absent from this list on purpose:
+# adding one is a decision about the licence of what ships, not a way to make the build pass.
 allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
@@ -54,8 +54,8 @@ confidence-threshold = 0.9
 # The list above is a policy, not an inventory: an entry no crate happens to use today is
 # not a defect, and warning about it would train everyone to skim this output.
 unused-allowed-license = "allow"
-# The crate itself is `publish = false` and carries a `LicenseRef-` expression; it is ours,
-# so it is not part of the third-party question this file asks.
+# The crate itself is `publish = false`; it is ours, so it is not part of the third-party
+# question this file asks.
 private = { ignore = true }
 
 [bans]
@@ -68,7 +68,7 @@ wildcards = "deny"
 #
 # Until T-051 both crates were banned outright, because nothing here could open a
 # connection at all. `net::egress` now exists (with no caller: the update check is deferred,
-# `TASKS.md` §0.4 item 8), so the ban becomes the narrower statement cargo-deny can actually
+# implementation decision 8), so the ban becomes the narrower statement cargo-deny can actually
 # make about a dependency: **`reqwest` may be in the tree only as a direct dependency of this
 # crate**, which is the `net` feature and nothing else, and `hyper` only because that one
 # client brought it. Anything else — an OCR crate that downloads its models, a plugin that

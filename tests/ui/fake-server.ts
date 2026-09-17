@@ -107,7 +107,7 @@ export class FakeServer {
    *
    * A Windows named-pipe client has to retry: the listener creates the next pipe instance
    * only after taking the previous one, so a peer arriving in between is refused rather than
-   * queued (`HANDOFF.md`, T-031).
+   * queued.
    */
   static async connect(endpoint: string, home: string, options: SessionOptions): Promise<FakeServer> {
     const token = readFileSync(join(home, 'channel.token'), 'utf8').trim();

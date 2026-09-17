@@ -9,7 +9,7 @@
 //! - **Windows.** `\\.\pipe\handoff-<h>`, `h` being the first 16 hex digits of the SHA-256
 //!   of the lower-cased `USERDOMAIN\USERNAME`. The pipe namespace is machine-global, so the
 //!   suffix is what keeps two users' apps apart (FM-12). When `HANDOFF_HOME` is set — tests
-//!   and the e2e isolation of `TASKS.md` §0.4 item 4 — it is mixed in as `<user>|<home>`,
+//!   and the e2e isolation of implementation decision 4 — it is mixed in as `<user>|<home>`,
 //!   so a test instance cannot land on the pipe of the app the owner is actually using. A
 //!   variable that is not set contributes an **empty string**: any cleverness on one side,
 //!   such as asking the OS for the user name, would move the endpoint out from under the
@@ -235,7 +235,7 @@ fn short_digest(material: &str) -> String {
 /// fit (FM-12).
 ///
 /// The design says the app writes the pointer file and never says where it puts the socket,
-/// so this is the app's choice (`DEVIATIONS.md`): `<temp>/handoff-<h>.sock`, `h` being the
+/// so this is the app's choice: `<temp>/handoff-<h>.sock`, `h` being the
 /// digest of the path that did not fit — one name per home folder, so two isolated
 /// instances do not collide, and short enough that the temporary directory would have to be
 /// eighty characters deep to be a problem. If even that does not fit, `/tmp` does.
@@ -549,50 +549,50 @@ mod tests {
 
     /// A Windows user, as the two variables the pipe name is derived from carry it.
     const DOMAIN: &str = "ACME";
-    const USER: &str = "Giuse";
+    const USER: &str = "Alice";
     const POSIX_HOME: &str = "/tmp/handoff-test";
     const WINDOWS_HOME: &str = r"C:\tmp\hh";
 
     // The three digests `handoff-mcp` pinned in `test/unit/platform/paths.test.ts`. They
     // are literals on both sides on purpose: a test that hashes the same string with the
     // same algorithm agrees with any change, including a wrong one.
-    const PIPE_HASH: &str = "8fb9ebc1757c4335";
-    const PIPE_HASH_WITH_POSIX_HOME: &str = "020dcfd9686704a6";
-    const PIPE_HASH_WITH_WINDOWS_HOME: &str = "70e80b37886e24a4";
+    const PIPE_HASH: &str = "367c2964b2feb41a";
+    const PIPE_HASH_WITH_POSIX_HOME: &str = "4ac5f1cdb665b4c9";
+    const PIPE_HASH_WITH_WINDOWS_HOME: &str = "0296fa15bf7a583f";
 
     #[test]
     fn the_user_key_is_the_lower_cased_domain_and_name() {
-        assert_eq!(user_key_from(Some(DOMAIN), Some(USER)), r"acme\giuse");
-        assert_eq!(user_key_from(Some("acme"), Some("giuse")), r"acme\giuse");
+        assert_eq!(user_key_from(Some(DOMAIN), Some(USER)), r"acme\alice");
+        assert_eq!(user_key_from(Some("acme"), Some("alice")), r"acme\alice");
     }
 
     #[test]
     fn an_unset_variable_contributes_an_empty_string_and_not_a_substitute() {
         // The server does the same. Anything else — the OS user database, a default —
         // would move the endpoint out from under the peer that did not do it (§5.8).
-        assert_eq!(user_key_from(None, Some("giuse")), r"\giuse");
+        assert_eq!(user_key_from(None, Some("alice")), r"\alice");
         assert_eq!(user_key_from(Some("acme"), None), r"acme\");
         assert_eq!(user_key_from(None, None), r"\");
     }
 
     #[test]
     fn the_pipe_digest_reproduces_the_values_the_server_pinned() {
-        assert_eq!(pipe_suffix(r"acme\giuse", None), PIPE_HASH);
+        assert_eq!(pipe_suffix(r"acme\alice", None), PIPE_HASH);
         assert_eq!(
-            pipe_suffix(r"acme\giuse", Some(POSIX_HOME)),
+            pipe_suffix(r"acme\alice", Some(POSIX_HOME)),
             PIPE_HASH_WITH_POSIX_HOME
         );
         assert_eq!(
-            pipe_suffix(r"acme\giuse", Some(WINDOWS_HOME)),
+            pipe_suffix(r"acme\alice", Some(WINDOWS_HOME)),
             PIPE_HASH_WITH_WINDOWS_HOME
         );
     }
 
     #[test]
     fn the_pipe_name_is_the_prefix_and_sixteen_hex_digits() {
-        let name = pipe_name(r"acme\giuse", None);
+        let name = pipe_name(r"acme\alice", None);
         assert_eq!(name, format!(r"\\.\pipe\handoff-{PIPE_HASH}"));
-        let suffix = pipe_suffix(r"acme\giuse", None);
+        let suffix = pipe_suffix(r"acme\alice", None);
         assert_eq!(suffix.len(), PIPE_SUFFIX_LENGTH);
         assert!(suffix
             .chars()
@@ -602,12 +602,12 @@ mod tests {
     #[test]
     fn a_different_user_gets_a_different_pipe_which_is_what_it_is_for() {
         assert_ne!(
-            pipe_name(r"acme\giuse", None),
+            pipe_name(r"acme\alice", None),
             pipe_name(r"acme\other", None)
         );
         assert_ne!(
-            pipe_name(r"acme\giuse", None),
-            pipe_name(r"acme\giuse", Some(POSIX_HOME))
+            pipe_name(r"acme\alice", None),
+            pipe_name(r"acme\alice", Some(POSIX_HOME))
         );
     }
 
@@ -637,7 +637,7 @@ mod tests {
         let endpoint = resolve_for(
             Platform::Windows,
             Path::new(r"C:\tmp\hh"),
-            r"acme\giuse",
+            r"acme\alice",
             Some(WINDOWS_HOME),
             Path::new(r"C:\tmp"),
         );
@@ -655,7 +655,7 @@ mod tests {
         let endpoint = resolve_for(
             Platform::Posix,
             Path::new(POSIX_HOME),
-            r"acme\giuse",
+            r"acme\alice",
             Some(POSIX_HOME),
             Path::new("/var/tmp"),
         );
@@ -674,7 +674,7 @@ mod tests {
         let endpoint = resolve_for(
             Platform::Posix,
             &deep,
-            r"acme\giuse",
+            r"acme\alice",
             None,
             Path::new("/var/tmp"),
         );
@@ -694,7 +694,7 @@ mod tests {
         let endpoint = resolve_for(
             Platform::Posix,
             &deep,
-            r"acme\giuse",
+            r"acme\alice",
             None,
             Path::new(&format!("/var/{}", "t".repeat(SUN_PATH_MAX_BYTES))),
         );

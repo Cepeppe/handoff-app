@@ -43,7 +43,7 @@ const EXPECTED_IDS: [&str; 16] = [
 ///
 /// `\b` is on the list because JavaScript in `u` mode defines it over ASCII word characters
 /// and the Rust crate over Unicode ones, so the same pattern would cut differently on the
-/// two sides next to a non-ASCII character (`DEVIATIONS.md`, T-006).
+/// two sides next to a non-ASCII character (T-006).
 const FORBIDDEN: [(&str, &str); 8] = [
     (r"\(\?=", "look-ahead"),
     (r"\(\?!", "negative look-ahead"),

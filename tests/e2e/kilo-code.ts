@@ -1,6 +1,6 @@
 /**
  * The real Kilo CLI, run non-interactively against the real server and the built app (T-081,
- * §11.5, §13 M7, and the `DEVIATIONS.md` entry that makes Kilo Code the fifth agent): the Kilo
+ * §11.5, §13 M7, and implementation decision 13, which makes Kilo Code the fifth agent): the Kilo
  * Code twin of `opencode.ts`, whose fork Kilo's CLI is. It answers the same `AgentRun`, so a
  * scenario reads the same whichever agent it ran against.
  *
@@ -29,7 +29,7 @@
  * The entry holds the values the installer writes (`src-tauri/src/install/kilo_code.rs`): a
  * local server whose command is the pinned binary alone, `HANDOFF_AGENT = "kilo-code"`, and a
  * `timeout` in milliseconds that mirrors `HANDOFF_TOOL_TIMEOUT_MS`. The one value the installer
- * does not write is `HANDOFF_HOME`, which isolates the run (`TASKS.md` §0.4 item 4). That the
+ * does not write is `HANDOFF_HOME`, which isolates the run (implementation decision 4). That the
  * real Kilo reads the entry the installer *does* write is the preflight at the bottom of this
  * file.
  *

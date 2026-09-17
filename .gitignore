@@ -31,6 +31,9 @@ tests/ui/results/
 
 # Editors and OS
 .vscode/
+# ...except a fixture that is itself an editor's configuration: the install goldens compare
+# only the files they find, so an ignored one would drop out of the test unnoticed
+!src-tauri/tests/fixtures/**/.vscode/
 .idea/
 .DS_Store
 Thumbs.db

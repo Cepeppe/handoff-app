@@ -3,7 +3,7 @@
  *
  * Every run gets its own temporary root with its own `HANDOFF_HOME` and
  * `HANDOFF_APP_DATA_DIR`, which is what keeps it off the installation the owner uses every
- * day: the pipe name is a digest of the `HANDOFF_HOME` **string** (`TASKS.md` §0.4 item 4),
+ * day: the pipe name is a digest of the `HANDOFF_HOME` **string** (implementation decision 4),
  * the database and the settings follow `HANDOFF_APP_DATA_DIR`, and the runbooks and the
  * token live under the home. Nothing is redirected that does not have to be — in particular
  * **not `HOME` or `USERPROFILE`**: the agent's credentials are there (the T-039 handoff
@@ -89,7 +89,7 @@ export function appEnvironment(workspace: Workspace): Record<string, string> {
  * Spawns the app, retrying once when Smart App Control refuses the binary.
  *
  * On this machine SAC blocks a freshly built executable the first time it is started and
- * lets it through afterwards, at random (`HANDOFF.md`, T-002). From Node the refusal is not
+ * lets it through afterwards, at random. From Node the refusal is not
  * `os error 4551` but `spawn UNKNOWN` with `errno -4094`, which says nothing at all, and an
  * unattended suite that treated it as a real failure would go red on the first run after
  * every build. One retry is the documented remedy and it is the whole of this function.

@@ -1,5 +1,5 @@
-//! The Kilo Code installation adapter (§7.15, INST-01..08, ADPT-04, and the `DEVIATIONS.md`
-//! entry of 2026-09-11 that makes Kilo Code the fifth agent of ADPT-06).
+//! The Kilo Code installation adapter (§7.15, INST-01..08, ADPT-04, and implementation
+//! decision 13, which makes Kilo Code the fifth agent of ADPT-06).
 //!
 //! One modification, one file, OpenCode's shape: Kilo's CLI is a fork of OpenCode, and its VS
 //! Code extension runs the same program as `kilo serve`, so both surfaces read the same
@@ -11,7 +11,7 @@
 //! |---|---|---|
 //! | `~/.config/kilo/kilo.json` (under `$XDG_CONFIG_HOME` when it is set; `kilo.json` in a project) | `mcp.handoff` | the local entry with the fixed launcher path, our two environment variables and the per-server `timeout` |
 //!
-//! Five facts measured against Kilo 7.6.2 decide that shape (T-080's Result block, T-081, and
+//! Five facts measured against Kilo 7.6.2 decide that shape (T-080, T-081, and
 //! `docs/agent-facts.md` of `handoff-mcp`):
 //!
 //! - **There is no hook to register.** Kilo, like OpenCode, has plugins — code inside its own

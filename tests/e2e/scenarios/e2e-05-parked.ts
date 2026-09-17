@@ -16,7 +16,7 @@
  * forbid. The scenario therefore asserts what the design asks for: the block happens, once,
  * and the agent carries the id into its answer. Measured first: the model obeyed the
  * instruction and did not resume, and the run was red against the table's wording.
- * `DEVIATIONS.md` records it and the T-043 task text is corrected.
+ * The scenario asserts what was measured, not the table's wording (T-043).
  *
  * "Exactly one `hook_blocks` row" is the assertion that matters most: SRV-12 is *at most once
  * per handoff per session*, and the primary key of the table is what enforces it. A second

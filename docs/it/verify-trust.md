@@ -1,7 +1,7 @@
 # Verificalo tu
 
-Baton non è open source, quindi non dovresti doverti fidare della sua parola su niente. Tre
-cose che lo riguardano puoi controllarle tu, sul tuo computer:
+Non dovresti doverti fidare della parola di Baton su niente, né leggerne il codice per
+scoprirlo. Tre cose che lo riguardano puoi controllarle tu, sul tuo computer:
 
 1. **Comunica solo in locale.** Il codice di Baton non fa nessuna connessione di rete. Lo
    verifichi qui sotto.

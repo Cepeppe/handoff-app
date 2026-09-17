@@ -1,4 +1,4 @@
-//! The e2e automation channel (DD-33, TECHNICAL-DESIGN §11.5, `TASKS.md` §0.4 item 5).
+//! The e2e automation channel (DD-33, TECHNICAL-DESIGN §11.5, implementation decision 5).
 //!
 //! A second local endpoint, token-protected, through which a test harness plays the person
 //! at the machine: it reads what the window would draw and presses the buttons the user

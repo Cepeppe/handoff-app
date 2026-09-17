@@ -80,8 +80,8 @@ pub mod e2e;
 /// install::cleanup                the superseded server binaries of a Windows update (FM-24)
 /// ```
 ///
-/// Two steps are not on this side of the process, and both are recorded in `DEVIATIONS.md`
-/// under T-040: the **agent scan** and the **registered-path check** are called by the
+/// Two steps are not on this side of the process, a departure from §7.2 made in T-040:
+/// the **agent scan** and the **registered-path check** are called by the
 /// window when it first mounts, because each of them produces a sentence for a person and
 /// at `setup()` no webview is listening — a notice pushed from here is dropped. The **crash
 /// notice** of §7.14 is the third of that family and is asked for in the same place
@@ -122,7 +122,7 @@ pub fn run() {
     let (channel, core) = start_channel(&notifier, databases.registry, databases.store);
 
     // §7.2, UPD-01: the update call site, in the place the sequence puts it. This build
-    // makes no network connection at all (§0.4 item 8) and the function says so.
+    // makes no network connection at all (implementation decision 8) and the function says so.
     tracing::debug!(status = %net::updater::check_if_enabled(), "update check");
 
     // §7.2, FM-24: the binaries a Windows update renamed out of the way, once the sessions

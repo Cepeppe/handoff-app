@@ -64,7 +64,7 @@ const SUSPECTED_RECALL: f64 = 0.9;
 
 /// How much of a planted key an engine has to read for the glyph-leak test to mean anything.
 ///
-/// Measured on this machine rather than chosen: the value in the Completion note of T-048
+/// Measured on the development machine rather than chosen: the value T-048 recorded
 /// is what the two engines actually managed. A floor below what was measured would let the
 /// test go quiet the day OCR stops working; a floor at the measurement would make it a
 /// flake on a slower or different recogniser.
@@ -573,7 +573,7 @@ fn band(image: &RgbaImage, rect: Rect) -> RgbaImage {
 /// the selector, on an image small enough to be instant once the weights are in memory. No
 /// timeout applies, the result is thrown away, and `OcrsOcr::bundled()` is a process-wide
 /// singleton whose `OnceLock` every later call then finds filled. It is the same rule the
-/// stop-hook double needed in `handoff-mcp` (`HANDOFF.md`, 2026-09-08): a peer with a
+/// stop-hook double needed in `handoff-mcp`: a peer with a
 /// real-time budget must meet something that is already warm.
 ///
 /// It stops at the first engine that answers, which is what [`select_and_run`] does too, so
@@ -761,7 +761,7 @@ fn ocr_of_a_redacted_capture_reads_no_secret() {
             "control_floor": OCR_CONTROL_FLOOR,
             "read_after_redaction": leaked,
             // The bundled engine reads a sample, the platform's own every planted key
-            // (`DEVIATIONS.md`, 2026-09-10).
+            //.
             "sampled": limit != usize::MAX,
         }),
     );

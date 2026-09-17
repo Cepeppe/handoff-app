@@ -8,7 +8,7 @@
 //! that could not have happened.
 //!
 //! In this build the page is empty on every machine, because there is nothing to write: the
-//! update check is deferred with the public release (`TASKS.md` §0.4 item 8, T-078). The page
+//! update check is deferred (implementation decision 8, T-078). The page
 //! says so in as many words rather than showing an empty list and letting the user guess
 //! whether that means "nothing happened" or "nothing was recorded".
 //!
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn the_page_is_empty_on_a_machine_that_has_connected_to_nothing() {
-        // Which is every machine in this build (§0.4 item 8): `net::egress` is the only
+        // Which is every machine in this build (implementation decision 8): `net::egress` is the only
         // writer and it has no caller.
         let db = Db::open_in_memory().expect("a database");
         assert!(events_of(&db).expect("the events").is_empty());

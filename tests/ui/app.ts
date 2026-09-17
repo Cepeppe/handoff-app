@@ -36,7 +36,7 @@
  * marked as done unless the scenario is about onboarding. That second one is what the
  * onboarding's own last button writes — pressing the button instead would also answer its
  * autostart question, and that writes the real login items of the machine, which no
- * environment variable redirects (`HANDOFF.md`, T-051).
+ * environment variable redirects.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -59,7 +59,7 @@ export const APP_BINARY =
  * How that build is made.
  *
  * `tauri build` and not `cargo build`, because Tauri chooses between the Vite dev server and
- * the embedded `dist/` by a feature that only `tauri build` turns on (`HANDOFF.md`, T-051): a
+ * the embedded `dist/` by a feature that only `tauri build` turns on: a
  * plain `cargo build` produces a window that looks for `localhost:1420` and draws an error
  * page. `--debug` because it compiles in a fraction of the time and drives the same window;
  * `--features e2e` for the automation channel the setup below writes the settings through,
@@ -242,7 +242,7 @@ export function snapshot(workspace: Pick<UiWorkspace, 'temp'>): string {
  * The product channel's endpoint, from the line the application logs when it binds.
  *
  * Read and never derived: the Windows pipe name is a digest of the user and of `HANDOFF_HOME`
- * (§5.8, `TASKS.md` §0.4 item 4), and computing it a third time here would be one more
+ * (§5.8, implementation decision 4), and computing it a third time here would be one more
  * implementation of the rule to get wrong (`docs/dev/smoke.md` says the same of its script).
  */
 function channelEndpointIn(text: string): string | null {
@@ -298,7 +298,7 @@ export async function startApp(
     );
 
     // Smart App Control refuses a freshly linked executable at random on the development
-    // machine and lets the same bytes through a moment later (`HANDOFF.md`, T-002); through
+    // machine and lets the same bytes through a moment later; through
     // the drivers it arrives as a browser that "failed to start". One more try is the remedy
     // the e2e harness uses for the same reason. Not more: a session that fails twice fails
     // for a reason a third try will not change, and each try can cost the driver's sixty

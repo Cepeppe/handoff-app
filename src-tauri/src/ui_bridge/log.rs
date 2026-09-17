@@ -4,8 +4,8 @@
 //! module of its own rather than three commands in [`super::commands`]:
 //!
 //! - **It reads the database and never the store.** The store keeps the **true** spec in
-//!   memory for the copy button of DET-04; the log keeps the masked one (LOG-02, T-030's
-//!   entry in `DEVIATIONS.md`). A Log page fed from the store would put a secret-treated
+//!   memory for the copy button of DET-04; the log keeps the masked one (LOG-02,
+//!   T-030). A Log page fed from the store would put a secret-treated
 //!   value on a settings page, which is the one thing §7.11 promises it does not hold. The
 //!   window has a connection of its own ([`super::Ui::with_db`]) and that is what is used.
 //! - **It lists closed handoffs.** `log::handoffs::list_final` is documented as "the Log

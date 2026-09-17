@@ -2,7 +2,7 @@
   Settings → Updates (§7.6, §7.13, UPD-01, UPD-02).
 
   One line, because there is one fact: this build never checks. UPD-01 and UPD-02 are
-  suspended with the public release (`TASKS.md` §0.4 item 8) and the update domain of OI-12 is
+  suspended with the update check (implementation decision 8) and the update domain of OI-12 is
   not decided, so there is no setting to offer and nothing to switch off — a "check for
   updates" box that did nothing either way would be worse than the sentence.
 

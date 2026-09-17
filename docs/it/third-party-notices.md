@@ -1,7 +1,7 @@
 # Software di terze parti
 
-Baton è software proprietario. È costruito con software scritto da altri, e lo distribuisce,
-sotto le licenze dei rispettivi autori. Questa pagina lo elenca.
+Baton è software open source con licenza MIT (vedi `LICENSE`). È costruito con software scritto
+da altri, e lo distribuisce, sotto le licenze dei rispettivi autori. Questa pagina lo elenca.
 
 ## Il server MCP: `handoff-mcp`
 
@@ -12,7 +12,7 @@ quindi contiene anche:
 - **Node.js** v24.19.0, sotto licenza MIT. Node.js a sua volta include componenti con le loro
   licenze — V8, ICU, OpenSSL, libuv e altri — i cui testi sono nel file `LICENSE` di Node.js
   ([nodejs/node](https://github.com/nodejs/node/blob/main/LICENSE)).
-- questi pacchetti npm, come in `handoff-mcp` 0.2.0, la versione che Baton fissa:
+- questi pacchetti npm, come in `handoff-mcp` 1.7.0, la versione che Baton fissa:
 
 | Pacchetto | Versione | Licenza |
 |---|---|---|
@@ -27,6 +27,9 @@ quindi contiene anche:
 
 Anche l'elenco dei formati di segreti in `patterns\` viene da `handoff-mcp`, sotto la stessa
 licenza MIT.
+
+Dalla release successiva alla 1.7.0, `handoff-mcp` pubblica i testi delle licenze di Node.js e
+di questi pacchetti accanto a ogni eseguibile, come `handoff-mcp-<versione>-win32-x64-notices.md`.
 
 ## I modelli di riconoscimento del testo di `ocrs`
 

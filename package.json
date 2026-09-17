@@ -3,7 +3,7 @@
   "version": "1.7.0",
   "private": true,
   "description": "Frontend of Baton, the contextual handoff overlay",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "Cepeppe",
   "type": "module",
   "engines": {

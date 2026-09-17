@@ -9,7 +9,7 @@
 //! # Why this engine and not Tesseract
 //!
 //! OCR-03 named Tesseract until 2026-09-09 and the owner replaced it with `ocrs` on that
-//! date, from a survey recorded in `DEVIATIONS.md`. The short reason is that no published
+//! date, after a survey of the alternatives (T-047). The short reason is that no published
 //! crate links Tesseract statically from a vendored source: the four that build it download
 //! Leptonica and Tesseract from the network at build time through `reqwest` — which
 //! `deny.toml` bans outright — the `-sys` crates want a system install, and the one crate

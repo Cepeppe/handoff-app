@@ -696,7 +696,7 @@ export interface NetworkEventView {
 /**
  * One row of Settings → Runbooks (§7.12).
  *
- * Two things that look like defects and are not (`DEVIATIONS.md`, T-044): a step text may
+ * Two things that look like defects and are not (T-044): a step text may
  * carry `[treated as secret: <kind>]` where the ingress detector matched outside a declared
  * value, and `lastRunFailedAt` is never unmarked, so it can sit beside a newer
  * `lastVerifiedAt` — a run that failed and was then corrected.

@@ -36,7 +36,7 @@
 //! - `image` is the one payload that is in no public schema. The published outcome is
 //!   closed and carries no pixels, so a screenshot sent as an image travels beside its
 //!   outcome, on the two messages that can carry one — `handoff.event` and the snapshot of
-//!   `handoff.resume` — and nowhere else (§6.6, `DEVIATIONS.md`).
+//!   `handoff.resume` — and nowhere else (§6.6).
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -385,7 +385,7 @@ pub struct HandoffResumeParams {
     /// Which handoff.
     pub handoff_id: String,
     /// Optional and redundant: the connection already identifies the session, so the app
-    /// may ignore it (`DEVIATIONS.md`, T-007).
+    /// may ignore it (T-007).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_ref: Option<String>,
 }

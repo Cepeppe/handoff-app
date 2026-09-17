@@ -28,7 +28,7 @@
  * any kind, because Cursor reads none and the installer writes none. A scenario's `toolTimeoutMs`
  * is therefore not passed on: the row's 60 000 ms, which is the CLI's own cut, puts the heartbeat
  * at the 50 s floor, exactly as it does for a person using Cursor. The one value the installer
- * does not write is `HANDOFF_HOME`, which isolates the run (`TASKS.md` §0.4 item 4). That the
+ * does not write is `HANDOFF_HOME`, which isolates the run (implementation decision 4). That the
  * real CLI reads the file the installer *does* write is the preflight at the bottom of this file.
  *
  * `agent -p --output-format stream-json` prints one JSON event per line: `system`/`init`, the

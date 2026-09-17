@@ -11,8 +11,8 @@
 //!   it and nothing outside this application writes it.
 //!
 //! Both roots can be moved by an environment variable, and only for tests: `HANDOFF_HOME`
-//! (§5.12, and the e2e isolation of `TASKS.md` §0.4 item 4) and `HANDOFF_APP_DATA_DIR`
-//! (§0.4 item 4). Nothing in production sets either one. The rule for reading them is the
+//! (§5.12, and the e2e isolation of implementation decision 4) and `HANDOFF_APP_DATA_DIR`
+//! (implementation decision 4). Nothing in production sets either one. The rule for reading them is the
 //! server's rule, copied deliberately: the value is trimmed and a blank value counts as
 //! unset, so the two peers can never disagree about which instance is being addressed.
 //!
@@ -56,7 +56,7 @@ pub fn handoff_home() -> PathBuf {
 /// The value of `HANDOFF_HOME`, trimmed, or nothing when it is unset or blank.
 ///
 /// The Windows pipe name mixes it in when it is set, and the server derives the same name
-/// from the same raw value (§0.4 item 4): what the digest eats is this string, not the
+/// from the same raw value (implementation decision 4): what the digest eats is this string, not the
 /// resolved folder, so the two peers cannot disagree about which instance is addressed.
 #[must_use]
 pub fn handoff_home_override() -> Option<String> {

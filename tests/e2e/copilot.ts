@@ -25,7 +25,7 @@
  *
  * The entry is the one the installer writes (`src-tauri/src/install/copilot.rs`), read from the
  * golden file of the Rust suite with three values changed: the pinned binary as the command, the
- * run's `HANDOFF_HOME`, which isolates it (`TASKS.md` §0.4 item 4), and the scenario's tool
+ * run's `HANDOFF_HOME`, which isolates it (implementation decision 4), and the scenario's tool
  * timeout as both `timeout` and `HANDOFF_TOOL_TIMEOUT_MS` — the CLI honours the entry's
  * `timeout` and cancels a call past it, so a scenario's `toolTimeoutMs` is passed on, as it is
  * for Codex. That the real CLI reads the golden file itself is the preflight at the bottom.
