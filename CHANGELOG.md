@@ -21,6 +21,8 @@ Baton carries is `server.lock.json`.
   of a question or a failure sent it to the agent in full. The value is now secret-treated
   whenever any of its items matched, one rule for the overlay, the outcome and the runbook
   writer (`SecretTreated::is_in_value`).
+- `rustls` 0.23.45, for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285):
+  TLS 1.3 handshake messages were accepted across a change of encryption level.
 
 ### Changed
 
