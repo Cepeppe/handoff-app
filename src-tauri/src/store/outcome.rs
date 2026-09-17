@@ -19,8 +19,8 @@
 //! # The pixels are not in here
 //!
 //! `screenshot.image_attached` is all the outcome says about an image; the bytes travel
-//! beside it on `handoff.event` and on the `handoff.resume` snapshot (`DEVIATIONS.md`,
-//! T-020). The app sets `image_attached` from the mode alone: whether an image block is
+//! beside it on `handoff.event` and on the `handoff.resume` snapshot
+//! (T-020). The app sets `image_attached` from the mode alone: whether an image block is
 //! actually built is the server's decision, gated on `images_in_results`, and the preview
 //! only ever offers "Send image" to a session whose row allows it (PREV-04, FM-05).
 
@@ -399,13 +399,20 @@ mod tests {
     }
 
     fn handoff() -> Handoff {
-        Handoff::opened(
-            "hf_7k3m9p2q4r".to_owned(),
+        opened(
             spec(),
             vec![SecretTreated {
                 location: "values.api_key".to_owned(),
                 kind: "api_key".to_owned(),
             }],
+        )
+    }
+
+    fn opened(spec: HandoffSpec, secret_treated: Vec<SecretTreated>) -> Handoff {
+        Handoff::opened(
+            "hf_7k3m9p2q4r".to_owned(),
+            spec,
+            secret_treated,
             &Opener {
                 session_ref: "ses_00000001".to_owned(),
                 agent_id: Some("claude-code".to_owned()),
@@ -543,6 +550,43 @@ mod tests {
         assert_eq!(context.step.warning.as_deref(), Some("do not press Delete"));
         assert_eq!(
             context.step_values.get("api_key"),
+            Some(&SpecValue::One(CONTEXT_SECRET_PLACEHOLDER.to_owned()))
+        );
+        assert_eq!(
+            context.step_values.get("endpoint_url"),
+            Some(&SpecValue::One("https://api.example.test/hook".to_owned()))
+        );
+    }
+
+    #[test]
+    fn an_array_one_of_whose_items_is_a_secret_is_withheld_whole_from_the_context() {
+        // The server reports an array one item at a time (`values.events[0]`, §4.7.5).
+        let mut planted = spec();
+        planted.values.insert(
+            "events".to_owned(),
+            SpecValue::Many(vec![
+                "planted-secret-item".to_owned(),
+                "charge.refunded".to_owned(),
+            ]),
+        );
+        planted.steps[0].values = Some(vec!["endpoint_url".to_owned(), "events".to_owned()]);
+        let handoff = opened(
+            planted,
+            vec![SecretTreated {
+                location: "values.events[0]".to_owned(),
+                kind: "api_key".to_owned(),
+            }],
+        );
+
+        let outcome = build(
+            &handoff,
+            OutcomeStatus::Question,
+            Some("which events?".to_owned()),
+            None,
+        );
+        let context = outcome.context.expect("a question carries context");
+        assert_eq!(
+            context.step_values.get("events"),
             Some(&SpecValue::One(CONTEXT_SECRET_PLACEHOLDER.to_owned()))
         );
         assert_eq!(

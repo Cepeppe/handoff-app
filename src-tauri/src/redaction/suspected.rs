@@ -35,10 +35,8 @@
 //! user cannot unlock it (DET-01).
 //!
 //! The exemption is built from the spec itself ([`Exemptions::of_spec`]) rather than from
-//! the `secret_treated` list an outcome carries, for one reason: an array value is reported
-//! one index at a time (`values.events[0]`, §4.7.5) and the two places that compare a
-//! location to `values.<name>` do not recognise it (`> Note from T-044`). Scanning the
-//! strings here answers the same question without depending on that.
+//! the `secret_treated` list the server sends: scanning the strings here answers the question
+//! from the very values it exempts, whatever that list says.
 //!
 //! # What never leaves this module
 //!
@@ -498,7 +496,7 @@ mod tests {
         // R-07 in its most ordinary shape: the page the user is being guided through.
         for ordinary in [
             "dashboard.stripe.com/settings/webhooks",
-            "Users/giuse/project/config.json",
+            "Users/alice/project/config.json",
             "internationalisation-guidelines",
         ] {
             assert!(!is_mixed(ordinary), "{ordinary} counts as mixed");

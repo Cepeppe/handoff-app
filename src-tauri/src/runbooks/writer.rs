@@ -31,7 +31,7 @@
 //!   the leak.
 //! - **the schema.** The document is validated against the vendored
 //!   `handoff-runbook.v1.schema.json` before it is written, which is what keeps the promise
-//!   that a runbook always converts back into a spec that validates (`> Note from T-005`):
+//!   that a runbook always converts back into a spec that validates (T-005):
 //!   substitution can lengthen a text past `maxLength`, and several rounds can push the
 //!   executed sequence past fifty steps.
 //! - **nothing was executed.** A handoff nobody confirmed a step in has no recipe in it.
@@ -310,7 +310,7 @@ impl RunbookWriter {
         trust: RunbookTrust,
         now: &Timestamp,
     ) -> Runbook {
-        let filled = placeholders::apply(spec, executed, &|name| secret_treated(handoff, name));
+        let filled = placeholders::apply(spec, executed, &|name| handoff.is_secret_value(name));
         Runbook {
             runbook_version: 1,
             id: new_runbook_id(),
@@ -409,23 +409,6 @@ impl RunbookSink for RunbookWriter {
             })
             .map_err(|error| error.to_string())
     }
-}
-
-/// Whether the ingress detector matched anything inside the value `name` (DET-04, §4.5.2).
-///
-/// [`Handoff::is_secret_value`] answers this for a single-valued entry, whose location the
-/// server reports as exactly `values.<name>`. An array's items are reported one index at a
-/// time (`values.<name>[0]`, §4.7.5) and that helper's equality does not see them, while
-/// §4.5.2 calls the **value** secret-treated however many of its items matched — its
-/// description must say nothing about it either way. Hence the prefix, which covers both
-/// shapes; nothing here changes what the helper answers for its own callers.
-fn secret_treated(handoff: &Handoff, name: &str) -> bool {
-    let exact = format!("values.{name}");
-    let indexed = format!("{exact}[");
-    handoff
-        .secret_treated
-        .iter()
-        .any(|treated| treated.location == exact || treated.location.starts_with(&indexed))
 }
 
 /// `handoff-app` and its version, as every file it writes records them.

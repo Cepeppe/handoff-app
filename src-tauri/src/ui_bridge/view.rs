@@ -783,16 +783,14 @@ fn chips_of(snapshot: &HandoffSnapshot, names: &[String]) -> Vec<ValueChipView> 
 
 /// The family the certain detector reported for a top-level value, if it reported one.
 ///
-/// The locations the server sends are display paths (`values.api_key`, §4.7.5), so a name is
-/// matched against exactly that prefix — the same rule
-/// [`crate::store::Handoff::is_secret_value`] applies, which cannot be reused here because a
-/// snapshot is not a handoff.
+/// The same rule as [`crate::store::Handoff::is_secret_value`], which cannot be reused here
+/// because a snapshot is not a handoff: an array one of whose items matched is masked whole,
+/// under the family of the first item reported.
 fn secret_kind(snapshot: &HandoffSnapshot, name: &str) -> Option<String> {
-    let location = format!("values.{name}");
     snapshot
         .secret_treated
         .iter()
-        .find(|treated| treated.location == location)
+        .find(|treated| treated.is_in_value(name))
         .map(|treated| treated.kind.clone())
 }
 
@@ -1236,6 +1234,40 @@ mod tests {
         assert!(
             !serialised.contains("sk_live_0123456789abcdef"),
             "the true value reached the webview"
+        );
+    }
+
+    #[test]
+    fn an_array_one_of_whose_items_is_a_secret_crosses_masked_whole() {
+        // The server reports an array one item at a time (`values.events[1]`, §4.7.5).
+        let mut it = snapshot();
+        it.values.insert(
+            "events".to_owned(),
+            SpecValue::Many(vec![
+                "payment.succeeded".to_owned(),
+                "planted-secret-item".to_owned(),
+            ]),
+        );
+        it.secret_treated.push(SecretTreated {
+            location: "values.events[1]".to_owned(),
+            kind: "webhook_secret".to_owned(),
+        });
+        let chips = view(&it).step.expect("a step").values;
+        let events = chips
+            .iter()
+            .find(|chip| chip.name == "events")
+            .expect("the events chip");
+
+        assert!(events.masked);
+        assert!(events.list);
+        assert_eq!(events.kind.as_deref(), Some("webhook_secret"));
+        assert_eq!(events.items, vec![MASK.to_owned(), MASK.to_owned()]);
+
+        let serialised = serde_json::to_string(&chips).expect("serialisable");
+        assert!(
+            !serialised.contains("planted-secret-item")
+                && !serialised.contains("payment.succeeded"),
+            "an item of the secret-treated array reached the webview"
         );
     }
 

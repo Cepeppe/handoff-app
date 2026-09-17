@@ -152,6 +152,22 @@ pub struct SecretTreated {
     pub kind: String,
 }
 
+impl SecretTreated {
+    /// Whether it was found inside the top-level value `name` (DET-04, §4.5.2).
+    ///
+    /// The server reports a single-valued entry as `values.<name>` and an array one item at a
+    /// time, as `values.<name>[<index>]` (§4.7.5). §4.5.2 calls the **value** secret-treated
+    /// however many of its items matched, so both shapes answer yes, and `name` has to be
+    /// followed by the end of the location or by `[` so that `api` never matches `api_key`.
+    #[must_use]
+    pub fn is_in_value(&self, name: &str) -> bool {
+        self.location
+            .strip_prefix("values.")
+            .and_then(|path| path.strip_prefix(name))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('['))
+    }
+}
+
 /// The verification report, once one exists (VER-05).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

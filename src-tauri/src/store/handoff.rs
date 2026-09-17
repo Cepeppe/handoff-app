@@ -23,7 +23,7 @@
 //! [`Queued`] carries the base64 image of a screenshot the user sent while no call was
 //! attached, because the published outcome is closed and has nowhere to put it: the bytes
 //! travel beside the outcome on `handoff.event` and on the `handoff.resume` snapshot
-//! (`DEVIATIONS.md`, T-020). They are `serde(skip)`, so nothing of them reaches
+//! (T-020). They are `serde(skip)`, so nothing of them reaches
 //! `state_json` — LOG-03 allows the log a hash and never a pixel.
 
 use std::collections::VecDeque;
@@ -551,14 +551,13 @@ impl Handoff {
 
     /// Whether a value of the spec was treated as a secret at ingress (DET-04).
     ///
-    /// The locations the server reports are display paths (`values.api_key`, §4.7.5), so a
-    /// top-level value name is matched against exactly that prefix.
+    /// It was when the detector matched the value whole, and when it matched any item of an
+    /// array ([`SecretTreated::is_in_value`]).
     #[must_use]
     pub fn is_secret_value(&self, name: &str) -> bool {
-        let location = format!("values.{name}");
         self.secret_treated
             .iter()
-            .any(|treated| treated.location == location)
+            .any(|treated| treated.is_in_value(name))
     }
 
     /// Whether the handoff has reached one of the five final states.
@@ -752,6 +751,21 @@ mod tests {
         assert!(!handoff.is_secret_value("endpoint_url"));
         // The prefix has to match exactly: a step's value list is not a location.
         assert!(!handoff.is_secret_value("values.api_key"));
+        // A name is a whole segment, never the beginning of a longer one.
+        assert!(!handoff.is_secret_value("api"));
+    }
+
+    #[test]
+    fn an_array_one_of_whose_items_matched_is_a_secret_value() {
+        // The server reports an array one item at a time (`values.events[1]`, §4.7.5), and
+        // §4.5.2 calls the whole value secret-treated.
+        let mut handoff = handoff();
+        handoff.secret_treated = vec![SecretTreated {
+            location: "values.events[1]".to_owned(),
+            kind: "webhook_secret".to_owned(),
+        }];
+        assert!(handoff.is_secret_value("events"));
+        assert!(!handoff.is_secret_value("event"));
     }
 
     #[test]
