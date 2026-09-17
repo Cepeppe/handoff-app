@@ -10,18 +10,29 @@
   The reason is the one PRIN-04 states: a screenshot is the only thing this application does
   that reads the user's screen, so it happens because somebody said which part of it, now.
 
-  The same component is used by the action bar and by the collapsed bar, so the two cannot
-  drift into two different popovers.
+  The same component is used by the panel's action bar, the expanded view's and the collapsed
+  bar, so the three cannot drift into three different popovers. `variant` is only the shape of
+  the trigger: the icon-over-label tool of the panel, the ordinary button of the expanded row,
+  or the icon-only square of the bar, where an `aria-label` carries the name the label would.
+
+  **The bar opens the panel first.** The window is 56 pixels tall there and the popover opens
+  *above* its button, so it would be drawn outside the window and clipped away. Pressing
+  Screenshot on the bar therefore expands the panel and opens the menu in it — the same two
+  choices, in a window tall enough to show them.
 -->
 <script lang="ts">
-  import { startCapture } from '../capture.svelte';
+  import { onMount } from 'svelte';
+
+  import { startCapture, takeCaptureChoiceRequest } from '../capture.svelte';
   import { bridge } from '../bridge';
   import { t } from '../i18n';
   import type { CaptureChoice } from '../model';
+  import Icon from './Icon.svelte';
 
   const {
     handoffId,
-    onchoose,
+    variant = 'tool',
+    onopen,
   }: {
     /**
      * The tab the capture belongs to.
@@ -32,7 +43,15 @@
      * would send the picture to whichever tab the user had switched to meanwhile.
      */
     handoffId: string;
-    onchoose?: () => void;
+    /** `tool` in the panel, `button` in the expanded row, `icon` on the collapsed bar. */
+    variant?: 'tool' | 'button' | 'icon';
+    /**
+     * The press has to be answered somewhere else first (the collapsed bar).
+     *
+     * It runs *before* the menu opens, and the menu is then drawn wherever this component
+     * ends up — which for the bar is the panel it has just opened.
+     */
+    onopen?: () => void;
   } = $props();
 
   let open = $state(false);
@@ -43,6 +62,7 @@
       open = false;
       return;
     }
+    onopen?.();
     // Read every time it opens rather than once at mount: the highlight is a fact about
     // the last capture, and the panel outlives many of them.
     last = await bridge()
@@ -54,9 +74,17 @@
 
   function choose(choice: CaptureChoice): void {
     open = false;
-    onchoose?.();
     void startCapture(choice, handoffId);
   }
+
+  onMount(() => {
+    // The press happened on the collapsed bar, whose button is already gone with the bar:
+    // this is the one that shows the choices (`capture.svelte.ts` says why). The icon-only
+    // variant never claims the request — it is the bar's own button, and it is what asked.
+    if (variant !== 'icon' && takeCaptureChoiceRequest()) {
+      void toggle();
+    }
+  });
 </script>
 
 <div
@@ -70,12 +98,15 @@
 >
   <button
     type="button"
-    class="button"
+    class={variant === 'tool' ? 'tool' : variant === 'icon' ? 'icon-button' : 'button'}
     aria-haspopup="menu"
     aria-expanded={open}
+    aria-label={variant === 'icon' ? t('action.screenshot') : undefined}
+    title={t('action.screenshot')}
     onclick={() => void toggle()}
   >
-    {t('action.screenshot')}
+    <Icon name="camera" size={variant === 'tool' ? 17 : 16} />
+    {#if variant !== 'icon'}{t('action.screenshot')}{/if}
   </button>
 
   {#if open}

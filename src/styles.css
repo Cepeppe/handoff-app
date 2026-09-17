@@ -3,41 +3,77 @@
  *
  * Every component is style-free on purpose: the webview CSP is `default-src 'self'` with
  * no `unsafe-inline`, so a stylesheet injected into the document at runtime would be
- * refused, and one file keeps the panel coherent while a dozen views are added to it.
+ * refused, and one file keeps the panel coherent while a dozen views are added to it. For
+ * the same reason there is no `style="…"` attribute anywhere in the components, no icon
+ * font and no remote asset: the icons are inline SVG (`overlay/Icon.svelte`) and the only
+ * image the window loads is the application's own mark, from its own origin.
  *
- * Two rules the design fixes and this file must not drift from:
+ * Three rules the design fixes and this file must not drift from:
  *
- * - the window is a narrow panel of fixed width whose height follows the content (WIN-02);
- *   nothing here may introduce a horizontal scrollbar or a fixed height.
+ * - the window has **one width at a time**, fixed by the layout in force (WIN-02, §7.6):
+ *   360 for the panel and the collapsed bar, 520 for the settings, 720 for the expanded
+ *   view. Nothing here may introduce a horizontal scrollbar or a fixed height at any of
+ *   them — a long value wraps inside its own box rather than widening the window.
  * - there is no percentage progress bar and no estimated time anywhere (GUIDE-05, PRIN-07).
  *   Progress is said in words — "step 2 of 4" — and a test fails the build if a progress
  *   element or a progress role ever appears in the frontend sources.
+ * - **nothing is revealed by hovering.** Every action a screen offers is on screen before
+ *   the pointer arrives, because a keyboard and a touch screen have no hover to reveal it
+ *   with. Hover and `:active` change colour and nothing else.
  *
  * Colours follow the operating system through `color-scheme` and `light-dark()`, so a
- * user who switches theme sees the panel switch with everything else.
+ * user who switches theme sees the window switch with everything else. There is no theme
+ * class and no theme switch: the desktop already has one.
+ *
+ * The frame is the operating system's: the window has no rounded corners and no shadow of
+ * its own (`decorations: false` is about the title bar, not about pretending to float).
  */
 
 :root {
   color-scheme: light dark;
 
-  /* The system UI font, so the panel reads like part of the desktop rather than a page. */
+  /*
+   * The system UI face, so the window reads like part of the desktop rather than a page.
+   * `Segoe UI Variable Text` is the optical size Windows 11 uses for body text and is what
+   * the rest of the shell is set in; `system-ui` carries every other platform.
+   */
   font-family:
+    'Segoe UI Variable Text',
     system-ui,
     -apple-system,
     'Segoe UI',
     sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
 
-  --surface: light-dark(#ffffff, #1c1c1e);
-  --surface-raised: light-dark(#f2f2f7, #2c2c2e);
-  --text: light-dark(#1c1c1e, #f2f2f7);
-  --text-muted: light-dark(#6b6b70, #a1a1a6);
-  --border: light-dark(#d8d8dc, #3a3a3c);
-  --accent: light-dark(#0a5bd3, #4c9aff);
-  --warning: light-dark(#8a5300, #e0a44a);
-  --warning-surface: light-dark(#fff4e0, #3a2c14);
-  --danger: light-dark(#a3161b, #ff6b6b);
+  /* Values, ids, paths and diffs: things with columns, or things to compare character by character. */
+  --font-mono: 'Cascadia Mono', ui-monospace, Consolas, monospace;
+
+  --ground: light-dark(#f3f2ed, #131312); /* the window's background */
+  --surface: light-dark(#ffffff, #1c1c1a); /* cards, action bar, main column */
+  --sunken: light-dark(#edece6, #242422); /* fields, segmented controls, keycaps */
+  --border: light-dark(#e2e0d8, #30302d);
+  --border-strong: light-dark(#d0cdc3, #45453f); /* button borders, dashed outlines */
+  --text: light-dark(#1a1a17, #f0efe9);
+  --text-muted: light-dark(#625f57, #a6a49b);
+  --accent: light-dark(#2f4fd8, #8fa6ff);
+  --accent-press: light-dark(#2340b8, #a9baff);
+  --on-accent: light-dark(#ffffff, #0d1333);
+  --accent-soft: light-dark(#e8ecfc, #232b4d);
+  --accent-text: light-dark(#2743b8, #b0c0ff);
+  --warning: light-dark(#6b4400, #f1cb7c); /* text */
+  --warning-icon: light-dark(#a86b00, #e3aa45);
+  --warning-surface: light-dark(#fcf1d8, #2a2112);
+  --warning-border: light-dark(#eed18f, #4a3814);
+  --danger: light-dark(#b42318, #ff8b7b);
+  --danger-surface: light-dark(#fcebe9, #3a1d19);
+  --ok: light-dark(#1f7a4d, #6fd39e);
+  --ctrl-hover: light-dark(rgb(26 26 23 / 7%), rgb(240 239 233 / 8%));
+  --ctrl-press: light-dark(rgb(26 26 23 / 13%), rgb(240 239 233 / 15%));
+  --shadow-lift: 0 1px 2px light-dark(rgb(20 20 15 / 7%), rgb(0 0 0 / 40%));
+  --shadow-pop:
+    0 1px 2px light-dark(rgb(20 20 15 / 8%), rgb(0 0 0 / 40%)),
+    0 10px 28px light-dark(rgb(20 20 15 / 14%), rgb(0 0 0 / 55%));
   --space: 12px;
 }
 
@@ -47,10 +83,19 @@
 
 body {
   margin: 0;
-  background: var(--surface);
+  background: var(--ground);
   color: var(--text);
-  /* The panel is exactly as wide as the window; the height is driven from the content. */
+  /* The window is exactly as wide as the layout says; the height is driven from the content. */
   overflow-x: hidden;
+}
+
+/*
+ * One outline for everything that can be reached with a keyboard, and it is never removed.
+ * `:focus-visible` and not `:focus`, so a pointer press does not leave a ring behind.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .app {
@@ -59,40 +104,144 @@ body {
 }
 
 /*
- * The drag handle. The window has no decorations (`decorations: false`), so this strip is
- * the only way to move it; `data-tauri-drag-region` on it is what makes the gesture reach
- * the window manager.
+ * The title bar: the drag handle of WIN-02, the mark, and the three window controls.
+ *
+ * The window has no decorations, so this strip is the only way to move it and the only place
+ * the system buttons could be; `data-tauri-drag-region` on it is what makes the gesture reach
+ * the window manager, and it is deliberately **not** on the buttons.
  */
 .header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px var(--space);
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0 6px 0 14px;
+  background: var(--ground);
   cursor: default;
   user-select: none;
 }
 
-.title {
+.brand-mark {
+  flex-shrink: 0;
+  border-radius: 5px;
+}
+
+.brand-name {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
+.brand-count {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The drag region has to reach the right edge, so the gap between the two halves is one. */
+.header-gap {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+.win-controls,
+.collapsed-window {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.win-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.win-button:hover {
+  color: var(--text);
+  background: var(--ctrl-hover);
+}
+
+.win-button:active {
+  background: var(--ctrl-press);
+}
+
+/*
+ * An unavailable control is dimmed and left where it is, with a `title` that says why.
+ * `aria-disabled` and not `disabled`: a disabled button is out of the tab order and its
+ * tooltip is never shown, and the tooltip is the whole explanation.
+ */
+.win-button[aria-disabled='true'] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.win-button[aria-disabled='true']:hover {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+/* The bar has 360 pixels for everything, so its two window controls are narrower. */
+.win-button-narrow {
+  width: 28px;
+}
+
 .content {
-  padding: var(--space);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  min-width: 0;
+  padding: 4px var(--space) var(--space);
+}
+
+/* The overlay and the settings lay themselves out: their lists are columns of their own. */
+.view[data-view='overlay'],
+.view-settings {
+  gap: 0;
+  padding: 0;
 }
 
 .view h1 {
-  margin: 0 0 4px;
-  font-size: 15px;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
+/*
+ * No blanket colour here. A paragraph is muted where it is *aside* — a location, a hint, a
+ * piece of metadata — and every one of those says so itself; the step text is the sentence
+ * the user is following, and a rule this broad was quietly graying it out.
+ */
 .view p {
   margin: 0;
-  color: var(--text-muted);
+}
+
+/* The column the content of a view is read in: the panel's, and the expanded view's. */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  min-width: 0;
+  padding: 2px var(--space) var(--space);
 }
 
 /* The temporary switcher of the skeleton; it is compiled out of a release build. */
@@ -100,8 +249,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 6px var(--space);
-  border-bottom: 1px dashed var(--border);
+  padding: 4px var(--space) 8px;
 }
 
 .dev-menu-item {
@@ -111,49 +259,248 @@ body {
   color: var(--text-muted);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
 .dev-menu-item[aria-current='page'] {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 
 /*
- * The overlay: the tab strip, the step and the sheets (§7.6).
+ * The vocabulary every screen is built from: an icon, a button, a card, a section label.
+ */
+
+.icon {
+  flex-shrink: 0;
+}
+
+.icon-filled {
+  fill: currentcolor;
+  stroke: none;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--sunken);
+}
+
+.button:active {
+  background: var(--ctrl-press);
+}
+
+/*
+ * A button that cannot be pressed keeps its shape and loses its colour: Send with an empty
+ * field is still where it will be, and it is still readable — a washed-out primary with
+ * white text on it is a button nobody can read *and* nobody can press.
+ */
+.button:disabled {
+  color: var(--text-muted);
+  background: var(--sunken);
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+.button-primary {
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.button-primary:hover:not(:disabled),
+.button-primary:active:not(:disabled) {
+  background: var(--accent-press);
+  border-color: var(--accent-press);
+}
+
+.button-quiet {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.button-quiet:hover {
+  color: var(--text);
+  background: var(--ctrl-hover);
+}
+
+/* A control inside a sentence: **Change** on the linked request (FM-20). */
+.button-link {
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--accent-text);
+}
+
+.button-link:hover {
+  color: var(--accent-press);
+}
+
+.button-small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* An action whose name is in its `aria-label`: the value rows, the collapsed bar. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  color: var(--text);
+  background: var(--ctrl-hover);
+}
+
+.icon-button:active {
+  background: var(--ctrl-press);
+}
+
+/* Small and bordered: the buttons of a waiting entry, which sit inside a list row. */
+.chip-button {
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chip-button:hover {
+  background: var(--sunken);
+}
+
+.chip-button-quiet {
+  color: var(--text-muted);
+}
+
+/* A key as it is printed on the keyboard (`keys.ts`): the shortcut, the sheet's hint. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+.keycaps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/*
+ * The overlay: the handoff list, the step and the sheets (§7.6).
  *
- * Everything here is laid out down the panel, never across it: the window is 360 px wide by
- * WIN-02 and a row that does not fit becomes a horizontal scrollbar, which is the one thing
- * the panel must never grow. Long values and URLs therefore wrap inside their own box
- * rather than widening it.
+ * In the narrow panel everything is laid out down the window and never across it: a row that
+ * does not fit becomes a horizontal scrollbar, which is the one thing the window must never
+ * grow.
  */
 
 .tab-strip {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
-  margin-bottom: var(--space);
+  padding: 0 var(--space) 10px;
 }
 
 .tab {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  padding: 3px 8px;
+  height: 28px;
+  padding: 0 9px;
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
+  white-space: nowrap;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--ctrl-hover);
 }
 
 .tab[aria-current='true'] {
   color: var(--text);
-  border-color: var(--accent);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-lift);
+}
+
+.tab-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
 }
 
 .tab-label {
@@ -163,296 +510,676 @@ body {
 }
 
 .tab-badge {
-  padding: 0 5px;
-  font-size: 11px;
+  flex-shrink: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--surface);
+  line-height: 16px;
+  text-align: center;
+  color: var(--on-accent);
   background: var(--accent);
-  border-radius: 999px;
+  border-radius: 8px;
 }
 
-.tab-orphan .tab-label {
+.tab-orphan .tab-label,
+.waiting-orphan .waiting-goal,
+.rail-orphan {
   font-style: italic;
 }
 
+/*
+ * The waiting group of §7.6: parked handoffs and orphan outcomes, with the three things
+ * SRV-23 lets the user do from the list itself.
+ *
+ * It is a `<details>` and never a floating popover: the window's height follows its content
+ * (WIN-02), so a list drawn over the panel would open into a window too short to hold it.
+ * Opening it takes a line of its own and makes the window taller, which is what it should do.
+ */
 .waiting-group {
-  margin-bottom: var(--space);
-  font-size: 12px;
-  color: var(--text-muted);
+  min-width: 0;
 }
 
-.waiting-group summary {
+.waiting-group[open] {
+  flex: 1 0 100%;
+}
+
+.waiting-group > summary {
+  list-style: none;
+}
+
+.waiting-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.waiting-group[open] > summary .icon {
+  transform: rotate(180deg);
+}
+
+.waiting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.waiting-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.waiting-entry:hover {
+  background: var(--ctrl-hover);
+}
+
+.waiting-title {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
   cursor: pointer;
+}
+
+.waiting-goal {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waiting-title[aria-current='true'] .waiting-goal {
+  font-weight: 600;
+}
+
+.waiting-meta {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.waiting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* The goal of the tab, and where the work is to be done. */
+.tab-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.goal {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.location,
+.resumed-from,
+.request-text,
+.plain-url,
+.verify-detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.request-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/*
+ * The step card. In the expanded view the whole column is already the surface colour, so the
+ * card is dropped and only the spacing is kept.
+ */
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  min-width: 0;
+}
+
+.step-card {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-head-gap {
+  flex: 1 1 auto;
+}
+
+/*
+ * The counter of GUIDE-01. It is words in a pill and not a bar: GUIDE-05 and PRIN-07 forbid
+ * a percentage and an estimate anywhere in this product, and a test over the whole frontend
+ * source fails the build if a progress element ever appears.
+ */
+.counter {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text);
+  white-space: nowrap;
+  background: var(--accent-soft);
+  border-radius: 6px;
+}
+
+.step-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.link {
+  color: var(--accent-text);
+}
+
+.link:hover {
+  color: var(--accent-press);
+}
+
+/*
+ * The three tinted boxes the window says things in: a warning (GUIDE-04), an error, and
+ * something merely quoted. None of them is a coloured left edge any more — a 3-pixel rule is
+ * decoration a person has to already know the meaning of.
+ */
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--warning);
+  background: var(--warning-surface);
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+}
+
+.warning .icon {
+  margin-top: 1px;
+  color: var(--warning-icon);
 }
 
 .notice,
 .banner {
-  margin: 0 0 var(--space);
-  padding: 6px 8px;
+  margin: 0;
+  padding: 8px 10px;
   font-size: 12px;
-  background: var(--surface-raised);
-  border-left: 3px solid var(--border);
-  border-radius: 3px;
+  color: var(--text);
+  background: var(--sunken);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
 }
 
 .notice[data-notice='error'] {
-  border-left-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-surface);
 }
 
 .banner-detail {
   color: var(--text-muted);
 }
 
-.goal {
-  margin: 0 0 2px;
-  font-size: 15px;
-  font-weight: 600;
+/* The values of GUIDE-02: a table of names and values, and what may be done with each. */
+.values,
+.secrets,
+.notes,
+.replies,
+.sheet-will-send {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
-.location,
-.resumed-from,
-.request-text,
-.pending,
-.plain-url,
-.verify-detail {
-  margin: 0 0 var(--space);
+.value-box {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.value-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 4px 4px 10px;
+}
+
+.value-box .value:not(:first-child) .value-row:first-child,
+.value-item {
+  border-top: 1px solid var(--border);
+}
+
+.value-name {
+  display: flex;
+  flex-direction: column;
   font-size: 12px;
+  line-height: 1.25;
   color: var(--text-muted);
   overflow-wrap: anywhere;
+}
+
+.value-kind {
+  font-size: 10.5px;
+}
+
+.value-text {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.value-masked .value-text {
+  letter-spacing: 0.12em;
+}
+
+.value-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 /*
- * The counter of GUIDE-01. It is words and not a bar: GUIDE-05 and PRIN-07 forbid a
- * percentage and an estimate anywhere in this product, and a test over the whole frontend
- * source fails the build if a progress element ever appears.
+ * The `secrets` of SEC-01: the one dashed outline in the window, because it is the one thing
+ * on screen the application has *not* got — the user pastes it themselves.
  */
-.counter {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
+.secret-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+}
+
+.secret-entry > .icon {
   color: var(--text-muted);
-  letter-spacing: 0.02em;
 }
 
-.warning {
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  background: var(--warning-surface);
-  border-left: 3px solid var(--warning);
-  border-radius: 3px;
-}
-
-.step-text {
-  margin: 0 0 var(--space);
-  overflow-wrap: anywhere;
-}
-
-.link {
-  color: var(--accent);
-}
-
-.chips {
+.secret-what {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: var(--space);
-}
-
-.chip {
-  padding: 6px 8px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-}
-
-.chip-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.chip-name {
-  font-weight: 600;
-}
-
-.chip-kind {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.chip-action {
-  padding: 0 4px;
-  font: inherit;
-  font-size: 11px;
-  color: var(--accent);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-}
-
-.chip-items {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chip-items li {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.chip-value {
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.chip-masked .chip-value {
-  letter-spacing: 0.1em;
-}
-
-.secrets,
-.notes,
-.replies {
-  margin-bottom: var(--space);
-  font-size: 12px;
-}
-
-.secrets h2,
-.notes h2,
-.replies h2 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.secrets ul,
-.notes ul {
-  margin: 0;
-  padding-left: 16px;
-}
-
-.secrets li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
+  flex-grow: 1;
+  min-width: 0;
 }
 
 .secret-name {
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
 .secret-file {
+  font-size: 11.5px;
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
-.reply {
-  margin: 0 0 4px;
-  padding: 6px 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
+.notes ul,
+.secrets ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12.5px;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.reply,
+.question,
+.history-question,
+.pending-text,
+.verify-text {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  background: var(--sunken);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
 }
 
-.button {
-  padding: 4px 10px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.button:disabled {
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-
-.button-primary {
-  color: var(--surface);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.button-quiet {
+.who {
   color: var(--text-muted);
 }
 
-.sheet {
+/*
+ * The action bar of §7.6.
+ *
+ * In the panel it is a sticky footer on the surface colour, full width: one primary button
+ * for the thing to do next, and a row of equal tools under it. It reaches past the column's
+ * padding on purpose — an action bar inset from the edges reads as a card and not as the
+ * bottom of the window.
+ */
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin: 0 calc(-1 * var(--space)) calc(-1 * var(--space));
+  padding: 10px var(--space) var(--space);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.action-primary {
+  width: 100%;
+  height: 40px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.action-tools {
+  display: grid;
+  grid-template-columns: repeat(var(--tools, 4), minmax(0, 1fr));
+  gap: 4px;
+}
+
+.action-bar[data-tools='1'] .action-tools {
+  --tools: 1;
+}
+
+.action-bar[data-tools='2'] .action-tools {
+  --tools: 2;
+}
+
+.action-bar[data-tools='3'] .action-tools {
+  --tools: 3;
+}
+
+.action-bar[data-tools='0'] .action-tools {
+  display: none;
+}
+
+/* One tool: a 17-pixel icon over its name, so the row reads at a glance and still has words. */
+.tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 50px;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tool:hover,
+.tool[aria-expanded='true'] {
+  background: var(--ctrl-hover);
+}
+
+.tool:active {
+  background: var(--ctrl-press);
+}
+
+/* The expanded view's bar: one row, not sticky, More at the far end. */
+.action-bar-wide {
+  position: static;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  margin: 4px -20px -20px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.action-bar-wide .action-primary {
+  width: auto;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.action-bar-wide .action-tools {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-bar-wide .button {
+  height: 34px;
+  padding: 0 10px;
+}
+
+.action-gap {
+  flex: 1 1 auto;
+}
+
+/*
+ * The More menu: Skip, Defer and the Abandon of RESP-08, one press deeper than the four that
+ * are always on screen (`MoreMenu.svelte` says why).
+ *
+ * It opens **above** its button and is right-aligned, because the button is at the bottom of
+ * the window and at its right edge: the two directions it has room in.
+ */
+.more {
+  position: relative;
+  display: flex;
+}
+
+.more > .tool,
+.more > .button {
+  width: 100%;
+}
+
+.more-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 200px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.menu-item .icon {
+  color: var(--text-muted);
+}
+
+.menu-item:hover {
+  background: var(--ctrl-hover);
+}
+
+.menu-item-danger,
+.menu-item-danger .icon {
+  color: var(--danger);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 2px 6px;
+  background: var(--border);
+}
+
+/*
+ * The sheets of Ask, Note, Defer and Abandon. They take the action bar's place as a card
+ * rather than floating over it: the window's height follows its content, so a sheet is one
+ * more thing the window is tall enough for.
+ */
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
 .sheet-label {
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .sheet-text {
   width: 100%;
-  padding: 6px;
+  padding: 10px 12px;
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.5;
   color: var(--text);
-  background: var(--surface-raised);
+  background: var(--sunken);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 8px;
   resize: vertical;
 }
 
-.sheet-redacted {
+.sheet-text:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/*
+ * DET-01, said twice in two colours. A **certain** match is already out of the text and can
+ * never be put back, so its line carries the shield in the accent colour: something was done.
+ * A **suspected** one is sent as it was written, so its line is a warning: something is for
+ * the user to decide.
+ */
+.sheet-redacted,
+.sheet-suspected {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin: 0;
-  font-size: 12px;
-  color: var(--warning);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.sheet-redacted {
+  color: var(--text);
+}
+
+.sheet-redacted .icon {
+  margin-top: 1px;
+  color: var(--accent);
 }
 
 .sheet-suspected {
-  margin: 0;
-  font-size: 12px;
   color: var(--warning);
 }
 
+.sheet-suspected .icon {
+  margin-top: 1px;
+  color: var(--warning-icon);
+}
+
 .sheet-mark {
-  background: var(--warning);
-  color: var(--surface);
-  border-radius: 2px;
+  color: var(--warning);
+  background: var(--warning-surface);
+  border-radius: 3px;
 }
 
 .sheet-preview {
   margin: 0;
-  padding: 6px 8px;
-  font-size: 12px;
-  background: var(--surface-raised);
-  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   overflow-wrap: anywhere;
 }
 
 .sheet-actions {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
+.sheet-gap {
+  flex: 1 1 auto;
+}
+
+.sheet-hint {
+  height: auto;
+  min-height: 22px;
+  padding: 2px 6px;
+  font-family: inherit;
+  white-space: normal;
+}
+
+/* The history of VER-09: everything before the current step, closed until it is asked for. */
 .history {
-  margin-top: var(--space);
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.history summary {
+.history summary,
+.waiting-group summary {
   cursor: pointer;
 }
 
@@ -483,44 +1210,31 @@ body {
 }
 
 .empty {
+  padding: var(--space) 4px;
   color: var(--text-muted);
-}
-
-/*
- * The waiting group of §7.6: parked handoffs and orphan outcomes, with the three things
- * SRV-23 lets the user do from the list itself.
- */
-.waiting-entry {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.waiting-actions {
-  display: flex;
-  gap: 4px;
 }
 
 /* The FM-22 picker: a question the window puts to the user, not a notice it shows them. */
 .session-picker {
-  margin: 0 0 var(--space);
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  color: var(--warning);
   background: var(--warning-surface);
-  border-radius: 4px;
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
 }
 
 .session-picker h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
 }
 
 .picker-explain {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 12px;
-  color: var(--text-muted);
 }
 
 .picker-choices {
@@ -533,31 +1247,24 @@ body {
 .waiting-for-spec,
 .pending,
 .verifying {
-  margin: 0 0 var(--space);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 .not-answered,
 .session,
 .pending-what,
-.verify-intro {
-  margin: 0 0 4px;
+.verify-intro,
+.pending-summary {
+  margin: 0;
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.pending-text,
-.verify-text {
-  margin: 0 0 var(--space);
-  padding: 6px 8px;
-  font-size: 13px;
-  background: var(--surface-raised);
-  border-left: 3px solid var(--border);
-  border-radius: 3px;
-  overflow-wrap: anywhere;
-}
-
 .verify-result {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 13px;
 }
 
@@ -569,122 +1276,388 @@ body {
   color: var(--danger);
 }
 
-.question,
-.history-question {
-  margin: 0 0 4px;
-  padding: 6px 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
-  overflow-wrap: anywhere;
-}
-
-.who {
-  color: var(--text-muted);
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /*
- * The collapsed bar of WIN-03: one line and three buttons, and nothing else. Its height is
- * what the window takes while it is showing, so it stays on one row — the line ellipsises
- * rather than wrapping, which is what makes the bar a bar.
+ * The collapsed bar of WIN-03: one line and a few buttons, 360 × 56, and nothing else. Its
+ * height is what the window takes while it is showing, so it stays on one row — the line
+ * ellipsises rather than wrapping, which is what makes the bar a bar.
  */
 .collapsed {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
-  padding: 6px var(--space);
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
+  height: 56px;
+  padding: 0 6px;
+  background: var(--surface);
 }
 
 .collapsed-line {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
   min-width: 0;
-  padding: 0;
-  overflow: hidden;
+  padding: 4px 8px;
   font: inherit;
-  font-size: 12px;
   color: var(--text);
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   background: none;
   border: 0;
+  border-radius: 8px;
   cursor: pointer;
+}
+
+.collapsed-line:hover {
+  background: var(--ctrl-hover);
+}
+
+.collapsed-counter {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+.collapsed-step {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .collapsed-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+}
+
+.collapsed-actions .button {
+  height: 32px;
+  padding: 0 10px;
+}
+
+.collapsed-actions .icon-button {
+  width: 32px;
+  height: 32px;
+}
+
+.collapsed-separator {
+  flex-shrink: 0;
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--border);
 }
 
 /*
- * The request sheet of §7.7 (OPEN-04). One selector, one field, two keys: it is the only
- * screen in this product where the user starts something rather than answers it, so the
+ * The expanded view of §7.6 (720 px): the handoff list in a column of its own, and the step
+ * in a column that is the surface the panel drew a card on.
+ */
+.view-expanded {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.rail {
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: 2px;
+  width: 220px;
+  padding: 4px 10px var(--space);
+}
+
+.rail-label {
+  padding: 6px 10px 4px;
+}
+
+.rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.rail-item:hover {
+  background: var(--ctrl-hover);
+}
+
+.rail-item[aria-current='true'] {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-lift);
+}
+
+.rail-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rail-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+.rail-dot-on {
+  background: var(--accent);
+}
+
+.rail-goal {
+  flex-grow: 1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rail-item[aria-current='true'] .rail-goal {
+  font-weight: 600;
+}
+
+.rail-meta {
+  overflow: hidden;
+  padding-left: 12px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rail-gap {
+  flex: 1 1 auto;
+  min-height: 10px;
+}
+
+.rail-new {
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0 8px;
+}
+
+/*
+ * The column is 220 wide, so the label is what gives way if the combination is a long one:
+ * a shortcut printed as "Ctrl Alt…" would be a shortcut nobody can press.
+ */
+.rail-new-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-new .kbd {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10.5px;
+}
+
+.rail-settings {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0 10px;
+}
+
+.rail .waiting-entry {
+  padding: 8px 10px;
+}
+
+/* The main column of the expanded view, and of the settings. */
+.view-expanded > .column,
+.settings-page {
+  flex: 1 1 auto;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-top-left-radius: 12px;
+}
+
+.view-expanded .goal {
+  font-size: 20px;
+  letter-spacing: -0.015em;
+}
+
+.view-expanded .location,
+.view-expanded .resumed-from,
+.view-expanded .request-text {
+  font-size: 12.5px;
+}
+
+.view-expanded .tab-head {
+  gap: 4px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.view-expanded .value-row {
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  padding-left: 12px;
+}
+
+.view-expanded .value-text {
+  font-size: 13px;
+}
+
+.view-expanded .step-text {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/*
+ * The request sheet of §7.7 (OPEN-03, OPEN-04). One selector, one field, two keys: it is the
+ * only screen in this product where the user starts something rather than answers it, so the
  * field is what the eye lands on and everything else is quiet around it.
  */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .request-session-label,
 .request-what-label {
-  display: block;
-  margin-bottom: 4px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
-.request-session,
+/*
+ * `appearance: none` takes the platform's own arrow with the platform's own paint, so the
+ * chevron and the "this session is live" dot are drawn beside the control. Neither is
+ * interactive: the `<select>` is still the control, with the semantics it was born with.
+ */
+.select-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.request-session {
+  width: 100%;
+  height: 38px;
+  padding: 0 34px 0 28px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.select-dot {
+  position: absolute;
+  top: 15px;
+  left: 12px;
+  width: 8px;
+  height: 8px;
+  background: var(--ok);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.select-chevron {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
 .request-what {
   width: 100%;
-  margin-bottom: var(--space);
-  padding: 6px;
+  height: 44px;
+  padding: 0 12px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14.5px;
   color: var(--text);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+.request-what:focus,
+.request-session:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .request-no-session {
-  margin: 0 0 var(--space);
+  margin: 0;
   font-size: 12px;
   color: var(--text-muted);
 }
 
 .request-hint {
-  margin: 0 0 var(--space);
-  font-size: 11px;
+  margin: 0;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .request-problem {
-  margin: 0 0 var(--space);
+  margin: 0;
+  padding: 8px 10px;
   font-size: 12px;
-  color: var(--warning);
+  color: var(--danger);
+  background: var(--danger-surface);
+  border-radius: 8px;
 }
 
 .request-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
+}
+
+.request-send {
+  flex: 1 1 auto;
 }
 
 /* The one-click correction of a mis-linked request (FM-20, §12.4). */
 .relink {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0 0 var(--space);
-  padding: 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--sunken);
+  border-radius: 10px;
 }
 
-.relink-title {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
+.relink-title,
 .relink-empty {
   margin: 0;
   font-size: 12px;
@@ -697,93 +1670,142 @@ body {
  * any handoff, and it is dismissible — `New request` in the tray works either way.
  */
 .shortcut-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0 var(--space) var(--space);
-  padding: 8px;
+  padding: 10px 12px;
+  color: var(--warning);
   background: var(--warning-surface);
-  border-radius: 4px;
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
 }
 
 .shortcut-dialog h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
 }
 
 .shortcut-explain {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 12px;
-  color: var(--text-muted);
 }
 
 .shortcut-recorder {
   width: 100%;
-  margin-bottom: 6px;
-  padding: 6px;
+  padding: 8px 10px;
   font: inherit;
   font-size: 13px;
   color: var(--text);
-  background: var(--surface-raised);
-  border: 1px dashed var(--border);
-  border-radius: 4px;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
   cursor: text;
 }
 
 .shortcut-problem {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 12px;
-  color: var(--warning);
+  color: var(--danger);
 }
 
 .shortcut-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
 }
 
 /*
- * Onboarding, the consent screen and the Agents settings page (§7.6, §7.15, F-13).
- *
- * One vocabulary for both places the consent lines appear, because they are one screen shown
- * twice: what a user reads before the first registration is what they read before a repair.
- * The diff is the only monospaced block in the panel — it is a file, and a file has columns.
+ * Settings (§7.6, §7.16): six pages in a column on the left, the page itself on the right.
+ * Six labels in a row of chips at this width would be six truncated labels, and a settings
+ * page is the one screen in this application a person browses rather than acts on.
  */
+.view-settings {
+  flex-direction: row;
+  align-items: stretch;
+}
+
 .settings-nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
+  flex: 0 0 156px;
+  flex-direction: column;
+  gap: 2px;
+  width: 156px;
+  padding: 4px 8px var(--space);
 }
 
 .settings-nav-item {
-  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
   cursor: pointer;
 }
 
-.settings-nav-item[aria-current='page'] {
+.settings-nav-item:hover {
   color: var(--text);
-  background: var(--surface-raised);
-  border-color: var(--border);
+  background: var(--ctrl-hover);
+}
+
+.settings-nav-item[aria-current='page'] {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-lift);
+}
+
+.settings-nav-gap {
+  flex: 1 1 auto;
+  min-height: 10px;
+}
+
+.settings-back {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0 10px;
+}
+
+.settings-page h1 {
+  padding: 0;
+  font-size: 18px;
+  letter-spacing: -0.01em;
 }
 
 .settings-section {
-  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  min-width: 0;
 }
 
 .settings-section h2 {
-  margin: 0 0 6px;
-  font-size: 13px;
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
+}
+
+/*
+ * A button in a column of groups is as wide as its own label. Without this the column's
+ * `stretch` makes **Find agents** and **Repair the token** the width of the page, which
+ * reads as a heading rather than as something to press.
+ */
+.settings-section > .button {
+  align-self: flex-start;
 }
 
 .settings-explain,
 .settings-said,
 .settings-problem {
-  margin: 6px 0;
+  margin: 0;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -793,34 +1815,149 @@ body {
 }
 
 /*
- * One group of the General page (§7.16): language, startup, shortcut, panel. The same box
- * as the scope selector below, named apart because that one belongs to the Agents page and
- * the two would otherwise have to change together for ever.
+ * One group of the General page (§7.16): a section label, and a box under it.
+ *
+ * It is still a `<fieldset>` with a `<legend>`: the group is what tells a screen reader that
+ * three radios are one question, and dropping it to gain a heading would be trading a
+ * semantic for a paint job.
  */
 .settings-group {
-  margin: 0 0 var(--space);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-.settings-group legend {
-  padding: 0 4px;
-  font-size: 12px;
+.settings-group > legend {
+  padding: 0;
+}
+
+.settings-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/*
+ * The language control: three real radios in one group, painted as a segmented control. The
+ * input keeps the keyboard, the form semantics and the label; the pill beside it is the paint.
+ */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--sunken);
+  border-radius: 8px;
+}
+
+.seg-option {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.seg-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.seg-pill {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-muted);
+  white-space: nowrap;
+  border-radius: 6px;
+  cursor: pointer;
 }
 
-.settings-group label {
-  display: block;
-  margin: 2px 0;
+.seg-option input:checked + .seg-pill {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-lift);
+}
+
+.seg-option input:focus-visible + .seg-pill {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/*
+ * The two boxes of the page, painted as switches. `appearance: none` on the checkbox itself
+ * and the knob as its `::before`, so it is still a checkbox — no `role="switch"`, no button
+ * pretending to be one, and the label still labels it.
+ */
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  cursor: pointer;
+}
+
+.switch-text {
+  flex-grow: 1;
   font-size: 13px;
+  line-height: 1.4;
 }
 
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  margin: 1px 0 0;
+  background: var(--border-strong);
+  border: 0;
+  border-radius: 10px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.switch::before {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  content: '';
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  left: 16px;
+}
+
+/* The scope selector of the Agents page: the same box, named apart because it is that page's. */
 .scope {
-  margin: 0 0 var(--space);
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 10px;
 }
 
 .scope legend {
@@ -835,172 +1972,47 @@ body {
 }
 
 .scope-folder {
-  margin: 6px 0;
-  /* A path can be longer than the panel and must not widen it (WIN-02). */
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.agent-list {
-  margin: 0 0 var(--space);
-  padding: 0;
-  list-style: none;
-}
-
-.agent {
-  margin-bottom: 8px;
-  padding: 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
-}
-
-.agent-name {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.agent-status {
-  margin: 2px 0;
+  /* A path can be longer than the window and must not widen it (WIN-02). */
+  overflow-wrap: anywhere;
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.agent-detail {
-  margin: 2px 0 6px;
-  overflow-wrap: anywhere;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.token-repair {
-  margin-top: var(--space);
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.consent-intro {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-
+/*
+ * The lists of records: agents, log entries, network rows, runbooks, consent lines. All of
+ * them are a title line, muted metadata under it, and the buttons last — they are things to
+ * read, and nothing in them is interactive beyond those buttons.
+ */
+.agent-list,
+.log-list,
+.net-list,
 .consent-lines {
-  margin: 0 0 var(--space);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.consent-line {
-  margin-bottom: 8px;
-  padding: 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
-}
-
-.consent-what {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-}
-
-.consent-where {
-  margin: 2px 0;
-  overflow-wrap: anywhere;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.consent-state {
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.consent-noop .consent-state {
-  color: var(--accent);
-}
-
-.consent-diff {
-  margin: 6px 0 0;
-  padding: 6px;
-  overflow-x: auto;
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-  font-size: 11px;
-  white-space: pre;
+.agent,
+.log-entry,
+.net-entry,
+.consent-line,
+.runbook-proposal,
+.crash-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 10px;
 }
 
-.onboarding-autostart {
-  display: block;
-  margin: 8px 0;
-  font-size: 13px;
-}
-
-.onboarding-none {
-  margin: 6px 0;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.onboarding-problem {
-  margin: 6px 0;
-  font-size: 12px;
-  color: var(--warning);
-}
-
-.onboarding-actions {
-  display: flex;
-  gap: 4px;
-  padding-top: 8px;
-}
-
-/*
-  The crash notice of §7.14. It sits in the overlay like a banner, with the warning surface
-  the shortcut dialog uses: it is news the user has to act on if they want to, never an
-  error about the run they are in.
-*/
-.crash-notice {
-  margin: 0 0 var(--space);
-  padding: 8px;
-  background: var(--warning-surface);
-  border-radius: 4px;
-}
-
-.crash-text {
-  margin: 0 0 6px;
-  font-size: 12px;
-}
-
-.crash-actions {
-  display: flex;
-  gap: 4px;
-}
-
-/*
-  The Log, Runbooks and Network pages (§7.11, §7.12, §7.13). All three are lists of records
-  read at the settings width, so they share the row: a title line, muted metadata under it,
-  and the buttons last. Nothing here is interactive beyond those buttons — they are things to
-  read. The Network list has no buttons at all and no rows in this build (NET-01), so it
-  borrows the shape and adds only the monospace domain.
-*/
-.log-list,
-.net-list {
-  margin: 0 0 var(--space);
-  padding: 0;
-  list-style: none;
-}
-
-.log-entry,
-.net-entry {
-  margin-bottom: 8px;
-  padding: 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
-}
-
+.agent-name,
 .log-goal,
 .net-domain {
   margin: 0;
@@ -1009,44 +2021,122 @@ body {
   font-weight: 600;
 }
 
+.agent-status,
+.agent-detail,
 .log-meta,
-.net-meta {
-  margin: 2px 0;
+.net-meta,
+.consent-where,
+.consent-state {
+  margin: 0;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
 }
 
 .log-file,
-.net-domain {
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+.net-domain,
+.secret-name,
+.log-key {
+  font-family: var(--font-mono);
 }
 
-.log-actions {
+.log-actions,
+.crash-actions,
+.runbook-proposal-actions,
+.onboarding-actions {
   display: flex;
-  gap: 4px;
-  padding-top: 6px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
 }
 
+.token-repair,
 .log-whole {
-  margin-top: var(--space);
-  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: var(--space);
   border-top: 1px solid var(--border);
 }
 
+.consent-intro {
+  margin: 0;
+  font-size: 13px;
+}
+
+.consent-what {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.consent-noop .consent-state {
+  color: var(--ok);
+}
+
+.consent-diff {
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre;
+  background: var(--sunken);
+  border-radius: 8px;
+}
+
+.onboarding-autostart {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.onboarding-none,
+.onboarding-problem {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.onboarding-problem {
+  color: var(--warning);
+}
+
+/*
+ * The launch after a crash (§7.14). It is news the user may act on, never an error about the
+ * run they are in, so it takes the warning surface rather than the danger one.
+ */
+.crash-notice {
+  color: var(--warning);
+  background: var(--warning-surface);
+  border-color: var(--warning-border);
+}
+
+.crash-text {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* The Log detail of §7.11: one record, read end to end. */
 .log-detail {
-  margin: 0 0 var(--space);
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 10px;
 }
 
 .log-detail h3 {
-  margin: 8px 0 4px;
-  font-size: 12px;
+  margin: 10px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 
@@ -1056,89 +2146,77 @@ body {
 }
 
 .log-text {
-  margin: 2px 0;
+  margin: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .log-plain {
   margin: 2px 0 6px;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
-.log-key {
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-}
-
-/*
-  The runbook rewrite of RUN-09, on the handoff that produced it. It is a suggestion and not
-  a failure, so it takes the raised surface of a card rather than the warning one.
-*/
-.runbook-proposal {
-  margin: 0 0 var(--space);
-  padding: 8px;
-  background: var(--surface-raised);
-  border-radius: 4px;
-}
-
+/* The runbook rewrite of RUN-09, on the handoff that produced it. */
 .runbook-proposal p {
-  margin: 0 0 6px;
+  margin: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
-}
-
-.runbook-proposal-actions {
-  display: flex;
-  gap: 4px;
+  font-size: 12.5px;
 }
 
 /*
-  The Screenshot button and its two choices (CAP-01).
-
-  The popover is positioned against the button rather than the window, so it opens where
-  the finger already is in both the action bar and the collapsed bar. `aria-current` marks
-  the last choice: highlighted, never fired.
-*/
+ * The Screenshot button and its two choices (CAP-01).
+ *
+ * The popover is positioned against the button rather than the window, so it opens where
+ * the finger already is in both the action bar and the expanded row. `aria-current` marks
+ * the last choice: highlighted, never fired.
+ */
 .screenshot {
   position: relative;
   display: inline-flex;
 }
 
+.screenshot > .tool,
+.screenshot > .button {
+  width: 100%;
+}
+
 .screenshot-menu {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   left: 0;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   flex-direction: column;
-  min-width: 160px;
+  gap: 2px;
+  min-width: 180px;
   padding: 4px;
-  background: var(--surface-raised);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 6px 20px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 50%));
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
 }
 
 .screenshot-choice {
-  padding: 6px 8px;
+  padding: 0 10px;
+  height: 34px;
   font: inherit;
+  font-size: 13px;
   color: var(--text);
   text-align: left;
   background: none;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
-.screenshot-choice:hover,
-.screenshot-choice:focus-visible {
-  background: var(--surface);
+.screenshot-choice:hover {
+  background: var(--ctrl-hover);
 }
 
 .screenshot-choice[aria-current='true'] {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /*
@@ -1178,7 +2256,7 @@ body.selection-window {
   padding: 6px 12px;
   color: #ffffff;
   background: rgb(0 0 0 / 55%);
-  border-radius: 6px;
+  border-radius: 8px;
   transform: translateX(-50%);
 }
 
@@ -1206,13 +2284,9 @@ body.selection-window {
 }
 
 /*
-  The preview of PREV-01. The image is drawn at the panel's width whatever the capture's
-  size; the number of pixels it really has is said in words underneath.
-*/
-/*
  * The preview canvas (§7.10, PREV-02).
  *
- * The image sizes itself to the panel and every box is positioned in **percentages** of it,
+ * The image sizes itself to the window and every box is positioned in **percentages** of it,
  * so the drawing is the same picture whatever width the window has. The burn-in works in
  * the capture's own pixels on the Rust side; the two never have to agree on a scale.
  */
@@ -1229,9 +2303,9 @@ body.selection-window {
   display: block;
   width: 100%;
   height: auto;
-  background: var(--surface-raised);
+  background: var(--sunken);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 8px;
 }
 
 .preview-box {
@@ -1249,7 +2323,7 @@ body.selection-window {
 /* A suspicion: the user decides, so it is a button and it says so by being dashed. */
 .preview-box-flagged {
   background: #000;
-  border: 1px dashed var(--warning);
+  border: 1px dashed var(--warning-icon);
   cursor: pointer;
 }
 
@@ -1271,16 +2345,15 @@ body.selection-window {
   pointer-events: none;
 }
 
-.preview-tools {
+.preview-tools,
+.preview-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: var(--space);
+  gap: 6px;
 }
 
 .preview-label {
   display: block;
-  margin-top: var(--space);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -1288,28 +2361,16 @@ body.selection-window {
 .preview-size,
 .preview-note,
 .preview-empty {
-  margin: 6px 0 0;
+  margin: 0;
   font-size: 12px;
   color: var(--text-muted);
 }
 
 .preview-problem {
-  margin: 0 0 var(--space);
-  padding: 8px;
+  margin: 0;
+  padding: 10px 12px;
   color: var(--warning);
   background: var(--warning-surface);
-  border-radius: 4px;
-}
-
-.preview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: var(--space);
-}
-
-.pending-summary {
-  margin: 0 0 4px;
-  font-size: 12px;
-  color: var(--text-muted);
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
 }

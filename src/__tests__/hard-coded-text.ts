@@ -92,6 +92,36 @@ export const SYMBOL_ATTRIBUTES: ReadonlySet<string> = new Set([
   'aria-controls',
   'aria-labelledby',
   'aria-describedby',
+  // The SVG of `overlay/Icon.svelte`. These are coordinates and paint keywords on a 16×16
+  // grid — `fill="none"`, `stroke="currentColor"`, `stroke-linecap="round"` — which are
+  // symbols of the drawing vocabulary and identical in every language. They are on the list
+  // by *name*, like the rest of it: the values themselves are never allowed anywhere else,
+  // and the shapes they draw live in `overlay/icons.ts` rather than in the component.
+  'viewBox',
+  'fill',
+  'stroke',
+  'stroke-width',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'fill-rule',
+  'clip-rule',
+  'd',
+  'cx',
+  'cy',
+  'r',
+  'rx',
+  'ry',
+  'x',
+  'y',
+  'width',
+  'height',
+  'points',
+  'xmlns',
+  'focusable',
+  // A component prop that names a shape rather than a text: `variant="icon"` chooses which
+  // of three triggers a button draws, the way `type` chooses which of three inputs an
+  // `<input>` is. Anything a component draws still has to come from the catalogue.
+  'variant',
 ]);
 
 /**

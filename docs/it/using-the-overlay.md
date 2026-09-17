@@ -2,9 +2,27 @@
 
 ## Il pannello
 
-Baton è un pannello stretto che resta sopra le altre finestre. Trascinalo dalla sua
-intestazione; Baton ricorda dove l'hai messo su ogni monitor. Chiuderlo lo nasconde nella
+Baton è un pannello stretto che resta sopra le altre finestre. Trascinalo dalla sua barra del
+titolo; Baton ricorda dove l'hai messo su ogni monitor. Chiuderlo lo nasconde nella
 barra — per uscire da Baton usa **Esci** nel menu della sua icona.
+
+A destra nella barra del titolo ci sono tre pulsanti, e sono gli stessi tre in ogni schermata
+di Baton:
+
+| Pulsante | Che cosa fa |
+|---|---|
+| **Riduci a icona** | mette via Baton. Non si perde niente: l'icona nella barra lo riapre |
+| **Rimpicciolisci a barra** | riduce il pannello alla barra di una riga, senza aspettare che tu faccia clic altrove. C'è mentre stai seguendo un passo |
+| **Espandi** | allarga la finestra, con i tuoi handoff elencati a sinistra. **Ripristina** la riporta com'era |
+
+Un pulsante che nella schermata in cui sei non farebbe niente resta al suo posto, in grigio, e
+il suggerimento dice perché. Anche un doppio clic su una parte vuota della barra del titolo
+espande e ripristina.
+
+La vista espansa dura finché Baton è in esecuzione: non viene ricordata tra un avvio e
+l'altro, e torna al pannello stretto da sola mentre sei nelle Impostazioni o stai scrivendo
+una nuova richiesta. Un clic altrove la riduce comunque alla barra, e un clic sulla barra
+riapre la forma in cui eri.
 
 L'icona nella barra c'è sempre. Il suo menu ha **Mostra**, **Nuova richiesta**,
 **Impostazioni** ed **Esci**. Un pallino sull'icona vuol dire che ci sono handoff aperti, e il
@@ -43,9 +61,18 @@ Un handoff è un elenco di passi, mostrati uno alla volta: *Passo 2 di 4*, oppur
 | **Chiedi** | fa una domanda all'agente su questo passo; la risposta compare sullo stesso passo |
 | **Screenshot** | mostra all'agente quello che vedi, dopo un'anteprima obbligatoria (vedi [Screenshot e privacy](screenshots-and-privacy.md)) |
 | **Nota** | una nota per te su questo passo; le note vengono riferite all'agente alla fine |
+
+Altri tre stanno sotto **Altro**, l'ultimo pulsante della riga, perché chiudono qualcosa
+invece di farla andare avanti:
+
+| Pulsante | Che cosa fa |
+|---|---|
 | **Salta** | salta il passo; all'agente viene detto quali passi sono stati saltati |
 | **Rimanda** | ci tornerai più tardi; l'agente viene avvisato, e riprende quando sei pronto |
 | **Abbandona** | ferma l'handoff; puoi dire perché |
+
+**Riprendi** e **Chiudilo** non stanno mai sotto **Altro**: su un handoff in sospeso e su un
+esito che nessuno ha raccolto sono il pulsante principale.
 
 Quello che scrivi in **Chiedi**, **Rimanda** e **Abbandona** viene mostrato sotto *Quello che
 leggerà l'agente* prima che tu lo invii. Un segreto che Baton riconosce con certezza viene
@@ -57,10 +84,16 @@ premi **Riprendi**.
 
 ## La barra ridotta
 
-Quando fai clic fuori dal pannello, si riduce a una riga: il passo corrente e **Fatto**,
-**Chiedi**, **Screenshot**. Fai clic sulla barra per riaprire il pannello. Se resta aperto
-quando non dovrebbe, Impostazioni → Generale → Pannello può ridurlo anche qualche secondo dopo
-il tuo ultimo clic.
+Quando fai clic fuori dal pannello, si riduce a una riga: a che passo sei, il suo testo, e
+**Fatto**, **Chiedi** e **Screenshot** — gli ultimi due come icone, perché la barra è larga
+una riga. Se premi **Screenshot** lì, si apre prima il pannello e la scelta della cattura
+compare in quello.
+
+All'estremità destra ci sono **Riduci a icona** e **Apri il pannello**. Anche un clic sulla
+riga riapre il pannello, e lo riapre nella forma in cui l'avevi lasciato: stretto o espanso.
+
+Se il pannello resta aperto quando non dovrebbe, Impostazioni → Generale → Pannello può
+ridurlo anche qualche secondo dopo il tuo ultimo clic.
 
 ## Che cosa dicono gli avvisi
 

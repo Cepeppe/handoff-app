@@ -65,10 +65,13 @@ mod tray;
 pub mod view;
 pub mod window;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter as _, LogicalSize, Manager as _, Window, WindowEvent};
+use serde::{Deserialize, Serialize};
+use tauri::{
+    AppHandle, Emitter as _, LogicalSize, Manager as _, PhysicalPosition, Window, WindowEvent,
+};
 
 use crate::i18n::Language;
 use crate::log::Db;
@@ -141,6 +144,62 @@ pub const WINDOW_WIDTH: f64 = 360.0;
 /// every other view is laid out for.
 pub const SETTINGS_WINDOW_WIDTH: f64 = 520.0;
 
+/// The width of the expanded view the user asks for with **Expand** (§7.6).
+///
+/// WIN-02 fixes the *panel's* width, and it is still fixed: the window is never resizable
+/// and nothing here is remembered on disk. What this is is the second shape of §7.6 — the
+/// handoff list beside the step instead of above it — which the user opens and closes with a
+/// window control. 720 is the smallest width at which the 220-pixel list and a step column
+/// wide enough for a value row both fit without either of them wrapping.
+pub const EXPANDED_WINDOW_WIDTH: f64 = 720.0;
+
+/// Which shape the window has, which is the only thing that decides its width (§7.6).
+///
+/// The frontend derives it in one place (`App.svelte`) and reports it here; this side never
+/// guesses it from the view. The names are the ones `src/bridge.ts` spells, and a test below
+/// reads that file to keep the two together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowLayout {
+    /// The narrow panel of WIN-02, and the width the collapsed bar of WIN-03 keeps.
+    #[default]
+    Panel,
+    /// The settings page, which needs more room to be read (§7.6).
+    Settings,
+    /// The expanded view: the handoff list on the left, one column of content.
+    Expanded,
+}
+
+impl WindowLayout {
+    /// The width this shape asks for.
+    #[must_use]
+    pub fn width(self) -> f64 {
+        match self {
+            Self::Panel => WINDOW_WIDTH,
+            Self::Settings => SETTINGS_WINDOW_WIDTH,
+            Self::Expanded => EXPANDED_WINDOW_WIDTH,
+        }
+    }
+
+    /// The discriminant, for the atomic that holds the layout in force.
+    fn code(self) -> u8 {
+        match self {
+            Self::Panel => 0,
+            Self::Settings => 1,
+            Self::Expanded => 2,
+        }
+    }
+
+    /// The other direction. An unknown code is the panel: the width of WIN-02 is the safe one.
+    fn of_code(code: u8) -> Self {
+        match code {
+            1 => Self::Settings,
+            2 => Self::Expanded,
+            _ => Self::Panel,
+        }
+    }
+}
+
 /// The tab moved on and the button the user pressed is no longer offered (§7.4).
 pub const NOTICE_ACTION_REFUSED: &str = "notice.actionRefused";
 
@@ -187,7 +246,7 @@ pub struct Ui {
     geometry: window::Geometry,
     shortcut: shortcut::State,
     db: Mutex<Option<Db>>,
-    wide: AtomicBool,
+    layout: AtomicU8,
     capture: capture::State,
     preview: preview::State,
 }
@@ -231,21 +290,22 @@ impl Ui {
         &self.geometry
     }
 
-    /// The width the panel should have right now (§7.6).
-    ///
-    /// One of two values, never a remembered one: the fixed width of WIN-02, or the wider
-    /// layout while the settings page is open.
-    pub fn window_width(&self) -> f64 {
-        if self.wide.load(Ordering::Relaxed) {
-            SETTINGS_WINDOW_WIDTH
-        } else {
-            WINDOW_WIDTH
-        }
+    /// The shape the window is in (§7.6). The panel of WIN-02 until the frontend says otherwise.
+    pub fn layout(&self) -> WindowLayout {
+        WindowLayout::of_code(self.layout.load(Ordering::Relaxed))
     }
 
-    /// Opens or closes the wider layout. The next resize is what the user sees.
-    pub fn set_wide(&self, wide: bool) {
-        self.wide.store(wide, Ordering::Relaxed);
+    /// The width the window should have right now (§7.6).
+    ///
+    /// One of three values, never a remembered one: the fixed width of WIN-02, the wider
+    /// settings page, or the expanded view the user asked for.
+    pub fn window_width(&self) -> f64 {
+        self.layout().width()
+    }
+
+    /// Records the shape the frontend derived. The next resize is what the user sees.
+    pub fn set_layout(&self, layout: WindowLayout) {
+        self.layout.store(layout.code(), Ordering::Relaxed);
     }
 
     /// The global shortcut in force, and whether the system accepted it (OPEN-03, FM-18).
@@ -367,13 +427,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            ui.geometry().remember(window);
-            ui.flush_geometry();
-            // A window that cannot hide is a window the user just failed to close; there is
-            // nothing to do about it here beyond leaving it open.
-            if let Err(error) = window.hide() {
-                tracing::warn!(error = %error, "the overlay window refused to hide");
-            }
+            hide_to_tray(window, &ui);
         }
         WindowEvent::Moved(_) => ui.geometry().remember(window),
         WindowEvent::Focused(focused) => {
@@ -387,6 +441,32 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
         }
         _ => {}
     }
+}
+
+/// Puts the window away into the notification area (WIN-04).
+///
+/// The one path both doors take: the window's own close button, which never ends the
+/// process, and the **Minimize to tray** control of the title bar. The order is what makes
+/// the position survive — remember where the window is, write it, then hide it — because a
+/// hidden window has no position left to ask for.
+fn hide_to_tray(window: &Window, ui: &Ui) {
+    ui.geometry().remember(window);
+    ui.flush_geometry();
+    // A window that cannot hide is a window the user just failed to put away; there is
+    // nothing to do about it here beyond leaving it open.
+    if let Err(error) = window.hide() {
+        tracing::warn!(error = %error, "the overlay window refused to hide");
+    }
+}
+
+/// The title bar's **Minimize to tray** (WIN-04).
+///
+/// It cannot fail for the caller: a window the system refuses to hide is logged and stays
+/// open, exactly as it does when the close button is pressed.
+#[tauri::command]
+pub fn hide_window(window: Window) {
+    let app = window.app_handle();
+    hide_to_tray(&window, &app.state::<Ui>());
 }
 
 /// Brings the overlay window to the front (the tray's `Show`, and the second launch of
@@ -447,23 +527,76 @@ pub fn resize_to_content(window: Window, height: f64) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-/// Widens the panel for the settings page, and narrows it back when the page closes (§7.6).
+/// Gives the window the width the frontend's layout asks for (§7.6, WIN-02).
 ///
-/// The height is kept as it is: the frontend remeasures its content a moment later and
-/// [`resize_to_content`] applies the new one, so doing it here as well would be one visible
-/// jump more than necessary.
+/// The settings page, the expanded view and the panel are one decision on the other side —
+/// `App.svelte` derives it in one place — so what crosses here is the answer and never a
+/// flag per view. Three things happen, in this order:
+///
+/// 1. the layout is recorded, so the next [`resize_to_content`] keeps the same width;
+/// 2. the window is **moved** if the width changed, so that the edge the user aimed at stays
+///    where it is and the window cannot grow off its screen ([`window::anchored_position`]);
+/// 3. the width is applied, with the height untouched — the frontend remeasures its content
+///    a moment later and [`resize_to_content`] applies the new one, so doing it here as well
+///    would be one visible jump more than necessary.
 ///
 /// # Errors
 ///
 /// The window manager's message when it refuses the size.
 #[tauri::command]
-pub fn set_wide_layout(window: Window, wide: bool) -> Result<(), String> {
-    let ui = window.app_handle().state::<Ui>();
-    ui.set_wide(wide);
-    let width = ui.window_width();
+pub fn set_window_layout(window: Window, layout: WindowLayout) -> Result<(), String> {
+    let app = window.app_handle();
+    let ui = app.state::<Ui>();
+    let before = ui.window_width();
+    ui.set_layout(layout);
+    let width = layout.width();
+    // Only a real change moves the window: a repeated call for the layout already in force
+    // would otherwise clamp a panel the user had deliberately dragged half off the screen.
+    if (width - before).abs() > f64::EPSILON {
+        anchor_to_width(&window, width);
+    }
     window
         .set_size(LogicalSize::new(width, current_logical_height(&window)))
         .map_err(|error| error.to_string())
+}
+
+/// Moves the window so that a width change keeps the edge nearest the screen's edge (§7.6).
+///
+/// Everything here is the plumbing: reading the monitor, the position and the size, turning
+/// the logical width into the physical pixels the position is in, and putting the window
+/// where [`window::anchored_position`] says. The arithmetic itself is that function, which is
+/// pure and unit-tested. A window with no monitor, no position or no size is left alone —
+/// there is nothing sensible to compute against, and the size change below still happens.
+fn anchor_to_width(window: &Window, next_logical_width: f64) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let physical = next_logical_width * scale;
+    if !physical.is_finite() || physical < 1.0 {
+        return;
+    }
+    let next = window::anchored_position(
+        window::Rect {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        },
+        window::work_area_of(&monitor),
+        physical.round() as u32,
+    );
+    if let Err(error) = window.set_position(PhysicalPosition::new(next.x, next.y)) {
+        tracing::warn!(error = %error, "the overlay window refused the anchored position");
+    }
 }
 
 /// How tall the window is now, in the logical units [`LogicalSize`] takes.
@@ -552,16 +685,46 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_layout_is_wider_than_the_panel_and_the_panel_is_the_default() {
-        // §7.6: the wider layout is temporary, so a fresh `Ui` is at the fixed width of
-        // WIN-02 and going back to it is what closing the settings page does.
+    fn every_layout_has_its_own_width_and_the_panel_is_the_default() {
+        // §7.6: neither the settings page nor the expanded view is remembered, so a fresh
+        // `Ui` is at the fixed width of WIN-02 and coming back to it is what leaving either
+        // of them does.
         let ui = Ui::default();
+        assert_eq!(ui.layout(), WindowLayout::Panel);
         assert_eq!(ui.window_width(), WINDOW_WIDTH);
-        ui.set_wide(true);
-        assert_eq!(ui.window_width(), SETTINGS_WINDOW_WIDTH);
-        ui.set_wide(false);
+        for layout in [
+            WindowLayout::Settings,
+            WindowLayout::Expanded,
+            WindowLayout::Panel,
+        ] {
+            ui.set_layout(layout);
+            assert_eq!(ui.layout(), layout);
+            assert_eq!(ui.window_width(), layout.width());
+        }
         assert_eq!(ui.window_width(), WINDOW_WIDTH);
         const { assert!(SETTINGS_WINDOW_WIDTH > WINDOW_WIDTH) };
+        const { assert!(EXPANDED_WINDOW_WIDTH > SETTINGS_WINDOW_WIDTH) };
+    }
+
+    #[test]
+    fn the_three_layouts_are_spelled_the_way_the_frontend_spells_them() {
+        // The word itself crosses the bridge, so a rename on one side alone would leave the
+        // window asking for a layout the command cannot deserialise — and the panel would
+        // never widen again, silently.
+        for (layout, name) in [
+            (WindowLayout::Panel, "panel"),
+            (WindowLayout::Settings, "settings"),
+            (WindowLayout::Expanded, "expanded"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(layout).expect("a layout serialises"),
+                serde_json::Value::String(name.to_owned())
+            );
+            assert!(
+                BRIDGE_TS.contains(&format!("'{name}'")),
+                "src/bridge.ts does not mention the layout {name}"
+            );
+        }
     }
 
     #[test]

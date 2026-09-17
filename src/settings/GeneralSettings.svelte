@@ -19,12 +19,22 @@
     second button cancels rather than dismissing a question for ever.
   - **Collapse on a timer** is the R-10 fallback, off unless asked for: it shrinks a panel
     somebody may be reading, which is only worth it where the blur event is unreliable.
+
+  # The controls are the platform's, wearing something else
+
+  The language choice looks like a segmented control and the two settings look like switches,
+  and all three **are** what they were: three `<input type="radio">` in one group, and two
+  `<input type="checkbox">`. Nothing here carries `role="switch"` or rebuilds a control out of
+  buttons, because that is how a page loses the keyboard, the form semantics and the labels
+  that a test and a screen reader both read. What changes is the paint: `appearance: none` and
+  a knob drawn by the stylesheet.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
 
   import { bridge } from '../bridge';
   import { resolveLanguage, setLanguage, systemLanguages, t, type Language } from '../i18n';
+  import { keycaps } from '../keys';
   import { fallbackIsOn, loadWindowSettings } from '../overlay/collapse.svelte';
   import ShortcutRecorder from '../overlay/ShortcutRecorder.svelte';
 
@@ -142,69 +152,89 @@
   <h2>{t('settings.general')}</h2>
 
   <fieldset class="settings-group">
-    <legend>{t('settings.language')}</legend>
-    {#each LANGUAGE_CHOICES as choice (choice.value)}
-      <label>
+    <legend class="section-label">{t('settings.language')}</legend>
+    <div class="seg">
+      {#each LANGUAGE_CHOICES as choice (choice.value)}
+        <label class="seg-option">
+          <input
+            type="radio"
+            name="language"
+            value={choice.value}
+            checked={chosen === choice.value}
+            onchange={() => void chooseLanguage(choice.value)}
+          />
+          <span class="seg-pill">{t(choice.labelKey)}</span>
+        </label>
+      {/each}
+    </div>
+  </fieldset>
+
+  <fieldset class="settings-group">
+    <legend class="section-label">{t('settings.startup')}</legend>
+    <div class="settings-box">
+      <p class="settings-explain">{t('onboarding.autostartText')}</p>
+      <label class="switch-row">
+        <span class="switch-text">{t('onboarding.autostart')}</span>
         <input
-          type="radio"
-          name="language"
-          value={choice.value}
-          checked={chosen === choice.value}
-          onchange={() => void chooseLanguage(choice.value)}
+          type="checkbox"
+          class="switch"
+          bind:checked={autostart}
+          onchange={() => void chooseAutostart(autostart)}
         />
-        {t(choice.labelKey)}
       </label>
-    {/each}
+    </div>
   </fieldset>
 
   <fieldset class="settings-group">
-    <legend>{t('settings.startup')}</legend>
-    <p class="settings-explain">{t('onboarding.autostartText')}</p>
-    <label>
-      <input
-        type="checkbox"
-        bind:checked={autostart}
-        onchange={() => void chooseAutostart(autostart)}
-      />
-      {t('onboarding.autostart')}
-    </label>
-  </fieldset>
-
-  <fieldset class="settings-group">
-    <legend>{t('settings.shortcut')}</legend>
-    {#if accelerator !== null}
-      <p class="settings-explain">{t('settings.shortcutInForce', { accelerator })}</p>
-      {#if !shortcutRegistered}
-        <p class="settings-problem" role="alert">{t('settings.shortcutRefused')}</p>
+    <legend class="section-label">{t('settings.shortcut')}</legend>
+    <div class="settings-box">
+      {#if accelerator !== null}
+        <!--
+          The combination as the keys a person presses. The sentence around them is the
+          catalogue's, with its placeholder left empty: the caps *are* the accelerator, and
+          `Ctrl` and `Alt` are the same word in both languages (`keys.ts`).
+        -->
+        <p class="settings-shortcut">
+          <span class="settings-said">{t('settings.shortcutInForce', { accelerator: '' })}</span>
+          <span class="keycaps">
+            {#each keycaps(accelerator) as cap, index (index)}<span class="kbd">{cap}</span>{/each}
+          </span>
+        </p>
+        {#if !shortcutRegistered}
+          <p class="settings-problem" role="alert">{t('settings.shortcutRefused')}</p>
+        {/if}
       {/if}
-    {/if}
-    {#if recording}
-      <ShortcutRecorder
-        onsaved={() => {
-          recording = false;
-          void loadShortcut();
-        }}
-        oncancel={() => (recording = false)}
-        cancelLabel={t('sheet.cancel')}
-      />
-    {:else}
-      <button type="button" class="button button-quiet" onclick={() => (recording = true)}>
-        {t('settings.shortcutChange')}
-      </button>
-    {/if}
+      {#if recording}
+        <ShortcutRecorder
+          onsaved={() => {
+            recording = false;
+            void loadShortcut();
+          }}
+          oncancel={() => (recording = false)}
+          cancelLabel={t('sheet.cancel')}
+        />
+      {:else}
+        <button type="button" class="button" onclick={() => (recording = true)}>
+          {t('settings.shortcutChange')}
+        </button>
+      {/if}
+    </div>
   </fieldset>
 
   <fieldset class="settings-group">
-    <legend>{t('settings.panel')}</legend>
-    <p class="settings-explain">{t('settings.collapseFallbackText')}</p>
-    <label>
-      <input
-        type="checkbox"
-        bind:checked={collapseFallback}
-        onchange={() => void chooseCollapseFallback(collapseFallback)}
-      />
-      {t('settings.collapseFallback')}
-    </label>
+    <legend class="section-label">{t('settings.panel')}</legend>
+    <div class="settings-box">
+      <p class="settings-explain">{t('settings.collapseFallbackText')}</p>
+      <label class="switch-row">
+        <span class="switch-text">{t('settings.collapseFallback')}</span>
+        <input
+          type="checkbox"
+          class="switch"
+          bind:checked={collapseFallback}
+          onchange={() => void chooseCollapseFallback(collapseFallback)}
+        />
+      </label>
+    </div>
   </fieldset>
 
   {#if problem !== null}

@@ -110,6 +110,38 @@ pub fn clamp_into(position: Position, monitor: Rect, size: (u32, u32)) -> Positi
     }
 }
 
+/// Where the window goes when its **width** changes (§7.6: the expanded view and back).
+///
+/// The window is undecorated and never resizable, so a width change is something the
+/// application does to a window the user has placed: the least surprising thing it can do is
+/// leave the edge they aimed at where it is. A panel dragged against the right of the screen
+/// keeps its right edge and grows leftwards; one on the left keeps its left edge and grows
+/// rightwards. Which of the two it is is decided by the window's own centre against the
+/// monitor's — not by the distance to each edge, which flips on a window that is already
+/// wider than half the screen.
+///
+/// Whatever comes out is pushed back inside the monitor by [`clamp_into`], so a window near
+/// an edge cannot be widened off the screen it is on. The height is not touched: the
+/// frontend remeasures its content and `super::resize_to_content` applies the new one.
+#[must_use]
+pub fn anchored_position(current: Rect, monitor: Rect, next_width: u32) -> Position {
+    let width = i64::from(current.width);
+    let next = i64::from(next_width);
+    let centre = i64::from(current.x) + width / 2;
+    let monitor_centre = i64::from(monitor.x) + i64::from(monitor.width) / 2;
+    let x = if centre > monitor_centre {
+        // The right edge stays: the left one moves by the whole difference.
+        i64::from(current.x) + width - next
+    } else {
+        i64::from(current.x)
+    };
+    let start = Position {
+        x: i32::try_from(x).unwrap_or(if x < 0 { i32::MIN } else { i32::MAX }),
+        y: current.y,
+    };
+    clamp_into(start, monitor, (next_width, current.height))
+}
+
 /// The rectangle a Tauri monitor occupies.
 fn bounds_of(monitor: &Monitor) -> Rect {
     Rect {
@@ -117,6 +149,23 @@ fn bounds_of(monitor: &Monitor) -> Rect {
         y: monitor.position().y,
         width: monitor.size().width,
         height: monitor.size().height,
+    }
+}
+
+/// The part of a monitor a window may occupy: everything but the taskbar and the docks.
+///
+/// Used where the window is being *moved by the application* rather than by the user — the
+/// width change of §7.6 — so that an expanded window does not end up under the taskbar. The
+/// remembered positions of WIN-02 keep using the whole monitor ([`bounds_of`]): a user who
+/// dragged the panel half over their taskbar meant to.
+#[must_use]
+pub fn work_area_of(monitor: &Monitor) -> Rect {
+    let area = monitor.work_area();
+    Rect {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width,
+        height: area.size.height,
     }
 }
 
@@ -311,6 +360,131 @@ mod tests {
         assert_eq!(
             clamp_into(Position { x: 500, y: 400 }, second, (360, 480)),
             Position { x: -360, y: 400 }
+        );
+    }
+
+    #[test]
+    fn widening_a_panel_on_the_left_keeps_its_left_edge() {
+        // 360 -> 720 at x = 200: the window grows rightwards and does not move.
+        let panel = Rect {
+            x: 200,
+            y: 300,
+            width: 360,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(panel, SCREEN, 720),
+            Position { x: 200, y: 300 }
+        );
+    }
+
+    #[test]
+    fn widening_a_panel_on_the_right_keeps_its_right_edge() {
+        // The usual place for an always-on-top panel. Right edge 1900 before and after.
+        let panel = Rect {
+            x: 1540,
+            y: 300,
+            width: 360,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(panel, SCREEN, 720),
+            Position { x: 1180, y: 300 }
+        );
+    }
+
+    #[test]
+    fn narrowing_undoes_the_widening_exactly() {
+        // Restore is Expand read backwards: the edge that stayed still stays still again.
+        let expanded = Rect {
+            x: 1180,
+            y: 300,
+            width: 720,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(expanded, SCREEN, 360),
+            Position { x: 1540, y: 300 }
+        );
+        let left = Rect {
+            x: 200,
+            y: 300,
+            width: 720,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(left, SCREEN, 360),
+            Position { x: 200, y: 300 }
+        );
+    }
+
+    #[test]
+    fn a_window_that_would_grow_off_the_screen_is_pushed_back_in() {
+        // Against the right edge of a monitor whose work area stops before it: the anchored
+        // position is outside, so the clamp brings the whole window back (WIN-02's rule).
+        let panel = Rect {
+            x: 1860,
+            y: 1000,
+            width: 360,
+            height: 480,
+        };
+        let work = Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        assert_eq!(
+            anchored_position(panel, work, 720),
+            Position { x: 1200, y: 560 }
+        );
+    }
+
+    #[test]
+    fn a_panel_exactly_in_the_middle_grows_rightwards() {
+        // The tie goes to the left edge: `>` and not `>=`, so a centred window has one answer
+        // and not two, and Expand followed by Restore puts it back where it was.
+        let panel = Rect {
+            x: 780,
+            y: 0,
+            width: 360,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(panel, SCREEN, 720),
+            Position { x: 780, y: 0 }
+        );
+    }
+
+    #[test]
+    fn a_panel_on_a_second_monitor_is_anchored_against_that_monitor() {
+        let second = Rect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        // Left half of the second screen, whose coordinates are negative throughout.
+        let panel = Rect {
+            x: -1800,
+            y: 100,
+            width: 360,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(panel, second, 720),
+            Position { x: -1800, y: 100 }
+        );
+        // Right half of it.
+        let right = Rect {
+            x: -500,
+            y: 100,
+            width: 360,
+            height: 480,
+        };
+        assert_eq!(
+            anchored_position(right, second, 720),
+            Position { x: -860, y: 100 }
         );
     }
 

@@ -10,6 +10,13 @@
   cancels.** It is a single-line input for that reason — a textarea would make Enter a
   newline, and the design gives Enter to sending.
 
+  The field is the largest thing on the screen and the only one that opens focused, because
+  it is the one thing the user came here to fill in; everything else is quiet around it. The
+  chevron beside the selector and the dot in front of it are drawn by the stylesheet — the
+  `appearance: none` of a styled `<select>` takes the platform's arrow with it, and the dot
+  says the session is live. Neither is a control: the `<select>` is the control, with the
+  semantics it was born with.
+
   What happens on send is the Rust side's (`create_request`): the entry is queued, the tab
   appears in "waiting for spec" at once, the sentence goes on the clipboard in the user's
   language and the session's terminal is brought forward if it can be found. Nothing here
@@ -26,6 +33,7 @@
   import { bridge } from '../bridge';
   import { t } from '../i18n';
   import type { SessionChoice } from '../model';
+  import Icon from '../overlay/Icon.svelte';
   import { refreshTabs, select } from '../overlay/state.svelte';
   import { resetView } from '../view-state.svelte';
 
@@ -92,44 +100,54 @@
 <section class="view" data-view="request">
   <h1>{t('view.request')}</h1>
 
-  {#if sessions.length === 0}
-    <p class="request-no-session" role="status">{t('request.noSession')}</p>
-  {:else}
-    <label class="request-session-label" for="request-session">{t('request.session')}</label>
-    <select
-      id="request-session"
-      class="request-session"
-      bind:value={chosen}
-      onkeydown={(event) => {
-        if (event.key === 'Escape') {
-          cancel();
-        }
-      }}
-    >
-      {#each sessions as session (session.sessionRef)}
-        <option value={session.sessionRef}>{session.label}</option>
-      {/each}
-    </select>
-  {/if}
+  <div class="card">
+    {#if sessions.length === 0}
+      <p class="request-no-session" role="status">{t('request.noSession')}</p>
+    {:else}
+      <div class="field">
+        <label class="request-session-label" for="request-session">{t('request.session')}</label>
+        <div class="select-wrap">
+          <span class="select-dot"></span>
+          <select
+            id="request-session"
+            class="request-session"
+            bind:value={chosen}
+            onkeydown={(event) => {
+              if (event.key === 'Escape') {
+                cancel();
+              }
+            }}
+          >
+            {#each sessions as session (session.sessionRef)}
+              <option value={session.sessionRef}>{session.label}</option>
+            {/each}
+          </select>
+          <span class="select-chevron"><Icon name="chevron" size={14} /></span>
+        </div>
+      </div>
+    {/if}
 
-  <label class="request-what-label" for="request-what">{t('request.what')}</label>
-  <input
-    id="request-what"
-    class="request-what"
-    type="text"
-    bind:this={field}
-    bind:value={text}
-    onkeydown={(event) => {
-      if (event.key === 'Escape') {
-        cancel();
-      } else if (event.key === 'Enter') {
-        event.preventDefault();
-        void send();
-      }
-    }}
-  />
+    <div class="field">
+      <label class="request-what-label" for="request-what">{t('request.what')}</label>
+      <input
+        id="request-what"
+        class="request-what"
+        type="text"
+        bind:this={field}
+        bind:value={text}
+        onkeydown={(event) => {
+          if (event.key === 'Escape') {
+            cancel();
+          } else if (event.key === 'Enter') {
+            event.preventDefault();
+            void send();
+          }
+        }}
+      />
+    </div>
 
-  <p class="request-hint">{t('request.hint')}</p>
+    <p class="request-hint">{t('request.hint')}</p>
+  </div>
 
   {#if problem !== null}
     <p class="request-problem" role="alert">{problem}</p>
@@ -139,7 +157,13 @@
   {/if}
 
   <div class="request-actions" role="group" aria-label={t('overlay.actions')}>
-    <button type="button" class="button" disabled={!ready || sending} onclick={() => void send()}>
+    <button
+      type="button"
+      class="button button-primary request-send"
+      disabled={!ready || sending}
+      onclick={() => void send()}
+    >
+      <Icon name="send" size={14} />
       {t('request.send')}
     </button>
     <button type="button" class="button button-quiet" onclick={cancel}>

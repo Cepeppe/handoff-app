@@ -7,18 +7,25 @@
   happened to their words afterwards. Note annotates the step locally (RESP-03) and is left
   exactly as it was written.
 
-  The two levels are treated as DET-01 asks. A **certain** match is already replaced in the
-  preview and there is no way to put it back. A **suspected** one is marked in the preview
-  and is sent as it was written: the decision is the user's, and here that decision is the
-  keyboard they are already holding.
+  The two levels are treated as DET-01 asks, and they say so differently on purpose. A
+  **certain** match is already replaced in the preview, and its line carries the shield in the
+  accent colour: something was done, and there is no way to put it back. A **suspected** one is
+  marked in the preview and is sent as it was written, in the warning colour: the decision is
+  the user's, and here that decision is the keyboard they are already holding.
 
   Enter with a modifier sends, Escape cancels; a plain Enter is a newline, because these are
-  sentences and not a search box.
+  sentences and not a search box. The keycap at the end of the row says both, in the keys of
+  the machine it is running on (`keys.ts`).
+
+  It takes the action bar's place rather than floating over it: the window's height follows
+  its content (WIN-02), so a sheet is one more thing the panel is tall enough for.
 -->
 <script lang="ts">
   import { bridge } from '../bridge';
   import { t } from '../i18n';
+  import { sendModifier } from '../keys';
   import type { ActionName, Redacted } from '../model';
+  import Icon from './Icon.svelte';
 
   const {
     handoffId,
@@ -77,21 +84,33 @@
 
   {#if redacted !== null && (redacted.kinds.length > 0 || redacted.reasons.length > 0)}
     {#if redacted.kinds.length > 0}
-      <p class="sheet-redacted">{t('sheet.redacted', { kinds: redacted.kinds.join(', ') })}</p>
+      <p class="sheet-redacted">
+        <Icon name="shield" />
+        <span>{t('sheet.redacted', { kinds: redacted.kinds.join(', ') })}</span>
+      </p>
     {/if}
     {#if redacted.reasons.length > 0}
-      <p class="sheet-suspected">{t('sheet.suspected')}</p>
+      <p class="sheet-suspected">
+        <Icon name="warning" size={15} />
+        <span>{t('sheet.suspected')}</span>
+      </p>
     {/if}
-    <p class="sheet-preview" aria-label={t('sheet.willSend')}>{#each redacted.segments as segment,
-        index (index)}{#if segment.suspected}<mark class="sheet-mark">{segment.text}</mark>{:else}{segment.text}{/if}{/each}</p>
+    <div class="sheet-will-send">
+      <span class="section-label">{t('sheet.willSend')}</span>
+      <p class="sheet-preview" aria-label={t('sheet.willSend')}>{#each redacted.segments as segment,
+          index (index)}{#if segment.suspected}<mark class="sheet-mark">{segment.text}</mark>{:else}{segment.text}{/if}{/each}</p>
+    </div>
   {/if}
 
   <div class="sheet-actions">
-    <button type="button" class="button" disabled={!ready} onclick={send}>
+    <button type="button" class="button button-primary" disabled={!ready} onclick={send}>
+      <Icon name="send" size={14} />
       {action === 'note' ? t('sheet.save') : t('sheet.send')}
     </button>
     <button type="button" class="button button-quiet" onclick={oncancel}>
       {t('sheet.cancel')}
     </button>
+    <span class="sheet-gap"></span>
+    <span class="kbd sheet-hint">{t('sheet.hint', { modifier: sendModifier() })}</span>
   </div>
 </section>

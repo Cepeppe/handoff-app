@@ -1,5 +1,5 @@
 <!--
-  The overlay: the tab strip, the banner of §8.4, whichever of the views of §7.6 the tab's
+  The overlay: the handoff list, the banner of §8.4, whichever of the views of §7.6 the tab's
   state calls for, the action bar and the sheets behind Ask, Note, Defer and Abandon.
 
   What it owns is the wiring, and nothing else: which tab is selected and what changed while
@@ -13,6 +13,12 @@
   reading of "is it detached or is it deferred" here would be a second answer to a question
   that already has one. Waiting-for-spec, Question-pending and Verifying are the three rows
   that replace the step view; everything else guides, and a final tab shows its outcome.
+
+  **Two shapes, one content.** The narrow panel of WIN-02 stacks the list above the step; the
+  expanded view of §7.6 puts the list in a column on the left and the step in one of its own.
+  What is in them is identical — the same components, the same actions, the same sheets — so
+  the shape is read once here (`window-form.svelte.ts`) and everything below it is shared.
+  The window's *width* is not decided here: `App.svelte` derives that in one place.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
@@ -22,6 +28,7 @@
   import type { ActionName, HandoffView, RequestChoice } from '../model';
   import ActionBar from '../overlay/ActionBar.svelte';
   import CrashNotice from '../overlay/CrashNotice.svelte';
+  import HandoffRail from '../overlay/HandoffRail.svelte';
   import History from '../overlay/History.svelte';
   import QuestionPending from '../overlay/QuestionPending.svelte';
   import SessionPicker from '../overlay/SessionPicker.svelte';
@@ -43,6 +50,7 @@
     sessionChoices,
     showNotice,
   } from '../overlay/state.svelte';
+  import { form } from '../window-form.svelte';
 
   /** The sheet on screen, when one is open (RESP-02: Ask and Note are distinct). */
   let sheet = $state<ActionName | null>(null);
@@ -60,6 +68,7 @@
   const tabs = $derived(allTabs());
   const notice = $derived(currentNotice());
   const choices = $derived(sessionChoices());
+  const expanded = $derived(form() === 'expanded');
 
   /** The three actions that send what the user typed, and are therefore scanned (§7.10). */
   const SCANNED: ReadonlySet<ActionName> = new Set<ActionName>(['ask', 'defer', 'abandon']);
@@ -160,14 +169,17 @@
   });
 </script>
 
-<section class="view" data-view="overlay">
-  <TabStrip {tabs} onact={(id, action) => void runOn(id, action)} />
-
+<!--
+  The content of the tab, drawn identically in both shapes. `framed` is the one difference:
+  in the panel the step is a card on the surface colour, and in the expanded view the column
+  it sits in already is that surface.
+-->
+{#snippet body()}
   <SessionPicker {choices} onanswer={(sessionRef) => void answerSessionPicker(sessionRef)} />
 
   <!--
     §7.14: the launch after a crash. Above the tab it is about nothing in particular — it is
-    a fact about the application and not about a handoff — and below the strip, so it never
+    a fact about the application and not about a handoff — and below the list, so it never
     takes the place of the work the user came for.
   -->
   <CrashNotice onfailed={(text) => showNotice({ kind: 'error', text })} />
@@ -223,38 +235,40 @@
       </section>
     {/if}
 
-    {#if view.goal !== null}
-      <h1 class="goal">{view.goal}</h1>
-    {/if}
-    {#if view.location !== null}
-      <p class="location">{view.location}</p>
-    {/if}
-    {#if view.resumedFrom !== null}
-      <p class="resumed-from">
-        {t('overlay.resumedFrom', {
-          label: `${view.resumedFrom.agent} · ${view.resumedFrom.project}`,
-        })}
-      </p>
-    {/if}
-    <!--
-      The request this tab answers, and the one-click correction of FM-20. A spec that quoted
-      no `request_id` was linked to the session's oldest open request (OPEN-08), which two
-      open requests can get the wrong way round (§12.4); **Change** lists the others and
-      relinking is a single action the store applies for both sides at once.
-    -->
-    {#if view.requestText !== null && view.uiState !== 'waitingForSpec'}
-      <p class="request-text">
-        {view.linkedRequest === null ? t('overlay.request') : t('overlay.linkedRequest')}:
-        {view.requestText}
-        <button
-          type="button"
-          class="button button-quiet"
-          onclick={() => void offerRelink(view.tab.id)}
-        >
-          {t('overlay.changeRequest')}
-        </button>
-      </p>
-    {/if}
+    <header class="tab-head">
+      {#if view.goal !== null}
+        <h1 class="goal">{view.goal}</h1>
+      {/if}
+      {#if view.location !== null}
+        <p class="location">{view.location}</p>
+      {/if}
+      {#if view.resumedFrom !== null}
+        <p class="resumed-from">
+          {t('overlay.resumedFrom', {
+            label: `${view.resumedFrom.agent} · ${view.resumedFrom.project}`,
+          })}
+        </p>
+      {/if}
+      <!--
+        The request this tab answers, and the one-click correction of FM-20. A spec that quoted
+        no `request_id` was linked to the session's oldest open request (OPEN-08), which two
+        open requests can get the wrong way round (§12.4); **Change** lists the others and
+        relinking is a single action the store applies for both sides at once.
+      -->
+      {#if view.requestText !== null && view.uiState !== 'waitingForSpec'}
+        <p class="request-text">
+          {view.linkedRequest === null ? t('overlay.request') : t('overlay.linkedRequest')}:
+          {view.requestText}
+          <button
+            type="button"
+            class="button button-quiet button-link"
+            onclick={() => void offerRelink(view.tab.id)}
+          >
+            {t('overlay.changeRequest')}
+          </button>
+        </p>
+      {/if}
+    </header>
 
     {#if relinking !== null}
       <section class="relink" role="group" aria-label={t('overlay.chooseRequest')}>
@@ -293,6 +307,8 @@
           oncancel={() => (sheet = null)}
         />
       {/if}
+
+      <History rounds={view.history} />
     {:else}
       {#if view.pending !== null}
         <QuestionPending pending={view.pending} />
@@ -306,13 +322,16 @@
         />
       {/if}
 
-      <StepView {view} />
+      <StepView {view} framed={!expanded} />
+
+      <History rounds={view.history} />
 
       {#if sheet === null}
         <ActionBar
           handoffId={view.tab.id}
           actions={view.actions}
           lastStep={view.step?.last ?? false}
+          {expanded}
           onact={start}
         />
       {:else}
@@ -326,7 +345,21 @@
         />
       {/if}
     {/if}
-
-    <History rounds={view.history} />
   {/if}
-</section>
+{/snippet}
+
+{#if expanded}
+  <section class="view view-expanded" data-view="overlay">
+    <HandoffRail {tabs} onact={(id, action) => void runOn(id, action)} />
+    <div class="column">
+      {@render body()}
+    </div>
+  </section>
+{:else}
+  <section class="view" data-view="overlay">
+    <TabStrip {tabs} onact={(id, action) => void runOn(id, action)} />
+    <div class="column">
+      {@render body()}
+    </div>
+  </section>
+{/if}

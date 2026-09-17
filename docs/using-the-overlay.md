@@ -2,9 +2,26 @@
 
 ## The panel
 
-Baton is a narrow panel that stays on top of your other windows. Drag it by its header;
+Baton is a narrow panel that stays on top of your other windows. Drag it by its title bar;
 Baton remembers where you put it on each monitor. Closing it hides it to the tray — to quit
 Baton, use **Quit** in the tray icon's menu.
+
+At the right of the title bar there are three buttons, and they are the same three on every
+screen Baton shows:
+
+| Button | What it does |
+|---|---|
+| **Minimize to tray** | puts Baton away. Nothing is lost; the tray icon brings it back |
+| **Shrink to bar** | shrinks the panel to the one-line bar, without waiting for you to click elsewhere. Available while you are following a step |
+| **Expand** | makes the window wider, with your handoffs listed down the left. **Restore** puts it back |
+
+A button that would do nothing on the screen you are on is dimmed rather than removed, and its
+tooltip says why. Double-clicking an empty part of the title bar expands and restores too.
+
+The expanded view lasts as long as Baton is running: it is not remembered between launches,
+and it goes back to the narrow panel by itself while you are in Settings or writing a new
+request. Clicking elsewhere still shrinks it to the bar, and clicking the bar brings back
+whichever of the two you were in.
 
 The tray icon is always there. Its menu has **Show**, **New request**, **Settings** and
 **Quit**. A dot on the icon means handoffs are open, and the tooltip says how many.
@@ -40,9 +57,18 @@ when the agent sent corrected steps after a failed check.
 | **Ask** | asks the agent a question about this step; the reply appears on the same step |
 | **Screenshot** | shows the agent what you see, after a mandatory preview (see [Screenshots and privacy](screenshots-and-privacy.md)) |
 | **Note** | a note for yourself on this step; the notes are reported to the agent at the end |
+
+Three more are under **More**, the last button of the row, because they end something rather
+than move it along:
+
+| Button | What it does |
+|---|---|
 | **Skip** | skips the step; the agent is told which steps were skipped |
 | **Defer** | you will come back to it later; the agent is told, and resumes when you are ready |
 | **Abandon** | stops the handoff; you can say why |
+
+**Resume** and **Close it** are never under **More**: on a parked handoff and on an outcome
+nobody collected they are the main button.
 
 What you type in **Ask**, **Defer** and **Abandon** is shown under *What the agent will read*
 before you send it. A secret Baton recognises for certain is taken out; words that only *may*
@@ -53,9 +79,15 @@ A handoff deferred twice is **parked**: it waits in the Waiting group until you 
 
 ## The collapsed bar
 
-When you click outside the panel it shrinks to one line: the current step and **Done**,
-**Ask**, **Screenshot**. Click it to open the panel again. If it stays open when it should
-not, Settings → General → Panel can also shrink it a few seconds after your last click.
+When you click outside the panel it shrinks to one line: which step you are on, its text, and
+**Done**, **Ask** and **Screenshot** — the last two as icons, because the bar is one line
+wide. Pressing **Screenshot** there opens the panel first and asks which capture in it.
+
+At the right end are **Minimize to tray** and **Open the panel**. Clicking the line itself
+opens the panel as well, and it comes back in the shape you left it — narrow or expanded.
+
+If the panel stays open when it should not, Settings → General → Panel can also shrink it a
+few seconds after your last click.
 
 ## What the banners mean
 

@@ -116,6 +116,17 @@ async function open(handoff: HandoffView = view(), events: FakeEvents = {}) {
   return bridge;
 }
 
+/**
+ * Opens the More menu and waits for it, because Skip, Defer and Abandon live in it.
+ *
+ * They are one press deeper than Done, Ask, Screenshot and Note (RESP-08 and `MoreMenu`):
+ * the three that end something are not in the row a person presses while they work.
+ */
+async function openMore(): Promise<void> {
+  screen.getByRole('button', { name: 'More' }).click();
+  await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
+}
+
 beforeEach(() => {
   resetOverlay();
   setLanguage(DEFAULT_LANGUAGE);
@@ -316,16 +327,62 @@ describe('the overlay', () => {
   });
 
   it('skips and defers straight through, with no sheet for the first', async () => {
+    // Skip, Defer and Abandon are one press deeper than Done and Ask, in the More menu: the
+    // three that end something are not in the row a person presses while they work.
     const bridge = await open();
 
-    screen.getByRole('button', { name: 'Skip' }).click();
+    await openMore();
+    screen.getByRole('menuitem', { name: 'Skip' }).click();
     await waitFor(() => expect(bridge.act).toHaveBeenCalledWith(ID, 'skip', undefined));
 
-    screen.getByRole('button', { name: 'Defer' }).click();
+    await openMore();
+    screen.getByRole('menuitem', { name: 'Defer' }).click();
     await tick();
     // RESP-05: a reason is welcome and never required.
     screen.getByRole('button', { name: 'Send' }).click();
     await waitFor(() => expect(bridge.act).toHaveBeenCalledWith(ID, 'defer', ''));
+  });
+
+  it('keeps Skip, Defer and Abandon out of the row that is always on screen (RESP-08)', async () => {
+    await open();
+
+    for (const hidden of ['Skip', 'Defer', 'Abandon']) {
+      expect(screen.queryByRole('button', { name: hidden })).toBeNull();
+    }
+    expect(screen.getByRole('button', { name: 'More' })).toBeDefined();
+
+    await openMore();
+    // Abandon stays immediately after Defer, the separator above it notwithstanding.
+    expect(
+      screen.getAllByRole('menuitem').map((item) => item.textContent?.trim()),
+    ).toEqual(['Skip', 'Defer', 'Abandon']);
+  });
+
+  it('works the More menu from the keyboard alone', async () => {
+    await open();
+    const more = screen.getByRole('button', { name: 'More' });
+    more.focus();
+
+    // ArrowDown opens it on the first item, and the arrows wrap around it.
+    await fireEvent.keyDown(more, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('menu')).toBeDefined());
+    const menu = screen.getByRole('menu');
+    expect(document.activeElement?.textContent?.trim()).toBe('Skip');
+
+    await fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement?.textContent?.trim()).toBe('Abandon');
+    await fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement?.textContent?.trim()).toBe('Skip');
+    await fireEvent.keyDown(menu, { key: 'End' });
+    expect(document.activeElement?.textContent?.trim()).toBe('Abandon');
+    await fireEvent.keyDown(menu, { key: 'Home' });
+    expect(document.activeElement?.textContent?.trim()).toBe('Skip');
+
+    // Escape closes it and gives the focus back, so nobody is left on what is gone.
+    await fireEvent.keyDown(menu, { key: 'Escape' });
+    await tick();
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(more);
   });
 
   it('offers Screenshot, and pressing it asks which capture rather than taking one', async () => {
@@ -351,10 +408,39 @@ describe('the overlay', () => {
     await open(parked);
 
     expect(screen.getByText('Parked; resume when you want')).toBeDefined();
+    // Resume is the main action of a parked handoff, so it is never hidden in the menu.
     expect(screen.getByRole('button', { name: 'Resume' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Skip' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Abandon' })).toBeDefined();
+
+    await openMore();
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      'Abandon',
+    ]);
+  });
+
+  it('never hides Resume or Close it behind More: in those states they are the action', async () => {
+    const orphan = view({
+      state: 'verified',
+      uiState: 'final',
+      step: null,
+      tab: tab({ state: 'verified', uiState: 'final', group: 'waiting', orphan: true }),
+      actions: {
+        ...ACTIONS,
+        done: false,
+        ask: false,
+        note: false,
+        skip: false,
+        defer: false,
+        abandon: false,
+        screenshot: false,
+        closeOrphan: true,
+      },
+    });
+    await open(orphan);
+
+    expect(screen.getByRole('button', { name: 'Close it' })).toBeDefined();
+    // Nothing is left for the menu, so the menu is not drawn at all.
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
   });
 
   it('quotes the spec in the verifying banner and marks a report as the agent declared it', async () => {
@@ -717,7 +803,7 @@ describe('the waiting group of the tab strip (§7.6, SRV-23, RESP-07)', () => {
   it('lists parked handoffs and orphan outcomes apart from the open ones', async () => {
     await openWaiting();
     const group = document.querySelector('.waiting-group');
-    expect(group?.textContent).toContain('Waiting (2)');
+    expect(group?.textContent).toContain('Waiting · 2');
     expect(group?.textContent).toContain('Claude Code · api');
     expect(group?.textContent).toContain('Codex · web');
   });

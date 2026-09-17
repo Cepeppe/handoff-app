@@ -23,7 +23,7 @@ import type { GeneralSettings } from '../model';
 import { fallbackIsOn, resetCollapse } from '../overlay/collapse.svelte';
 import { resetOverlay } from '../overlay/state.svelte';
 import GeneralSettings_ from '../settings/GeneralSettings.svelte';
-import { resetView, view } from '../view-state.svelte';
+import { resetView, showView, view } from '../view-state.svelte';
 import SettingsView from '../views/SettingsView.svelte';
 import { fakeBridge } from './fake-bridge';
 
@@ -39,9 +39,13 @@ function settings(overrides: Partial<GeneralSettings> = {}): GeneralSettings {
  * still in flight is a click the read then overwrites. That cannot happen to a person — the
  * reads settle in a microtask — but it happens to a test every time, and waiting for the
  * last line the load draws is what tells the two apart.
+ *
+ * The accelerator is drawn as keycaps beside that line rather than inside it, so what is
+ * waited for is the sentence with its placeholder empty — "In force:" — which is exactly
+ * what the page prints before the keys.
  */
 async function loaded(): Promise<void> {
-  await screen.findByText(t('settings.shortcutInForce', { accelerator: 'Control+Alt+H' }));
+  await screen.findByText(t('settings.shortcutInForce', { accelerator: '' }).trim());
 }
 
 beforeEach(() => {
@@ -192,7 +196,10 @@ describe('the shortcut control (OPEN-03)', () => {
     );
     render(GeneralSettings_);
 
-    await screen.findByText(t('settings.shortcutInForce', { accelerator: 'Control+Alt+H' }));
+    await loaded();
+    // The combination is printed as the keys a person presses, not as its wire spelling.
+    expect([...document.querySelectorAll('.settings-shortcut .kbd')].map((cap) => cap.textContent))
+      .toEqual(['Ctrl', 'Alt', 'H']);
     // Nothing is wrong here, so the recorder is behind a control rather than in the way.
     expect(screen.queryByText(t('shortcut.record'))).toBeNull();
 
@@ -254,15 +261,21 @@ describe('the collapse fallback (R-10)', () => {
 });
 
 describe('the settings window (§7.6)', () => {
-  it('widens the panel while it is open and gives the width back when it closes', async () => {
-    const setWideLayout = vi.fn(async () => {});
-    setBridge(fakeBridge({ generalSettings: vi.fn(async () => settings()), setWideLayout }));
+  it('widens the window while it is open and gives the width back when it closes', async () => {
+    // The page asks for no width of its own any more: `App.svelte` derives the layout from
+    // the view in one place, so what is checked is that switching to the settings and away
+    // again is what widens and narrows the window (§7.6).
+    const setWindowLayout = vi.fn(async () => {});
+    setBridge(fakeBridge({ generalSettings: vi.fn(async () => settings()), setWindowLayout }));
+    render(App);
 
-    const view_ = render(SettingsView);
-    await waitFor(() => expect(setWideLayout).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(setWindowLayout).toHaveBeenLastCalledWith('panel'));
 
-    view_.unmount();
-    await waitFor(() => expect(setWideLayout).toHaveBeenLastCalledWith(false));
+    showView('settings');
+    await waitFor(() => expect(setWindowLayout).toHaveBeenLastCalledWith('settings'));
+
+    resetView();
+    await waitFor(() => expect(setWindowLayout).toHaveBeenLastCalledWith('panel'));
   });
 
   it('lists General first and the six sections of §7.6 in the order it names them', async () => {
@@ -271,16 +284,26 @@ describe('the settings window (§7.6)', () => {
 
     await screen.findByText(t('settings.startup'));
     const nav = screen.getByRole('navigation', { name: t('view.settings') });
-    expect([...nav.querySelectorAll('button')].map((button) => button.textContent?.trim())).toEqual(
-      [
-        t('settings.general'),
-        t('install.agents'),
-        t('settings.network'),
-        t('settings.log'),
-        t('settings.runbooks'),
-        t('settings.updates'),
-      ],
-    );
+    expect(
+      [...nav.querySelectorAll('.settings-nav-item')].map((button) => button.textContent?.trim()),
+    ).toEqual([
+      t('settings.general'),
+      t('install.agents'),
+      t('settings.network'),
+      t('settings.log'),
+      t('settings.runbooks'),
+      t('settings.updates'),
+    ]);
+  });
+
+  it('has a way back to the panel that does not go through the tray (§7.6)', async () => {
+    setBridge(fakeBridge({ generalSettings: vi.fn(async () => settings()) }));
+    showView('settings');
+    render(App);
+
+    await screen.findByText(t('settings.startup'));
+    screen.getByRole('button', { name: t('settings.back') }).click();
+    await waitFor(() => expect(view()).toBe('overlay'));
   });
 });
 

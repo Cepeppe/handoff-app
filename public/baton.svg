@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The application's own mark, the one the tray shows (src-tauri/icons/baton.svg). It is
+       copied here rather than imported from the Rust side so that the window loads it from
+       its own origin: the CSP is `img-src 'self' blob:`, and a file this small would be
+       inlined as a `data:` URI by the bundler if it were imported from `src/`. -->
+  <rect width="1024" height="1024" rx="224" fill="#1f2933" />
+  <rect x="300" y="470" width="424" height="84" rx="42" fill="#f5f7fa" transform="rotate(-45 512 512)" />
+  <circle cx="330" cy="694" r="86" fill="#4c9aff" />
+  <circle cx="694" cy="330" r="86" fill="#4c9aff" />
+</svg>

@@ -184,7 +184,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ui_bridge::resize_to_content,
             ui_bridge::set_ui_language,
-            ui_bridge::set_wide_layout,
+            ui_bridge::set_window_layout,
+            ui_bridge::hide_window,
             ui_bridge::commands::list_handoffs,
             ui_bridge::commands::get_handoff_view,
             ui_bridge::commands::act,

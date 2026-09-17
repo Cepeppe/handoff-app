@@ -94,6 +94,14 @@ export const EVENT_CAPTURE_READY = 'ui://capture-ready';
 /** Stops delivering an event to the handler that returned it. */
 export type Unlisten = () => void;
 
+/**
+ * The shape the window has, which is what decides its width (§7.6, WIN-02).
+ *
+ * Spelled identically in `src-tauri/src/ui_bridge/mod.rs` (`WindowLayout`, serialised in
+ * lower case), because the two sides exchange the word itself.
+ */
+export type WindowLayout = 'panel' | 'settings' | 'expanded';
+
 /** The commands and events of the Rust side, as the frontend sees them. */
 export interface Bridge {
   /**
@@ -109,12 +117,25 @@ export interface Bridge {
   setUiLanguage(language: Language): Promise<void>;
 
   /**
-   * Widens the panel while the settings page is open and narrows it back (§7.6).
+   * Gives the window the width the layout in force asks for (§7.6, WIN-02).
    *
-   * The width is the core's, like the height: only this side knows what the monitor can
-   * show, and WIN-02 fixes the panel's own width for every other view.
+   * Three widths and no fourth: the fixed panel of WIN-02, the wider settings page, and the
+   * expanded view the user asks for with **Expand**. The width is the core's, like the
+   * height — only that side knows what the monitor can show and where the window has room
+   * to grow — and one call carries the whole decision rather than a flag per layout.
+   *
+   * The frontend derives the layout in exactly one place (`App.svelte`), so no view ever
+   * asks for a width of its own.
    */
-  setWideLayout(wide: boolean): Promise<void>;
+  setWindowLayout(layout: WindowLayout): Promise<void>;
+
+  /**
+   * Hides the window into the notification area (WIN-04).
+   *
+   * The same path as closing it: the position is remembered and written, then the window
+   * goes. Only the tray's `Quit` ends the process.
+   */
+  hideWindow(): Promise<void>;
 
   /** Settings -> General: the language, the login entry, the launch it came from (§7.16). */
   generalSettings(): Promise<GeneralSettings>;
@@ -431,8 +452,11 @@ export function tauriBridge(): Bridge {
     async setUiLanguage(language) {
       await invoke('set_ui_language', { language });
     },
-    async setWideLayout(wide) {
-      await invoke('set_wide_layout', { wide });
+    async setWindowLayout(layout) {
+      await invoke('set_window_layout', { layout });
+    },
+    async hideWindow() {
+      await invoke('hide_window');
     },
     async generalSettings() {
       return invoke<GeneralSettings>('general_settings');
@@ -647,7 +671,8 @@ export function noopBridge(): Bridge {
   return {
     async resizeToContent() {},
     async setUiLanguage() {},
-    async setWideLayout() {},
+    async setWindowLayout() {},
+    async hideWindow() {},
     async generalSettings() {
       // Outside the webview there is no settings table and no login items: the language
       // then comes from the system alone, which is the second step of the §7.16 rule.

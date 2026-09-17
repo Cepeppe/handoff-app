@@ -17,6 +17,32 @@ The design both repositories were built from — the requirements, the technical
 decisions taken while implementing it, and the task list that comments and commit messages cite
 as `T-054` — is in [`docs/design/`](docs/design/README.md).
 
+## What it looks like
+
+Baton is an always-on-top panel 360 px wide, with no title bar of the system's: it draws its
+own three window controls, and its height follows the step it is showing. The colours are the
+desktop's — there is no theme switch, because the operating system already has one.
+
+| | |
+|---|---|
+| ![The panel on a light desktop: the handoff tabs, the goal, one step with its warning, its values and the file a secret goes in, and the action bar](docs/images/panel-light.png) | ![The same panel on a dark desktop](docs/images/panel-dark.png) |
+
+**Expand** widens the window to 720 px and moves the handoffs into a column of their own, with
+the parked ones and the outcomes nobody collected under them. **Restore** puts it back. The
+wider shape lasts for the session and is never written to disk: Baton opens as the narrow
+panel every time.
+
+![The expanded view: the handoff list on the left, the step on the right, and the actions in one row along the bottom](docs/images/expanded-light.png)
+
+When you click elsewhere the panel gets out of the way and becomes one line — where you are,
+what to do, and the three buttons that stay with you: **Done**, **Ask**, **Screenshot**.
+Clicking it brings back whichever shape you were in.
+
+![The collapsed bar: the step counter and text on the left, Done, Ask and Screenshot, and the two window controls](docs/images/bar-light.png)
+
+The screenshots are the real interface with sample data in it; [`docs/using-the-overlay.md`](docs/using-the-overlay.md)
+is what every part of it does.
+
 ## Development
 
 ### Prerequisites

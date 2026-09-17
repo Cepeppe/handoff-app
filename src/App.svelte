@@ -5,13 +5,20 @@
   modes of this window rather than separate windows, so MULTI-04 ("never two windows")
   holds structurally and focus and always-on-top are managed in one place.
 
-  Three things the skeleton owns and every later view inherits:
+  Four things the skeleton owns and every later view inherits:
 
   - the header is the drag handle (WIN-02). The window has no decorations, so
     `data-tauri-drag-region` is the only way to move it, and it lives here rather than in
-    a view so that dragging works whatever is being shown.
+    a view so that dragging works whatever is being shown. Because there are no system
+    buttons either, the header also carries the three window controls of §7.6 — Minimize to
+    tray, Shrink to bar, Expand — which are the same three, in the same order, on every
+    screen.
   - the height follows the content (WIN-02). The frontend is the only side that knows how
-    tall the content is, so it measures and asks the core to resize; the width is fixed.
+    tall the content is, so it measures and asks the core to resize.
+  - **the width is derived here and nowhere else.** The collapsed bar is always the panel's
+    width, the settings page is wider, and the expanded view is wider still; one `$effect`
+    turns that into the single `setWindowLayout` call the Rust side answers. A view that
+    asked for a width of its own would be a second opinion about the same window.
   - the tray menu switches views from outside the component tree, through the bridge.
 
   The collapsed bar of WIN-03 is here rather than inside the overlay, because it replaces
@@ -26,21 +33,30 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { bridge } from './bridge';
+  import { bridge, type WindowLayout } from './bridge';
   import { captureFinished } from './capture.svelte';
   import { t } from './i18n';
   import type { ActionName } from './model';
   import CollapsedBar from './overlay/CollapsedBar.svelte';
   import ShortcutDialog from './overlay/ShortcutDialog.svelte';
+  import WindowControls from './overlay/WindowControls.svelte';
   import {
+    collapse,
     focusChanged,
     isCollapsed,
     loadWindowSettings,
     noteInteraction,
     stopIdleTimer,
   } from './overlay/collapse.svelte';
-  import { currentView, refreshCurrent, refreshTabs, showNotice } from './overlay/state.svelte';
+  import {
+    allTabs,
+    currentView,
+    refreshCurrent,
+    refreshTabs,
+    showNotice,
+  } from './overlay/state.svelte';
   import { showView, view } from './view-state.svelte';
+  import { form, toggleForm } from './window-form.svelte';
   import { VIEW_NAMES, viewTitleKey, type ViewName } from './views';
   import OnboardingView from './views/OnboardingView.svelte';
   import OverlayView from './views/OverlayView.svelte';
@@ -94,6 +110,37 @@
 
   const collapsed = $derived(isCollapsed() && collapsible !== null);
 
+  /** How many handoffs are being worked on, for the line beside the name in the header. */
+  const openCount = $derived(allTabs().filter((tab) => tab.group === 'open').length);
+
+  /** Whether the expanded view of §7.6 is a shape this screen has at all. */
+  const canExpand = $derived(view() === 'overlay');
+
+  const expanded = $derived(canExpand && form() === 'expanded');
+
+  /**
+   * The one derivation of the window's shape (§7.6, WIN-02).
+   *
+   * The order is the precedence: a collapsed window is a bar at the panel's width whatever
+   * else is true, the settings page is wide wherever it is opened from, and the expanded
+   * view exists only over the overlay. Everything else is the panel of WIN-02.
+   */
+  const layout = $derived.by((): WindowLayout => {
+    if (collapsed) {
+      return 'panel';
+    }
+    if (view() === 'settings') {
+      return 'settings';
+    }
+    return expanded ? 'expanded' : 'panel';
+  });
+
+  // The width is the Rust side's to apply, like the height: it is the side that knows what
+  // the monitor can show and where the window still has room to grow (`set_window_layout`).
+  $effect(() => {
+    void bridge().setWindowLayout(layout);
+  });
+
   /** One action from the bar, on the tab the bar is showing. */
   async function act(action: ActionName): Promise<void> {
     const handoff = collapsible;
@@ -107,6 +154,25 @@
     }
     await refreshCurrent();
     await refreshTabs();
+  }
+
+  /**
+   * A double-click on the empty part of the title bar expands and restores.
+   *
+   * It is the gesture every desktop has on a title bar, and it is the only affordance in the
+   * window that is not also a visible control — the third window control does the same thing
+   * for anyone who never tries it. The click is ignored on the buttons themselves, so
+   * pressing Minimize twice quickly does not also widen the window.
+   */
+  function headerDoubleClick(event: MouseEvent): void {
+    if (!canExpand) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest('button') !== null) {
+      return;
+    }
+    toggleForm();
   }
 
   /**
@@ -226,12 +292,34 @@
   the contents it has to follow. Measuring the panel alone would leave the window its full
   height with a one-line bar in it.
 -->
-<div class="app" bind:this={root}>
+<div class="app" class:app-expanded={expanded} bind:this={root}>
   {#if collapsed && collapsible !== null}
     <CollapsedBar view={collapsible} onact={(action) => void act(action)} />
   {:else}
-    <header class="header" data-tauri-drag-region>
-      <span class="title" data-tauri-drag-region>{t('app.name')}</span>
+    <!--
+      The double-click is a *second* way to press the third window control, which is on
+      screen beside it and reachable with the keyboard: there is nothing here that a
+      keyboard user cannot do, which is what the rule protects. Giving the strip a role
+      would claim it is a control, and it is the drag handle.
+    -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <header class="header" data-tauri-drag-region ondblclick={headerDoubleClick}>
+      <img class="brand-mark" src="/baton.svg" alt="" width="18" height="18" />
+      <span class="brand-name" data-tauri-drag-region>{t('app.name')}</span>
+      {#if openCount > 0}
+        <span class="brand-count" data-tauri-drag-region>
+          · {t('overlay.inProgressCount', { count: openCount })}
+        </span>
+      {/if}
+      <span class="header-gap" data-tauri-drag-region></span>
+      <WindowControls
+        canCollapse={collapsible !== null}
+        {canExpand}
+        {expanded}
+        onminimize={() => void bridge().hideWindow()}
+        oncollapse={collapse}
+        ontoggleform={toggleForm}
+      />
     </header>
 
     {#if showDevMenu}
@@ -250,13 +338,16 @@
     {/if}
 
     {#if shortcutProblem !== null}
-      <ShortcutDialog
-        accelerator={shortcutProblem}
-        ondone={() => (shortcutProblem = null)}
-      />
+      <ShortcutDialog accelerator={shortcutProblem} ondone={() => (shortcutProblem = null)} />
     {/if}
 
-    <main class="content">
+    <!--
+      One container for both shapes rather than two branches: the expanded view lays itself
+      out — the handoff list is the tab strip moved to the left column — so what changes here
+      is the padding around it and nothing else. Swapping the element would unmount the view
+      on every Expand, and a sheet somebody was typing into would go with it.
+    -->
+    <main class="content" class:content-expanded={expanded}>
       <Current />
     </main>
   {/if}

@@ -22,6 +22,7 @@ import {
 } from '../overlay/collapse.svelte';
 import { resetOverlay } from '../overlay/state.svelte';
 import { resetView } from '../view-state.svelte';
+import { expandForm, resetForm } from '../window-form.svelte';
 import { servingBridge } from './fake-bridge';
 
 const ID = 'hf_0000000001';
@@ -128,6 +129,7 @@ beforeEach(() => {
   resetView();
   resetOverlay();
   resetCollapse();
+  resetForm();
   setLanguage(DEFAULT_LANGUAGE);
 });
 
@@ -136,6 +138,7 @@ afterEach(() => {
   setBridge(null);
   resetOverlay();
   resetCollapse();
+  resetForm();
   vi.useRealTimers();
 });
 
@@ -151,22 +154,55 @@ describe('the collapsed bar (WIN-03)', () => {
     const bar = document.querySelector('.collapsed');
     expect(bar).not.toBeNull();
     expect(bar?.textContent).toContain('Open the dashboard and add the endpoint.');
-    const labels = Array.from(bar?.querySelectorAll('button') ?? []).map((button) =>
-      button.textContent?.trim(),
+    expect(bar?.textContent).toContain('Step 1 of 2');
+
+    // Ask and Screenshot are icon-only on the bar, so what is read is the accessible name
+    // and not the text: an icon with no label is a button nobody can name.
+    const names = Array.from(bar?.querySelectorAll('button') ?? []).map((button) =>
+      (button.getAttribute('aria-label') ?? button.textContent ?? '').replace(/\s+/g, ' ').trim(),
     );
-    expect(labels).toEqual([
-      'Open the dashboard and add the endpoint.',
+    expect(names).toEqual([
+      'Step 1 of 2 Open the dashboard and add the endpoint.',
       'Done',
       'Ask',
       'Screenshot',
+      'Minimize to tray',
+      'Open the panel',
     ]);
     // WIN-03 keeps the other four in the expanded panel only.
-    expect(labels).not.toContain('Note');
-    expect(labels).not.toContain('Skip');
-    expect(labels).not.toContain('Defer');
-    expect(labels).not.toContain('Abandon');
+    for (const absent of ['Note', 'Skip', 'Defer', 'Abandon', 'More']) {
+      expect(names).not.toContain(absent);
+    }
     // The header goes with the panel: the bar is the whole window.
     expect(document.querySelector('.header')).toBeNull();
+  });
+
+  it('puts the window away from the bar, through the same path as closing it (WIN-04)', async () => {
+    const { bridge, focus } = focusBridge();
+    await open(bridge);
+    focus(false);
+    await tick();
+
+    screen.getByRole('button', { name: 'Minimize to tray' }).click();
+    await waitFor(() => expect(bridge.hideWindow).toHaveBeenCalled());
+    // Putting the window away is not collapsing it: the bar is what comes back.
+    expect(document.querySelector('.collapsed')).not.toBeNull();
+  });
+
+  it('keeps the bar at the width of the panel, whatever form the window was in (§7.6)', async () => {
+    const { bridge, focus } = focusBridge();
+    expandForm();
+    await open(bridge);
+    await waitFor(() => expect(bridge.setWindowLayout).toHaveBeenLastCalledWith('expanded'));
+
+    focus(false);
+    await tick();
+    await waitFor(() => expect(bridge.setWindowLayout).toHaveBeenLastCalledWith('panel'));
+
+    // And coming back to the window comes back to the form it was in.
+    focus(true);
+    await tick();
+    await waitFor(() => expect(bridge.setWindowLayout).toHaveBeenLastCalledWith('expanded'));
   });
 
   it('re-expands when the window is clicked back into the focus', async () => {
@@ -188,7 +224,14 @@ describe('the collapsed bar (WIN-03)', () => {
     focus(false);
     await tick();
 
-    screen.getByTitle('Open the panel').click();
+    // The step line is itself the way back; the control at the right end repeats it.
+    (document.querySelector('.collapsed-line') as HTMLButtonElement).click();
+    await tick();
+    expect(document.querySelector('.collapsed')).toBeNull();
+
+    focus(false);
+    await tick();
+    screen.getByRole('button', { name: 'Open the panel' }).click();
     await tick();
     expect(document.querySelector('.collapsed')).toBeNull();
   });
@@ -214,10 +257,7 @@ describe('the collapsed bar (WIN-03)', () => {
     focus(false);
     await tick();
 
-    const bar = document.querySelector('.collapsed');
-    Array.from(bar?.querySelectorAll('button') ?? [])
-      .find((button) => button.textContent?.trim() === 'Ask')
-      ?.click();
+    screen.getByRole('button', { name: 'Ask' }).click();
     await tick();
 
     expect(document.querySelector('.collapsed')).toBeNull();

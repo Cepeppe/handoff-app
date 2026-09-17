@@ -44,6 +44,32 @@ let analysing = $state(false);
 /** The handoff the capture in flight belongs to, from the press of the button. */
 let forHandoff: string | null = null;
 
+/**
+ * The collapsed bar was pressed and the two choices of CAP-01 have to open in the panel.
+ *
+ * The bar is 56 pixels tall and the popover opens *above* its button, so in the bar it would
+ * be drawn outside the window and clipped away by the webview. Pressing Screenshot there
+ * therefore opens the panel first — which destroys the bar and the button in it — and leaves
+ * this behind: the panel's own Screenshot button reads it when it mounts and opens the very
+ * same two choices, so the user still picks, once, as CAP-01 requires.
+ *
+ * It is a one-shot flag and not a rune: it is read exactly once, by the next button to
+ * mount, and nothing draws from it.
+ */
+let askedFromBar = false;
+
+/** The bar asked for the choices; the panel's button will open them. */
+export function askCaptureChoiceInPanel(): void {
+  askedFromBar = true;
+}
+
+/** Whether this button is the one that has to open them. Answers `true` only once. */
+export function takeCaptureChoiceRequest(): boolean {
+  const asked = askedFromBar;
+  askedFromBar = false;
+  return asked;
+}
+
 /** The preview's state. Reactive: reading it inside a component subscribes to it. */
 export function preview(): PreviewState {
   return state;

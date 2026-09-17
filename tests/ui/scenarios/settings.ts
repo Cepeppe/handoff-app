@@ -35,7 +35,7 @@ export const settings: UiScenario = {
     const server = await session();
     await server.open(spec(GOAL, ['Confirm the invoice was sent.']));
     await page.findText('.step .counter', 'Step 1 of 1');
-    await page.click('.actions button', 'Done');
+    await page.click('.action-primary', 'Done');
     await server.event('confirmed_by_user');
     const narrow = (await page.size()).width;
 
@@ -65,12 +65,20 @@ export const settings: UiScenario = {
     await page.click('.settings-nav-item', 'Log');
     await page.findText('[data-settings="log"] .log-goal', GOAL);
 
-    // APP-02: the language changes at once, and back.
+    // APP-02: the language changes at once, and back. The radios are painted as a segmented
+    // control, so the pill beside each one is what a person presses; the input is still the
+    // control, and it is still what is clicked here.
     await page.click('.settings-nav-item', 'General');
-    await page.click('input[name="language"][value="it"]');
+    await page.click('input[name="language"][value="it"] + .seg-pill');
     await page.findText('.settings-nav-item', 'Generale');
-    await page.click('input[name="language"][value="en"]');
+    await page.click('input[name="language"][value="en"] + .seg-pill');
     await page.findText('.settings-nav-item', 'General');
+
+    // §7.6: the way back to the panel that does not go through the tray.
+    await page.click('.settings-back');
+    await page.untilView('overlay');
+    await page.showView('settings');
+    await page.find('[data-settings="general"]');
 
     // §7.6: leaving the settings gives the width back.
     await page.showView('overlay');

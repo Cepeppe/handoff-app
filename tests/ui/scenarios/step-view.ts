@@ -78,24 +78,25 @@ export const stepView: UiScenario = {
       anchors,
     );
 
-    // GUIDE-02: the value, as written, and Copy.
-    await page.findText('[data-value="endpoint_url"] .chip-value', ENDPOINT);
-    await page.click('[data-value="endpoint_url"] .chip-action', 'Copy');
+    // GUIDE-02: the value, as written, and Copy. The buttons of a value row are icon-only,
+    // so they are found by the name they carry for a screen reader (`aria-label`).
+    await page.findText('[data-value="endpoint_url"] .value-text', ENDPOINT);
+    await page.click('[data-value="endpoint_url"] [aria-label="Copy"]');
     await until('the endpoint address is on the clipboard', () => clipboard() === ENDPOINT);
 
-    await page.click('.actions button', 'Done');
+    await page.click('.action-primary', 'Done');
     await page.findText('.step .counter', 'Step 2 of 3');
 
     // DET-04: the mask on screen, the true value on the clipboard.
-    await page.find('[data-value="api_key"] .chip-items.chip-masked');
-    await page.findText('[data-value="api_key"] .chip-value', MASK);
+    await page.find('[data-value="api_key"] .value-row.value-masked');
+    await page.findText('[data-value="api_key"] .value-text', MASK);
     expect(!(await page.bodyText()).includes(key), 'the secret-treated value is not on screen (DET-04)');
-    await page.click('[data-value="api_key"] .chip-action', 'Copy');
+    await page.click('[data-value="api_key"] [aria-label="Copy"]');
     await until('the true API key is on the clipboard (DET-04)', () => clipboard() === key);
 
-    await page.click('.actions button', 'Done');
+    await page.click('.action-primary', 'Done');
     await page.findText('.step .counter', 'Step 3 of 3');
-    await page.click('.actions button', 'Done');
+    await page.click('.action-primary', 'Done');
 
     // RESP-09: the last Done is the end of the round, and it reaches the agent.
     const event = await server.event('confirmed_by_user');

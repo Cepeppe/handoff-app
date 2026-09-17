@@ -45,7 +45,7 @@ async function capture(page: Page, app: RunningApp, fixture: string): Promise<vo
   await app.automation.setSetting(FIXTURE_KEY, fixture);
   await app.automation.setSetting(FIXTURE_SCALE_KEY, 1);
   // CAP-01: the button captures nothing by itself; it offers two choices.
-  await page.click('.actions .screenshot > button', 'Screenshot');
+  await page.click('.action-tools .screenshot > button', 'Screenshot');
   await page.find('.screenshot-menu [role="menuitem"]', 'Select region');
   await page.click('.screenshot-menu [role="menuitem"]', 'Full screen');
   await page.untilView('preview', 20_000);
