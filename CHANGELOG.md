@@ -13,6 +13,11 @@ Baton carries is `server.lock.json`.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-17
+
+Baton is open source, under the MIT licence, and a certain secret inside an array value is masked
+again. Bundles `handoff-mcp` 1.7.1.
+
 ### Security
 
 - A certain secret inside an **array** value is masked again. The server reports an array one
@@ -34,6 +39,8 @@ Baton carries is `server.lock.json`.
   the run's own `github.token` instead of a cross-repository secret.
 - The workflows pin every action to a commit, and Dependabot keeps the pins, the npm packages
   and the crates current once a month.
+- Bundles `handoff-mcp` 1.7.1, whose releases publish the licence texts of Node.js and of the
+  npm packages beside each executable; the server itself is unchanged.
 
 ### Added
 
